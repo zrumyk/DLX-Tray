@@ -42,6 +42,8 @@ Development commands:
 
 ```powershell
 uv run pytest            # tests (network tests are skipped; run them with -m live)
+uv run pytest --cov      # tests + coverage gate (85% of the non-UI code)
+uv run --isolated --no-dev --with pip-licenses python scripts/check_licenses.py
 uv run ruff check --fix  # lint
 uv run ruff format       # format
 uv run pyright           # type check
@@ -68,6 +70,8 @@ app, the DeepL API key is entered in Settings and stored in Windows Credential M
 | 0.9.0 | Installer and GitHub Releases |
 | 1.0.0 | First stable release |
 | 2.0.0 | Tray icon and global hotkey |
+
+See [CHANGELOG.md](CHANGELOG.md) for what changed in each version.
 
 ## Disclaimer
 
