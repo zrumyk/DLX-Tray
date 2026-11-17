@@ -26,7 +26,7 @@ NOW = datetime(2026, 11, 17, 12, 0, 0, tzinfo=UTC)
         ("1e999", None),
         ("9" * 400, None),
         ("9" * 5000, None),
-        ("٣", None),  # ARABIC-INDIC DIGIT THREE: isdigit() but not delta-seconds
+        ("\u0663", None),  # ARABIC-INDIC DIGIT THREE: isdigit() but not delta-seconds
         ("Tue, 17 Nov 2026 12:00:30 GMT", 30.0),
         ("Tue, 17 Nov 2026 11:59:00 GMT", 0.0),
     ],
