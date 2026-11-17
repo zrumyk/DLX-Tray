@@ -2,15 +2,17 @@
 # ruff: noqa: RUF001
 """Tests for the UTF-16-aware chunker."""
 
-import random
 import time
 import unicodedata
 
 import pytest
+from hypothesis import given, settings
+from hypothesis import strategies as st
 
 from dlx_tray.core.chunker import (
     DEFAULT_MAX_UNITS,
     HARD_MAX_UNITS,
+    MIN_MAX_UNITS,
     join,
     split,
     utf16_len,
@@ -213,13 +215,31 @@ _ALPHABET = [
 ]  # fmt: skip
 
 
-@pytest.mark.parametrize("seed", range(300))
-def test_round_trip_invariant(seed: int) -> None:
-    rng = random.Random(seed)
-    text = "".join(rng.choices(_ALPHABET, k=rng.randint(0, 400)))
-    max_units = rng.choice([2, 3, 5, 8, 13, 40, 100, HARD_MAX_UNITS])
+_max_units = st.integers(min_value=MIN_MAX_UNITS, max_value=HARD_MAX_UNITS)
+_small_max_units = st.integers(min_value=MIN_MAX_UNITS, max_value=40)
+_tricky_text = st.lists(st.sampled_from(_ALPHABET), max_size=400).map("".join)
+
+
+@settings(max_examples=300)
+@given(text=_tricky_text, max_units=_small_max_units)
+def test_round_trip_invariant_tricky_text(text: str, max_units: int) -> None:
+    assert_valid(text, split(text, max_units), max_units)
+
+
+@given(text=st.text(), max_units=_max_units)
+def test_round_trip_invariant_any_text(text: str, max_units: int) -> None:
+    assert_valid(text, split(text, max_units), max_units)
+
+
+@given(
+    text=st.text(alphabet=st.characters(categories=["L", "Zs", "Cc", "P", "So"]), min_size=1),
+    max_units=_small_max_units,
+)
+def test_join_places_translations_in_order(text: str, max_units: int) -> None:
     chunks = split(text, max_units)
-    assert_valid(text, chunks, max_units)
+    translated = [f"<{c.index}>" for c in chunks]
+    expected = "".join(f"<{c.index}>{c.separator}" for c in chunks)
+    assert join(chunks, translated) == expected
 
 
 def test_large_text_round_trip_with_defaults() -> None:
