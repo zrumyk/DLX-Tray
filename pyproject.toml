@@ -14,7 +14,7 @@ classifiers = [
     "Topic :: Text Processing :: Linguistic",
 ]
 dependencies = [
-    "pyside6>=6.8",
+    "pyside6-essentials>=6.8",
     "httpx>=0.28",
     "deepl>=1.20",
     "python-docx>=1.1",
