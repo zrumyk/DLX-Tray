@@ -60,9 +60,13 @@ class RetryPolicy:
         """The jittered wait before retry ``retry_number`` (1-based)."""
         if retry_number < 1:
             raise ValueError(f"retry_number must be >= 1, got {retry_number}")
-        # Cap the exponent too, so a huge retry_number can't overflow the float.
+        # Cap the exponent so a huge retry_number stays cheap; a huge multiplier can still
+        # overflow the float, and anything that large is past the cap anyway.
         exponent = min(retry_number - 1, 64)
-        base = min(self.initial_delay * self.multiplier**exponent, self.max_delay)
+        try:
+            base = min(self.initial_delay * self.multiplier**exponent, self.max_delay)
+        except OverflowError:
+            base = self.max_delay
         factor = rng.uniform(1 - self.jitter, 1 + self.jitter)
         return min(base * factor, self.max_delay)
 
@@ -92,9 +96,12 @@ def call_with_retry[T](
     The last error is re-raised when attempts run out. ``TranslationCancelledError`` is raised
     if ``cancel`` is set before an attempt or during a wait.
     """
-    policy = policy or RetryPolicy()
-    cancel = cancel or threading.Event()
-    rng = rng or random.Random()
+    if policy is None:
+        policy = RetryPolicy()
+    if cancel is None:
+        cancel = threading.Event()
+    if rng is None:
+        rng = random.Random()
     attempt = 1
     while True:
         if cancel.is_set():
