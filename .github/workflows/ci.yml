@@ -29,5 +29,22 @@ jobs:
       - name: Pyright
         run: uv run pyright
 
-      - name: Tests
-        run: uv run pytest
+      # Coverage gate (85% of core/providers/services/fileio) is configured in pyproject.toml.
+      - name: Tests with coverage
+        run: uv run pytest --cov --cov-report=term-missing
+
+      # Timing tests are skipped under coverage tracing; run them on their own.
+      - name: Performance tests
+        run: uv run pytest -k performance
+
+  licenses:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Check runtime dependency licenses
+        run: uv run --locked --isolated --no-dev --with pip-licenses python scripts/check_licenses.py
