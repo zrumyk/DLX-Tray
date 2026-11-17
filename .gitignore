@@ -32,3 +32,6 @@ Desktop.ini
 .DS_Store
 .vscode/
 .idea/
+
+# Hypothesis example database
+.hypothesis/
