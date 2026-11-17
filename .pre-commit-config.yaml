@@ -1,3 +1,5 @@
+default_install_hook_types: [pre-commit, pre-push]
+default_stages: [pre-commit]
 exclude: "^tests/fixtures/"
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
@@ -24,3 +26,19 @@ repos:
         entry: "Forbidden file staged (secrets, vendor binary or local agent file)"
         language: fail
         files: '^(\.env$|\.env\..*(?<!example)$|vendor/|CLAUDE\.md$|\.claude/|\.dev/)'
+      # Before every push: the full test suite and type check, so a red main never leaves the
+      # machine. Uses the project venv directly (uv may not be on the PATH that git hooks see).
+      - id: pytest
+        name: pytest (pre-push)
+        entry: ./.venv/Scripts/python.exe -m pytest -q -p no:cacheprovider
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
+      - id: pyright
+        name: pyright (pre-push)
+        entry: ./.venv/Scripts/python.exe -m pyright
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
