@@ -8,6 +8,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.fakes.fake_dlx import FakeDLXFactory, running_fake_dlx
+
 # Headless Qt by default (CI, the pre-push hook); set QT_QPA_PLATFORM=windows to watch tests.
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -24,3 +26,9 @@ def read_fixture(name: str) -> str:
 def fixture_text() -> Callable[[str], str]:
     """``fixture_text("uk_article.txt")`` returns the file's exact contents."""
     return read_fixture
+
+
+@pytest.fixture
+def fake_dlx() -> FakeDLXFactory:
+    """Open a scripted DLX server on a fresh loopback port."""
+    return running_fake_dlx
