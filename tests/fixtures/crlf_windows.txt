@@ -1,0 +1,10 @@
+Windows line endings
+
+This file uses CRLF line endings, as Notepad on Windows writes them. The splitter must treat CRLF as one line break and keep it byte for byte.
+Second line of the same paragraph.
+
+Новий абзац українською. Він теж закінчується символами CR LF.
+
+
+Two blank lines above. A lone CRinside a line and a lone LF
+inside another.

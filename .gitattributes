@@ -5,3 +5,6 @@
 *.png binary
 *.ico binary
 *.exe binary
+
+# Test fixtures are byte-exact (CRLF, trailing spaces, BOM-free UTF-8): never normalise them.
+tests/fixtures/** -text

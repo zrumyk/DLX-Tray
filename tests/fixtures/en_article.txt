@@ -1,0 +1,20 @@
+A Short Guide to Translating Long Documents
+
+Most translation services accept only a limited amount of text per request. That is fine for a chat message, but not for a report, a manual or a chapter of a novel. A desktop translator therefore has to split long input into smaller pieces, send them one by one and stitch the answers back together.
+
+The naive approach cuts the text every fifteen hundred characters. It is simple, and it is wrong. Sentences get chopped in half, the translator loses context, and the seams between pieces become visible in the output. Sometimes even a single word ends up split across two requests.
+
+A better splitter respects the structure of the text. Paragraphs come first, because a paragraph usually carries one complete idea. When a paragraph is too long, the splitter looks for sentence ends: a period, an exclamation mark or a question mark followed by a space. Only when a single sentence is still too long does it fall back to the spaces between words. A hard cut is the last resort, reserved for things like very long URLs or base64 blobs that contain no spaces at all.
+
+Formatting matters just as much. Documents contain blank lines between paragraphs, indented lines, bullet lists and, on Windows, carriage returns. None of that whitespace needs translating, so the splitter keeps it aside and puts it back in exactly the same place when the translated pieces are joined. If the layout of the result differs from the original, something went wrong.
+
+Rate limits are the other half of the story. Free services throttle clients that send too many requests in a short time. A polite client waits a moment between pieces and backs off exponentially after a "too many requests" error: five seconds, then ten, then twenty, up to a minute. If the primary service still refuses, the client can switch to a fallback, such as the official API with the user's own key, without losing the pieces that were already translated.
+
+Things worth checking by hand:
+  * several paragraphs of very different lengths;
+  * "quoted speech," it said, "with punctuation inside the quotes."
+  * abbreviations such as e.g., i.e., Dr. Smith and U.S. that are not sentence ends;
+  * numbers like 1,500 characters, 3.14, 25%, 2026-11-12 and 08:30 a.m.;
+  * a URL: https://example.com/a/very/long/path?with=query&and=parameters#fragment
+
+Finally, save the result and compare its structure with the source. The number of paragraphs, the blank lines and the indentation should all match.

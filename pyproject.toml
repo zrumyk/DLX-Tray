@@ -36,6 +36,7 @@ dev = [
     "pyright>=1.1.390",
     "pre-commit>=4.0",
     "hypothesis>=6.170.15",
+    "pytest-cov>=7.1.0",
 ]
 build = [
     "pyinstaller>=6.11",
@@ -98,3 +99,26 @@ markers = [
     "live: hits the real DLX/DeepL network (run with -m live)",
 ]
 qt_api = "pyside6"
+
+# ---------------------------------------------------------------- coverage
+# The gate covers the Qt-free layers only; ui/ and app.py are exercised by pytest-qt smoke
+# tests and manual checks (.dev/docs/TEST_CHECKLIST.md), not by a percentage.
+[tool.coverage.run]
+source = ["dlx_tray"]
+branch = true
+
+[tool.coverage.report]
+include = [
+    "*/dlx_tray/core/*",
+    "*/dlx_tray/providers/*",
+    "*/dlx_tray/services/*",
+    "*/dlx_tray/fileio/*",
+]
+fail_under = 85
+show_missing = true
+skip_covered = true
+exclude_also = [
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "@overload",
+]
