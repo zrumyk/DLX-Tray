@@ -132,3 +132,7 @@ class TextTooLongError(TranslationError):
 
 class AuthError(TranslationError):
     """The provider rejected the credentials (HTTP 401/403)."""
+
+
+class TranslationCancelledError(Exception):
+    """The user cancelled the operation. Not a ``TranslationError``: cancelling is no failure."""
