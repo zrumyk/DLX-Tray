@@ -50,7 +50,9 @@ def dlx_server() -> Iterator[tuple[str, str]]:
                     break
             except httpx.TransportError:
                 pass
-            if time.monotonic() > deadline or process.poll() is not None:
+            if process.poll() is not None:
+                pytest.fail(f"deeplx.exe exited with code {process.returncode} on startup")
+            if time.monotonic() > deadline:
                 pytest.fail("DLX did not come up within 10 s")
             time.sleep(0.2)
         yield base, token

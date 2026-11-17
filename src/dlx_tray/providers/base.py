@@ -34,17 +34,17 @@ class Translator(Protocol):
 def parse_retry_after(value: str | None, now: datetime | None = None) -> float | None:
     """Seconds to wait from an HTTP ``Retry-After`` header (delta-seconds or an HTTP-date).
 
-    Returns None for a missing or unparsable value; a date in the past gives 0.
+    Returns None for a missing or unparsable value (including negative, fractional or absurdly
+    large numbers); a date in the past gives 0.
     """
     if value is None:
         return None
     value = value.strip()
-    try:
-        seconds = float(value)
-    except ValueError:
-        pass
-    else:
-        return max(seconds, 0.0) if seconds == seconds else None  # NaN check
+    if value.isascii() and value.isdigit():  # RFC 9110 delta-seconds: a non-negative integer
+        try:
+            return float(int(value))
+        except (OverflowError, ValueError):  # past float range / past int's digit limit
+            return None
     try:
         when = parsedate_to_datetime(value)
     except (TypeError, ValueError):

@@ -254,3 +254,28 @@ def test_error_without_message_falls_back_to_status(
     mock.post(URL).mock(return_value=httpx.Response(503, json={"code": 503}))
     with pytest.raises(ProviderUnavailableError, match="HTTP 503"):
         translate(dlx, "Hello")
+
+
+def test_owned_client_ignores_proxy_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("HTTP_PROXY", "http://proxy.invalid:3128")
+    monkeypatch.setenv("ALL_PROXY", "http://proxy.invalid:3128")
+    with DeeplxTranslator(BASE, TOKEN) as translator:
+        client = translator._client  # pyright: ignore[reportPrivateUsage]
+        assert client.trust_env is False
+        assert not client._mounts  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.parametrize("url", ["127.0.0.1:1188", "ftp://127.0.0.1", ""])
+def test_rejects_url_without_http_scheme(url: str) -> None:
+    with pytest.raises(ValueError, match="http://"):
+        DeeplxTranslator(url, TOKEN)
+
+
+def test_413_logged_once_as_error(
+    mock: respx.MockRouter, dlx: DeeplxTranslator, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level("DEBUG", logger="dlx_tray")
+    mock.post(URL).mock(return_value=httpx.Response(413, json={"message": "too long"}))
+    with pytest.raises(TextTooLongError):
+        translate(dlx, "Hello")
+    assert [r.levelname for r in caplog.records if "413" in r.getMessage()] == ["ERROR"]

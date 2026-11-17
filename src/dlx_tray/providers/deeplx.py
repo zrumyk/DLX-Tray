@@ -43,11 +43,15 @@ class DeeplxTranslator:
         timeout: float = DEFAULT_TIMEOUT,
         client: httpx.Client | None = None,
     ) -> None:
+        if httpx.URL(base_url).scheme not in ("http", "https"):
+            raise ValueError(f"DLX URL must start with http:// or https://, got {base_url!r}")
         self._url = base_url.rstrip("/") + "/translate"
         self._headers = {"Authorization": f"Bearer {token}"}
         self._timeout = timeout
         self._owns_client = client is None
-        self._client = client if client is not None else httpx.Client()
+        # trust_env=False: on Windows httpx would pick up the system proxy from the registry and
+        # send loopback requests (and the token) through it.
+        self._client = client if client is not None else httpx.Client(trust_env=False)
 
     @property
     def name(self) -> str:
@@ -132,11 +136,14 @@ def _message(body: Any, fallback: str) -> str:
 def _status_error(response: httpx.Response, body: Any) -> TranslationError:
     status = response.status_code
     message = _message(body, f"HTTP {status}")
-    log.warning("DLX answered HTTP %d: %s", status, message)
+    too_large = status == httpx.codes.REQUEST_ENTITY_TOO_LARGE
+    # A 413 means a chunk over the limit slipped past the chunker: a bug, hence ERROR.
+    log.log(
+        logging.ERROR if too_large else logging.WARNING, "DLX answered HTTP %d: %s", status, message
+    )
     if status in (httpx.codes.UNAUTHORIZED, httpx.codes.FORBIDDEN):
         return AuthError(f"DLX rejected the token: {message}")
-    if status == httpx.codes.REQUEST_ENTITY_TOO_LARGE:
-        log.error("DLX 413 means a chunk over the limit slipped through")
+    if too_large:
         return TextTooLongError(message)
     if status == httpx.codes.TOO_MANY_REQUESTS:
         retry_after = parse_retry_after(response.headers.get("Retry-After"))
