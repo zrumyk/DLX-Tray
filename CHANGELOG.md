@@ -13,6 +13,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Property-based tests (hypothesis) and realistic test texts in `tests/fixtures/`.
 - Test coverage gate (85% of the non-UI code), runtime dependency license check, Dependabot.
 
+### Changed
+- Depend on `pyside6-essentials` instead of the full `pyside6`: Qt takes ~210 MB instead of
+  ~650 MB, which keeps the future installer much smaller.
+
 ## [0.1.0] - 2026-11-17
 
 ### Added
