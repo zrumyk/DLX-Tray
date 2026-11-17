@@ -1,0 +1,99 @@
+[project]
+name = "dlx-tray"
+version = "0.1.0"
+description = "Free desktop translator for Windows powered by a bundled DLX (DeepLX) server, with chunking for large texts."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.12,<3.14"
+authors = [{ name = "zrumyk" }]
+classifiers = [
+    "Operating System :: Microsoft :: Windows",
+    "Programming Language :: Python :: 3.12",
+    "Environment :: Win32 (MS Windows)",
+    "Topic :: Text Processing :: Linguistic",
+]
+dependencies = [
+    "pyside6>=6.8",
+    "httpx>=0.28",
+    "deepl>=1.20",
+    "python-docx>=1.1",
+    "pdfplumber>=0.11",
+    "charset-normalizer>=3.4",
+    "pydantic-settings>=2.6",
+    "keyring>=25.5",
+]
+
+[project.scripts]
+dlx-tray = "dlx_tray.__main__:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-qt>=4.4",
+    "respx>=0.22",
+    "ruff>=0.8",
+    "pyright>=1.1.390",
+    "pre-commit>=4.0",
+]
+build = [
+    "pyinstaller>=6.11",
+]
+
+[build-system]
+requires = ["hatchling>=1.26"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/dlx_tray"]
+
+[tool.uv]
+default-groups = ["dev"]
+
+# ---------------------------------------------------------------- ruff
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests", "scripts"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W", "F",   # pycodestyle, pyflakes
+    "I",             # isort
+    "B",             # bugbear
+    "UP",            # pyupgrade
+    "SIM",           # simplify
+    "N",             # naming
+    "RUF",           # ruff-specific
+    "PTH",           # use pathlib
+    "T20",           # no print
+    "LOG", "G",      # logging hygiene
+]
+ignore = [
+    "N802",          # Qt overrides use camelCase (e.g. closeEvent)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"scripts/*" = ["T20"]
+"tests/*" = ["T20"]
+
+[tool.ruff.format]
+quote-style = "double"
+line-ending = "lf"
+
+# ---------------------------------------------------------------- pyright
+[tool.pyright]
+include = ["src", "tests", "scripts"]
+pythonVersion = "3.12"
+typeCheckingMode = "standard"
+venvPath = "."
+venv = ".venv"
+
+# ---------------------------------------------------------------- pytest
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers -m 'not live'"
+markers = [
+    "live: hits the real DLX/DeepL network (run with -m live)",
+]
+qt_api = "pyside6"

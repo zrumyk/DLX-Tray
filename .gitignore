@@ -1,0 +1,34 @@
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.pyright/
+.coverage
+htmlcov/
+
+# Build output
+build/
+dist/
+installer/Output/
+*.spec.bak
+
+# Third-party binaries (downloaded by scripts/fetch_deeplx.py)
+vendor/
+
+# Qt compiled translations (built from .ts)
+src/dlx_tray/i18n/*.qm
+
+# OS / editors
+Thumbs.db
+Desktop.ini
+.DS_Store
+.vscode/
+.idea/

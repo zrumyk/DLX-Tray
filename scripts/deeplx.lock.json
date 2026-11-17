@@ -1,0 +1,8 @@
+{
+  "project": "https://github.com/OwO-Network/DLX",
+  "version": "v1.3.1",
+  "asset": "deeplx_windows_amd64.exe",
+  "url": "https://github.com/OwO-Network/DLX/releases/download/v1.3.1/deeplx_windows_amd64.exe",
+  "sha256": "fa1107779606222578568053381989a2e921db270a10dd8128bd9dd2b7857f4b",
+  "target": "vendor/deeplx.exe"
+}
