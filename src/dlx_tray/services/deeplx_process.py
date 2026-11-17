@@ -58,8 +58,8 @@ class DLXProcess:
     """One DLX child process bound to ``127.0.0.1`` with a random token.
 
     On Windows the child is put in a Job Object with kill-on-close, so it dies with this process
-    even on a crash. ``command`` replaces ``[resolve_binary()]`` (the program and any leading
-    arguments before DLX's flags); tests use it to run a fake server.
+    even on a crash. ``command`` replaces ``[resolve_binary()]`` (the program, as a path to an
+    existing file, and any leading arguments before DLX's flags); tests use it to run a fake.
     """
 
     def __init__(
@@ -69,6 +69,8 @@ class DLXProcess:
         startup_timeout: float = DEFAULT_STARTUP_TIMEOUT,
     ) -> None:
         self._command = list(command) if command is not None else [str(resolve_binary())]
+        if not self._command:
+            raise ValueError("command must name the DLX program")
         self._startup_timeout = startup_timeout
         self._process: subprocess.Popen[bytes] | None = None
         self._job: _JobObject | None = None
@@ -171,21 +173,26 @@ class DLXProcess:
         assert self._process is not None
         url = f"http://{HOST}:{self._port}/"
         deadline = time.monotonic() + self._startup_timeout
-        with httpx.Client(trust_env=False, timeout=1.0) as client:  # trust_env: see ADR-017
+        with httpx.Client(trust_env=False) as client:  # trust_env: see ADR-017
             while True:
+                remaining = deadline - time.monotonic()
                 try:
-                    if client.get(url).status_code == 200:
-                        return None
+                    answered = client.get(url, timeout=max(min(1.0, remaining), 0.05))
+                    healthy = answered.status_code == 200
                 except httpx.TransportError:
-                    pass
+                    healthy = False
+                # Checked before trusting a 200: if our child already died (e.g. it lost the race
+                # for its port), the answer came from another process.
                 code = self._process.poll()
                 if code is not None:
                     return code
-                if time.monotonic() > deadline:
+                if healthy:
+                    return None
+                if time.monotonic() >= deadline:
                     raise ProviderUnavailableError(
                         f"DLX did not answer GET / within {self._startup_timeout:g} s"
                     )
-                time.sleep(_POLL_INTERVAL)
+                time.sleep(min(_POLL_INTERVAL, max(deadline - time.monotonic(), 0)))
 
 
 class _JobObject:

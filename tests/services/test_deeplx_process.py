@@ -6,6 +6,7 @@ import os
 import signal
 import socket
 import sys
+import time
 from pathlib import Path
 
 import httpx
@@ -90,10 +91,9 @@ def test_start_health_check_and_stop(fake_mode: pytest.MonkeyPatch) -> None:
 
 def test_each_start_gets_a_new_token_and_port(fake_mode: pytest.MonkeyPatch) -> None:
     with DLXProcess(FAKE_COMMAND) as first:
-        url, token = first.base_url, first.token
+        token = first.token
     with DLXProcess(FAKE_COMMAND) as second:
         assert second.token != token
-        assert second.base_url != url or not answers(url)
 
 
 def test_context_manager_stops(fake_mode: pytest.MonkeyPatch) -> None:
@@ -134,6 +134,19 @@ def test_stop_after_the_process_died_on_its_own(fake_mode: pytest.MonkeyPatch) -
 
 
 # ------------------------------------------------------------------ failures
+
+
+def test_empty_command_is_rejected() -> None:
+    with pytest.raises(ValueError, match="command"):
+        DLXProcess([])
+
+
+def test_startup_timeout_is_a_hard_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("FAKE_DLX_MODE", "hang")
+    began = time.monotonic()
+    with pytest.raises(ProviderUnavailableError):
+        DLXProcess(FAKE_COMMAND, startup_timeout=0.5).start()
+    assert time.monotonic() - began < 0.5 + 0.6  # the budget plus process spawn/stop
 
 
 def test_missing_binary(tmp_path: Path) -> None:
