@@ -25,7 +25,8 @@ repos:
         name: forbid .env, vendor binaries and agent files
         entry: "Forbidden file staged (secrets, vendor binary or local agent file)"
         language: fail
-        files: '^(\.env$|\.env\..*(?<!example)$|vendor/|CLAUDE\.md$|\.claude/|\.dev/)'
+        types: []
+        files: '^(?!\.env\.example$)(?i:\.env(?:$|\.)|vendor/|(?:CLAUDE|AGENTS|PROJECT_PLAN)\.md$|\.(?:claude|agents|dev)(?:/|$))'
       # Before every push: the full test suite and type check, so a red main never leaves the
       # machine. Uses the project venv directly (uv may not be on the PATH that git hooks see).
       - id: pytest
