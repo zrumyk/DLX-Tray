@@ -1,0 +1,17 @@
+Emoji and other astral characters 🌍
+
+Every emoji below takes two UTF-16 code units, and some take many more: 😀 😃 😄 😁 😆 🥹 🤖 🚀 🧪 🎉
+
+Skin tones combine with a base character: 👍🏻 👍🏼 👍🏽 👍🏾 👍🏿 and must never be split from it.
+
+Family and profession sequences are joined with zero-width joiners: 👨‍👩‍👧‍👦 👩‍💻 🧑‍🚀 🏳️‍🌈 and are a single visible symbol.
+
+Flags are pairs of regional indicators: 🇺🇦 🇬🇧 🇯🇵 🇩🇪 🇵🇱
+
+Keycaps and variation selectors: 1️⃣ 2️⃣ #️⃣ ❤️ ☺️ ✔️
+
+Українською теж буває: Привіт 👋, як справи? 😊 Усе добре 💪🇺🇦!
+
+Mathematical letters live outside the BMP as well: 𝐁𝐨𝐥𝐝 𝑰𝒕𝒂𝒍𝒊𝒄 𝔉𝔯𝔞𝔨𝔱𝔲𝔯, and so do some CJK ideographs: 𠀋 𡈽 𩸽.
+
+Combining marks stay with their base letter: é (e + U+0301), ñ (n + U+0303), Ё (Е + U+0308).

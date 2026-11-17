@@ -1,0 +1,26 @@
+    Indented first line, followed by mixed content.
+
+# A Markdown heading
+
+- list item one
+- list item two, with `inline code`
+	- a tab-indented sub-item
+
+1. Numbered item.
+2. Another numbered item.
+
+Code that should survive untouched:
+
+    def split(text: str, max_units: int = 1400) -> list[Chunk]:
+        return [Chunk(text=text, separator="", index=0)]
+
+A URL without spaces: https://github.com/OwO-Network/DLX/releases/download/v1.3.1/deeplx_windows_amd64.exe
+A base64 blob without spaces: QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVphYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5ejAxMjM0NTY3ODk=
+Non-breaking spaces: 1 500 символів, 25 %, № 7.
+Trailing spaces on this line.   
+
+Український рядок поруч з English line and 日本語の文。 Mixed scripts in one paragraph!
+
+
+Two blank lines above, and the file ends with a blank line below.
+
