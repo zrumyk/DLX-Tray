@@ -2,6 +2,7 @@
 # ruff: noqa: RUF001
 """Tests for the UTF-16-aware chunker."""
 
+import sys
 import time
 import unicodedata
 
@@ -249,6 +250,8 @@ def test_large_text_round_trip_with_defaults() -> None:
     assert_valid(text, chunks, DEFAULT_MAX_UNITS)
 
 
+# Coverage tracing slows pure-Python code several times over; the budget is checked without it.
+@pytest.mark.skipif("coverage" in sys.modules, reason="timing is meaningless under coverage")
 @pytest.mark.parametrize("with_emoji", [False, True])
 def test_performance_100k_chars(with_emoji: bool) -> None:
     sentence = "The quick brown fox jumps over the lazy dog. " + (EMOJI if with_emoji else "")
