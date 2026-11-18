@@ -172,6 +172,7 @@ def test_exit_on_startup_retries_then_fails(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     monkeypatch.setenv("FAKE_DLX_MODE", "exit")
+    monkeypatch.setattr(deeplx_process.secrets, "token_urlsafe", lambda _: "-test-token")
     dlx = DLXProcess(FAKE_COMMAND)
     with pytest.raises(ProviderUnavailableError, match="code 3"):
         dlx.start()

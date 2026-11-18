@@ -21,7 +21,13 @@ def main() -> None:
     parser.add_argument("-ip", required=True)
     parser.add_argument("-port", type=int, required=True)
     parser.add_argument("-token", required=True)
-    args = parser.parse_args()
+    argv = sys.argv[1:]
+    if "-token" in argv:
+        token_index = argv.index("-token")
+        if token_index + 1 < len(argv):
+            # DLX treats a leading hyphen in the token as part of the value.
+            argv[token_index : token_index + 2] = [f"-token={argv[token_index + 1]}"]
+    args = parser.parse_args(argv)
 
     pidfile = os.environ.get("FAKE_DLX_PIDFILE")
     if pidfile:
