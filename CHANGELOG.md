@@ -13,6 +13,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Cancel to stop after the current request and keep completed chunks.
 - Auto-detect shows the detected source language after translation and uses it to swap languages
   and texts.
+- Start bundled DLX in the background, show its startup status, and stop it when Tray exits.
+  A configured external DLX server takes precedence.
 
 ## [0.2.0] - 2026-11-18
 
