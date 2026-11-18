@@ -46,7 +46,9 @@ from dlx_tray.fileio.translation import (
 )
 from dlx_tray.providers.deepl_official import PROVIDER_NAME as DEEPL_NAME
 from dlx_tray.providers.deeplx import PROVIDER_NAME as DLX_NAME
+from dlx_tray.services.history import HistoryStore
 from dlx_tray.ui.error_dialog import ErrorDialog
+from dlx_tray.ui.history_dialog import HistoryDialog
 from dlx_tray.ui.workers import FileIOWorker, FileJobResult, TranslationWorker
 
 
@@ -108,11 +110,16 @@ class MainWindow(QMainWindow):
         self.save_file_action.triggered.connect(self._choose_destination)
         self.close_file_action = file_menu.addAction(self.tr("&Close file"))
         self.close_file_action.triggered.connect(self._close_file)
+        self.history_action = self.menuBar().addAction(self.tr("&History…"))
+        self.history_action.triggered.connect(self._show_history)
         self.settings_action = self.menuBar().addAction(self.tr("&Settings…"))
         self.settings_action.triggered.connect(self.settings_requested)
         self._chunk_size = translation_job.max_units if translation_job else chunk_size
         self._job = translation_job
         self._formality = formality
+        self._history_path: Path | None = None
+        self._history_enabled = False
+        self._history_limit = 1
         self._translation_unavailable_reason = translation_unavailable_reason
         self._thread: QThread | None = None
         self._worker: TranslationWorker | FileIOWorker | None = None
@@ -222,6 +229,43 @@ class MainWindow(QMainWindow):
         self._update_counter()
         self._update_copy()
         self._set_input_locked(False)
+        self.source_editor.setFocus()
+
+    def set_history(self, path: Path, *, enabled: bool, limit: int) -> None:
+        self._history_path = path
+        self._history_enabled = enabled
+        self._history_limit = limit
+        self.history_action.setEnabled(self._thread is None)
+
+    @Slot()
+    def _show_history(self) -> None:
+        if self._history_path is None or self._thread is not None:
+            return
+        dialog = HistoryDialog(partial(HistoryStore, self._history_path, self._history_limit), self)
+        try:
+            dialog.exec()
+            entry = dialog.selected_entry
+        finally:
+            dialog.wait_for_history()
+            dialog.deleteLater()
+        if entry is None:
+            return
+        if self._file is not None:
+            self._close_file()
+            if self._file is not None:
+                return
+        source_index = self.source_languages.findData(entry.source_lang.value)
+        if source_index == -1:
+            source_index = self.source_languages.findData(Language.AUTO.value)
+        target_index = self.target_languages.findData(entry.target_lang.value)
+        self.source_languages.setCurrentIndex(source_index)
+        if target_index != -1:
+            self.target_languages.setCurrentIndex(target_index)
+        self.source_editor.setPlainText(entry.source_text)
+        self.result_editor.setPlainText(entry.target_text)
+        self._provider_status.hide()
+        self._rate_limit_status.hide()
+        self.statusBar().showMessage(self.tr("Opened translation from history."))
         self.source_editor.setFocus()
 
     @Slot()
@@ -563,13 +607,22 @@ class MainWindow(QMainWindow):
         if self._job is None or self._thread is not None:
             return
 
-        worker = TranslationWorker(self._job, content, source, target, self._formality)
+        open_history = (
+            partial(HistoryStore, self._history_path, self._history_limit)
+            if self._history_path is not None and self._history_enabled
+            else None
+        )
+        worker = TranslationWorker(
+            self._job, content, source, target, self._formality, open_history
+        )
         worker.progress.connect(self._show_progress)
         worker.provider_changed.connect(self._show_provider)
         worker.dlx_rate_limited.connect(self._show_dlx_rate_limit)
         worker.chunk_failed.connect(self._show_chunk_failure)
         worker.finished.connect(self._show_finished)
         worker.failed.connect(self._show_failure)
+        worker.history_saving.connect(self._show_history_saving)
+        worker.history_save_failed.connect(self._show_history_save_failure)
         self._file_translations = None
         self._file_unsaved = False
         self._rendered_chars = 0
@@ -605,6 +658,7 @@ class MainWindow(QMainWindow):
 
     def _set_input_locked(self, locked: bool) -> None:
         self.settings_action.setEnabled(not locked)
+        self.history_action.setEnabled(not locked and self._history_path is not None)
         self.open_file_action.setEnabled(not locked)
         self.close_file_action.setEnabled(not locked and self._file is not None)
         self.save_file_action.setEnabled(not locked and self._file_translations is not None)
@@ -685,6 +739,15 @@ class MainWindow(QMainWindow):
     def _show_failure(self) -> None:
         self.statusBar().showMessage(self.tr("Translation failed. Check DLX and try again."))
 
+    @Slot()
+    def _show_history_saving(self) -> None:
+        self.cancel_button.setEnabled(False)
+        self.progress_label.setText(self.tr("Saving translation to history…"))
+
+    @Slot()
+    def _show_history_save_failure(self) -> None:
+        self.statusBar().showMessage(self.tr("Translation complete. Could not save to history."))
+
     @Slot(object)
     def _show_chunk_failure(self, error: TranslationError) -> None:
         if not isinstance(self._worker, TranslationWorker) or not self.cancel_button.isEnabled():
@@ -706,8 +769,7 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def _cancel_translation(self) -> None:
-        if isinstance(self._worker, TranslationWorker):
-            self._worker.cancel()
+        if isinstance(self._worker, TranslationWorker) and self._worker.cancel():
             self.cancel_button.setEnabled(False)
             self.progress_label.setText(self.tr("Cancelling…"))
             if self._error_dialog is not None:

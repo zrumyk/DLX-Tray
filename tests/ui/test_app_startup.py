@@ -20,6 +20,8 @@ from dlx_tray.config import Settings, Theme
 from dlx_tray.core.models import Formality, Language, ProviderUnavailableError, TranslationResult
 from dlx_tray.providers import fallback
 from dlx_tray.services.deeplx_process import DLXProcess
+from dlx_tray.services.history import HistoryStore
+from dlx_tray.ui.history_dialog import HistoryDialog
 from dlx_tray.ui.main_window import MainWindow
 from dlx_tray.ui.settings_dialog import SettingsDialog
 
@@ -383,6 +385,90 @@ def _edit_settings(
 
     QTimer.singleShot(0, interact)
     window.settings_action.trigger()
+
+
+def test_history_records_prunes_searches_and_reopens_translations(
+    run_window: Callable[[Settings, Callable[[MainWindow, QLabel], None]], None],
+    qtbot: QtBot,
+    tmp_path: Path,
+    fake_dlx: FakeDLXFactory,
+    fixture_text: Callable[[str], str],
+) -> None:
+    source_file = tmp_path / "notes.txt"
+    file_text = fixture_text("uk_article.txt")
+    source_file.write_text(file_text, encoding="utf-8", newline="")
+    path = tmp_path / "history.sqlite3"
+
+    def check(window: MainWindow, _status: QLabel) -> None:
+        def translate() -> None:
+            assert window.translate_button.isEnabled()
+            window.translate_button.click()
+            qtbot.waitUntil(window.history_action.isEnabled)
+
+        assert not path.exists()
+        for text in ("Oldest message", "Вітаю зі Львова"):
+            window.source_editor.setPlainText(text)
+            translate()
+
+        window._open_file(source_file)
+        qtbot.waitUntil(window.translate_button.isEnabled)
+        translate()
+        saved = HistoryStore(path, 2).list()
+        assert len(saved) == 2
+        file_entry, text_entry = saved
+        assert file_entry.file_name == source_file.name
+        assert file_entry.source_text == file_text
+        assert file_entry.target_text.strip() == window.result_editor.toPlainText().strip()
+        assert text_entry.source_text == "Вітаю зі Львова"
+        assert text_entry.target_text == "[EN] Вітаю зі Львова"
+        assert text_entry.provider == "dlx"
+
+        window._file_unsaved = False
+        window.close_file_action.trigger()
+        _edit_settings(window, lambda dialog: dialog.history_enabled.setChecked(False))
+        window.target_languages.setCurrentIndex(window.target_languages.findData(Language.DE.value))
+        window.source_editor.setPlainText("Do not record this")
+        translate()
+        assert HistoryStore(path, 2).list() == saved
+
+        def browse() -> None:
+            dialog = window.findChild(HistoryDialog)
+            assert dialog is not None
+            try:
+                qtbot.waitUntil(lambda: dialog.entries.count() == 2)
+                assert source_file.name in dialog.entries.item(0).text()
+                dialog.entries.setCurrentRow(0)
+                dialog.delete_button.click()
+                qtbot.waitUntil(lambda: dialog.entries.count() == 1)
+                dialog.search.setText("відсутній текст")
+                qtbot.waitUntil(lambda: dialog.status.text() == "No matching translations.")
+                dialog.search.setText(text_entry.source_text.upper())
+                qtbot.waitUntil(lambda: dialog.entries.count() == 1)
+                dialog.entries.setCurrentRow(0)
+                dialog.open_button.click()
+            finally:
+                if dialog.isVisible():
+                    dialog.reject()
+
+        QTimer.singleShot(0, browse)
+        window.history_action.trigger()
+        assert window.selected_languages == (Language.UK, Language.EN)
+        assert window.source_editor.toPlainText() == text_entry.source_text
+        assert window.result_editor.toPlainText() == text_entry.target_text
+        assert HistoryStore(path, 2).list() == [text_entry]
+
+    with fake_dlx([]) as server:
+        settings = Settings.model_validate(
+            {
+                "deeplx_url": server.url,
+                "deeplx_token": server.token,
+                "history_limit": 2,
+                "source_lang": Language.UK,
+                "target_lang": Language.EN,
+                "request_delay": 0,
+            }
+        )
+        run_window(settings, check)
 
 
 def test_theme_applies_on_startup_and_after_saving(
