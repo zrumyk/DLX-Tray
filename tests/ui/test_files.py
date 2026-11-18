@@ -7,8 +7,8 @@ from threading import Event
 import pytest
 from docx import Document
 from PySide6.QtCore import QMimeData, QPoint, QPointF, Qt, QUrl
-from PySide6.QtGui import QDragEnterEvent, QDropEvent
-from PySide6.QtWidgets import QApplication, QFileDialog
+from PySide6.QtGui import QDragEnterEvent, QDropEvent, QTextCursor
+from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox
 from pytestqt.qtbot import QtBot
 from tests.conftest import FIXTURES_DIR
 from tests.fakes.fake_dlx import FakeDLXFactory
@@ -179,6 +179,7 @@ def test_pdf_exports_and_scanned_file_error_preserves_current_result(
         _open(window, qtbot, monkeypatch, source)
         window.translate_button.click()
         qtbot.waitUntil(window.save_file_action.isEnabled, timeout=5000)
+        monkeypatch.setattr(QMessageBox, "question", lambda *_: QMessageBox.StandardButton.Yes)
         _open(window, qtbot, monkeypatch, FIXTURES_DIR / "scanned_field_notes.pdf")
         assert "no extractable text layer" in window.statusBar().currentMessage()
         assert source.name in window.windowTitle()
@@ -221,3 +222,45 @@ def test_file_failure_dialog_uses_document_progress_and_cancel_preserves_preview
         assert window.result_editor.toPlainText() == "[UK] First"
         assert not window.save_file_action.isEnabled()
         assert window.statusBar().currentMessage() == "Translation cancelled."
+
+
+def test_file_mode_preserves_text_and_confirms_discard(
+    qtbot: QtBot,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    fake_dlx: FakeDLXFactory,
+    file_window: Callable[[TranslationJob], MainWindow],
+) -> None:
+    first = tmp_path / "first.txt"
+    second = tmp_path / "second.txt"
+    first.write_bytes(b"First file")
+    second.write_bytes(b"Second file")
+    with fake_dlx([]) as server, DeeplxTranslator(server.url, server.token) as translator:
+        window = file_window(TranslationJob(translator=translator, request_delay=0))
+        window.source_editor.setPlainText("Draft")
+        window.source_editor.moveCursor(QTextCursor.MoveOperation.End)
+        window.source_editor.insertPlainText(" text")
+        window.result_editor.setPlainText("Draft translation")
+        _open(window, qtbot, monkeypatch, first)
+        assert window.source_editor.toPlainText() == "First file"
+        window.translate_button.click()
+        qtbot.waitUntil(window.save_file_action.isEnabled)
+
+        monkeypatch.setattr(QMessageBox, "question", lambda *_: QMessageBox.StandardButton.No)
+        _open(window, qtbot, monkeypatch, second)
+        window.close_file_action.trigger()
+        window.translate_button.click()
+        assert not window.close()
+        assert window.source_editor.toPlainText() == "First file"
+        assert window.result_editor.toPlainText() == "[UK] First file"
+        assert window.save_file_action.isEnabled()
+
+        monkeypatch.setattr(QMessageBox, "question", lambda *_: QMessageBox.StandardButton.Yes)
+        _open(window, qtbot, monkeypatch, second)
+        assert window.source_editor.toPlainText() == "Second file"
+        window.close_file_action.trigger()
+        assert window.source_editor.toPlainText() == "Draft text"
+        assert window.result_editor.toPlainText() == "Draft translation"
+        assert window.copy_button.isEnabled()
+        window.source_editor.undo()
+        assert window.source_editor.toPlainText() == "Draft"

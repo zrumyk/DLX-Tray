@@ -15,6 +15,7 @@ from PySide6.QtGui import (
     QKeySequence,
     QShortcut,
     QTextCursor,
+    QTextDocument,
 )
 from PySide6.QtWidgets import (
     QApplication,
@@ -25,6 +26,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QMainWindow,
     QMessageBox,
+    QPlainTextDocumentLayout,
     QPlainTextEdit,
     QProgressBar,
     QPushButton,
@@ -54,6 +56,25 @@ def _editor_text(editor: QPlainTextEdit) -> str:
 
 
 class _TextEditor(QPlainTextEdit):
+    def __init__(self) -> None:
+        super().__init__()
+        self._text_document: QTextDocument | None = None
+
+    def show_file_preview(self) -> None:
+        # Reparent the text document so Qt keeps its contents and undo history.
+        self._text_document = self.document()
+        self._text_document.setParent(self.window())
+        preview = QTextDocument(self)
+        preview.setDocumentLayout(QPlainTextDocumentLayout(preview))
+        self.setDocument(preview)
+
+    def restore_text_document(self) -> None:
+        document = self._text_document
+        assert document is not None
+        self.setDocument(document)
+        document.setParent(self)
+        self._text_document = None
+
     # File drops belong to the window. Ordinary text drops keep the editor's behavior.
     def dragEnterEvent(self, event: QDragEnterEvent) -> None:
         if any(url.isLocalFile() for url in event.mimeData().urls()):
@@ -97,6 +118,7 @@ class MainWindow(QMainWindow):
         self._worker: TranslationWorker | FileIOWorker | None = None
         self._file: SourceFile | None = None
         self._file_translations: tuple[str, ...] | None = None
+        self._file_unsaved = False
         self._error_dialog: ErrorDialog | None = None
         self._detected_source: Language | None = None
         self._close_pending = False
@@ -242,6 +264,8 @@ class MainWindow(QMainWindow):
         self._open_file(path)
 
     def _open_file(self, path: Path) -> None:
+        if not self._confirm_discard_file_translation():
+            return
         worker = FileIOWorker(partial(SourceFile.read, path))
         worker.finished.connect(self._show_opened_file)
         worker.failed.connect(self._show_open_failure)
@@ -249,8 +273,15 @@ class MainWindow(QMainWindow):
 
     @Slot(object)
     def _show_opened_file(self, source: SourceFile) -> None:
+        if self._close_pending:
+            return
+        first_file = self._file is None
         self._file = source
         self._file_translations = None
+        self._file_unsaved = False
+        if first_file:
+            self.source_editor.show_file_preview()
+            self.result_editor.show_file_preview()
         self.setWindowTitle(f"{source.path.name} — {APP_NAME} {__version__}")
         self.source_editor.setPlainText("\n\n".join(source.segments))
         self.result_editor.clear()
@@ -272,11 +303,17 @@ class MainWindow(QMainWindow):
     def _close_file(self) -> None:
         if self._thread is not None or self._file is None:
             return
+        if not self._confirm_discard_file_translation():
+            return
         self._file = None
         self._file_translations = None
+        self._file_unsaved = False
         self.setWindowTitle(f"{APP_NAME} {__version__}")
-        self.source_editor.clear()
-        self.result_editor.clear()
+        self.source_editor.restore_text_document()
+        self.result_editor.restore_text_document()
+        self._update_counter()
+        self._update_copy()
+        self._clear_detected_source()
         self._provider_status.hide()
         self._rate_limit_status.hide()
         self.statusBar().clearMessage()
@@ -336,8 +373,21 @@ class MainWindow(QMainWindow):
         )
         return answer == QMessageBox.StandardButton.Yes
 
+    def _confirm_discard_file_translation(self) -> bool:
+        if not self._file_unsaved:
+            return True
+        answer = QMessageBox.question(
+            self,
+            self.tr("Discard file translation?"),
+            self.tr("The file translation has not been saved. Discard it?"),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        return answer == QMessageBox.StandardButton.Yes
+
     @Slot()
     def _show_saved_file(self) -> None:
+        self._file_unsaved = False
         self.statusBar().showMessage(self.tr("Translation saved."))
 
     @Slot(object)
@@ -497,7 +547,8 @@ class MainWindow(QMainWindow):
 
     def _request_translation(self) -> None:
         if self._file is not None:
-            self._translate(self._file, *self.selected_languages)
+            if self._confirm_discard_file_translation():
+                self._translate(self._file, *self.selected_languages)
         else:
             self.translation_requested.emit(
                 _editor_text(self.source_editor), *self.selected_languages
@@ -520,6 +571,7 @@ class MainWindow(QMainWindow):
         worker.finished.connect(self._show_finished)
         worker.failed.connect(self._show_failure)
         self._file_translations = None
+        self._file_unsaved = False
         self._rendered_chars = 0
         self._clear_detected_source()
         self.result_editor.clear()
@@ -606,6 +658,7 @@ class MainWindow(QMainWindow):
     def _show_finished(self, result: JobResult | FileJobResult) -> None:
         if isinstance(result, FileJobResult):
             self._file_translations = result.translations
+            self._file_unsaved = result.translations is not None
             result = result.preview
         self._append_result(result.text)
         detected = result.detected_source
@@ -679,6 +732,10 @@ class MainWindow(QMainWindow):
         if self._thread is not None:
             self._close_pending = True
             self._cancel_translation()
+            event.ignore()
+            return
+        self._close_pending = False
+        if not self._confirm_discard_file_translation():
             event.ignore()
             return
         super().closeEvent(event)
