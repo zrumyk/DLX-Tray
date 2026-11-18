@@ -21,6 +21,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Fixed
 - Preserve path prefixes and query parameters in configured DLX server URLs.
 
+### Known issues
+- The bundled DLX server can receive HTTP 429 from DeepL. If retries are exhausted, translation
+  stops and keeps any completed chunks. Live translation through bundled DLX remains unverified.
+
 ## [0.2.0] - 2026-11-18
 
 ### Added
