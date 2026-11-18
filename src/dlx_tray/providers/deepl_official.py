@@ -98,6 +98,8 @@ def _translation_error(exc: deepl.DeepLException) -> TranslationError:
         return RateLimitedError("DeepL rate limit reached")
     if isinstance(exc, deepl.QuotaExceededException):
         return TranslationError("DeepL translation quota exceeded")
+    if isinstance(exc, deepl.ConnectionException) and not exc.should_retry:
+        return TranslationError("Could not connect to DeepL. Check the network and proxy settings")
     if status == HTTPStatus.REQUEST_ENTITY_TOO_LARGE:
         return TextTooLongError("The translation request exceeds the DeepL size limit")
     if status is None or status >= HTTPStatus.INTERNAL_SERVER_ERROR:

@@ -143,6 +143,19 @@ def test_timeout_is_unavailable(send: MagicMock) -> None:
     send.assert_called_once()
 
 
+@pytest.mark.parametrize("error", [requests.exceptions.SSLError, requests.exceptions.ProxyError])
+def test_permanent_connection_failure_is_not_retryable(
+    send: MagicMock, error: type[requests.exceptions.ConnectionError]
+) -> None:
+    send.side_effect = error("private proxy credentials")
+    with pytest.raises(TranslationError, match="Check the network and proxy settings") as raised:
+        DeepLOfficialTranslator("test-key").translate(["Hello"], Language.AUTO, Language.UK)
+
+    assert type(raised.value) is TranslationError
+    assert "private proxy credentials" not in str(raised.value)
+    send.assert_called_once()
+
+
 @pytest.mark.parametrize(
     "translations",
     [[], [{}], [{}, {}], {"wrong": "shape"}, [{"text": 42}]],
