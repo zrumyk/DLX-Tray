@@ -37,7 +37,7 @@ def run_window(
     qapp: QApplication, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, vault: Mock, tmp_path: Path
 ) -> Callable[[Settings, Callable[[MainWindow, QLabel], None]], None]:
     monkeypatch.setattr(config, "app_data_dir", lambda: tmp_path)
-    for name in ("DLX_SOURCE_LANG", "DLX_TARGET_LANG", "DLX_WINDOW_GEOMETRY"):
+    for name in ("DLX_SOURCE_LANG", "DLX_TARGET_LANG", "DLX_WINDOW_GEOMETRY", "DLX_THEME"):
         monkeypatch.delenv(name, raising=False)
 
     def run(settings: Settings, check: Callable[[MainWindow, QLabel], None]) -> None:
