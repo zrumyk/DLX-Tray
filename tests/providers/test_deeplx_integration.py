@@ -9,6 +9,7 @@ import pytest
 
 from dlx_tray.core.models import (
     AuthError,
+    Chunk,
     Language,
     ProviderUnavailableError,
     RateLimitedError,
@@ -16,9 +17,64 @@ from dlx_tray.core.models import (
     TranslationError,
     TranslationResult,
 )
+from dlx_tray.core.pipeline import FailureAction, JobResult, TranslationJob
 from dlx_tray.core.retry import RetryPolicy, call_with_retry
 from dlx_tray.providers.deeplx import DeeplxTranslator
 from tests.fakes.fake_dlx import FakeDLXFactory
+
+
+@pytest.mark.parametrize(
+    ("step", "error", "backoff"),
+    [
+        ("429", RateLimitedError, 5.0),
+        ("429-retry-after", RateLimitedError, 9.0),
+        ("503", ProviderUnavailableError, 5.0),
+        ("drop", ProviderUnavailableError, 5.0),
+    ],
+)
+def test_job_retries_only_the_failed_chunk(
+    fake_dlx: FakeDLXFactory, step: str, error: type[TranslationError], backoff: float
+) -> None:
+    waits: list[float] = []
+    retries: list[tuple[int, float, type[TranslationError]]] = []
+    progress: list[tuple[int, int, str]] = []
+
+    def sleep(seconds: float, cancel: Event) -> bool:
+        waits.append(seconds)
+        return not cancel.is_set()
+
+    def on_retry(attempt: int, seconds: float, exc: TranslationError) -> None:
+        retries.append((attempt, seconds, type(exc)))
+
+    def on_failure(chunk: Chunk, exc: TranslationError) -> FailureAction:
+        pytest.fail("The transient error should recover before a failure decision is needed")
+
+    def on_progress(index: int, total: int, text: str) -> None:
+        progress.append((index, total, text))
+
+    with (
+        fake_dlx(["ok", step, "reverse"]) as server,
+        DeeplxTranslator(server.url, server.token) as translator,
+    ):
+        job = TranslationJob(
+            translator=translator,
+            max_units=5,
+            retry_policy=RetryPolicy(max_attempts=2, jitter=0),
+            sleep=sleep,
+        )
+        result = job.run(
+            "Hello\r\nWorld",
+            Language.AUTO,
+            Language.UK,
+            on_retry=on_retry,
+            on_failure=on_failure,
+            on_progress=on_progress,
+        )
+
+    assert waits == [1.5, backoff]
+    assert retries == [(1, backoff, error)]
+    assert progress == [(1, 2, "[UK] Hello\r\n"), (2, 2, "[UK] Hello\r\n[UK] dlroW")]
+    assert result == JobResult("[UK] Hello\r\n[UK] dlroW", Language.EN)
 
 
 @pytest.mark.parametrize(
