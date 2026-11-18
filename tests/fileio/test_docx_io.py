@@ -8,8 +8,8 @@ from docx import Document
 from docx.enum.section import WD_SECTION_START
 from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_BREAK
 from docx.opc.constants import RELATIONSHIP_TYPE as RT
-from docx.oxml import OxmlElement
-from docx.oxml.ns import qn
+from docx.oxml import OxmlElement, parse_xml
+from docx.oxml.ns import nsdecls, qn
 from docx.shared import Inches
 
 from dlx_tray.fileio.docx_io import translate_docx
@@ -90,6 +90,24 @@ def test_headers_and_footers_translate_once_without_creating_missing_parts(tmp_p
     assert second.footer.paragraphs[0].text == "[Second footer]"
 
 
+def test_tall_vertical_merge_does_not_require_recursive_grid_lookup(tmp_path: Path) -> None:
+    path = tmp_path / "tall.docx"
+    document = Document()
+    table = document.add_table(rows=1100, cols=1)
+    table.rows[0].cells[0].text = "Merged cell"
+    for index, row in enumerate(table.rows):
+        (cell,) = row._tr.tc_lst
+        cell.vMerge = "continue" if index else "restart"
+    document.save(str(path))
+
+    translate_docx(path, path, lambda text: f"[{text}]")
+
+    (table,) = Document(str(path)).tables
+    assert table.rows[0].cells[0].text == "[Merged cell]"
+    assert len(table.rows) == 1100
+    assert table.rows[-1]._tr.tc_lst[0].vMerge == "continue"
+
+
 def test_translation_merges_runs_with_dominant_formatting_and_keeps_blank_runs(
     tmp_path: Path,
 ) -> None:
@@ -150,7 +168,14 @@ def test_hyperlinks_and_protected_content_survive(tmp_path: Path) -> None:
     ):
         node = OxmlElement("w:fldChar")
         node.set(qn("w:fldCharType"), marker)
-        paragraph_with_field.add_run()._r.append(node)
+        run = paragraph_with_field.add_run()
+        run._r.append(node)
+        if marker in ("begin", "end"):
+            wrapper = OxmlElement("w:smartTag")
+            wrapper.set(qn("w:uri"), "urn:example:smart-tags")
+            wrapper.set(qn("w:element"), "fieldBoundary")
+            paragraph_with_field._p.append(wrapper)
+            wrapper.append(run._r)
     field_end.add_run(" after field")
     unchanged = document.add_paragraph("keep ")
     unchanged.add_run("both").bold = True
@@ -166,9 +191,45 @@ def test_hyperlinks_and_protected_content_survive(tmp_path: Path) -> None:
     assert paragraph._p.xpath("./w:r/w:br/@w:type") == ["page"]
     assert field_begin.text == "BEFORE FIELD "
     assert field_end.text == "cached result AFTER FIELD"
-    assert field_begin._p.xpath("./w:r/w:fldChar/@w:fldCharType") == ["begin", "separate"]
-    assert field_end._p.xpath("./w:r/w:fldChar/@w:fldCharType") == ["end"]
+    assert field_begin._p.xpath(".//w:fldChar/@w:fldCharType") == ["begin", "separate"]
+    assert field_end._p.xpath(".//w:fldChar/@w:fldCharType") == ["end"]
     assert [run.text for run in unchanged.runs] == ["keep ", "both"]
+
+
+def test_nonbreaking_hyphen_reaches_the_callback_as_text(tmp_path: Path) -> None:
+    path = tmp_path / "hyphen.docx"
+    document = Document()
+    run = document.add_paragraph().add_run("part")
+    run._r.append(OxmlElement("w:noBreakHyphen"))
+    run._r.add_t("time work")
+    document.save(str(path))
+
+    translate_docx(path, path, lambda text: {"part-time work": "неповна зайнятість"}[text])
+
+    (paragraph,) = Document(str(path)).paragraphs
+    assert paragraph.text == "неповна зайнятість"
+
+
+def test_field_in_text_box_does_not_affect_body_translation(tmp_path: Path) -> None:
+    path = tmp_path / "textbox.docx"
+    document = Document()
+    run = document.add_paragraph().add_run()
+    run._r.append(
+        parse_xml(
+            f'<w:pict {nsdecls("w")} xmlns:v="urn:schemas-microsoft-com:vml">'
+            '<v:shape id="TextBox1"><v:textbox><w:txbxContent>'
+            '<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r></w:p>'
+            "</w:txbxContent></v:textbox></v:shape></w:pict>"
+        )
+    )
+    document.add_paragraph("Body text")
+    document.save(str(path))
+
+    translate_docx(path, path, str.upper)
+
+    container, paragraph = Document(str(path)).paragraphs
+    assert paragraph.text == "BODY TEXT"
+    assert container._p.xpath(".//w:txbxContent//w:fldChar/@w:fldCharType") == ["begin"]
 
 
 def test_callback_error_does_not_publish_partial_translation(tmp_path: Path) -> None:

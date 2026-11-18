@@ -13,17 +13,23 @@ from docx import Document
 from docx.oxml.ns import qn
 from docx.oxml.text.hyperlink import CT_Hyperlink
 from docx.oxml.text.run import CT_R
+from docx.table import _Cell
 from docx.text.paragraph import Paragraph
 
 if TYPE_CHECKING:
     from docx.document import Document as WordDocument
-    from docx.oxml.table import CT_Tc
     from docx.oxml.text.paragraph import CT_P
     from docx.parts.hdrftr import FooterPart, HeaderPart
     from docx.table import Table
 
-_TEXT_RUN_CHILDREN = {qn(f"w:{tag}") for tag in ("rPr", "t", "tab", "cr", "lastRenderedPageBreak")}
+_TEXT_RUN_CHILDREN = {
+    qn(f"w:{tag}") for tag in ("rPr", "t", "tab", "cr", "noBreakHyphen", "lastRenderedPageBreak")
+}
+_FIELD_MARKER = qn("w:fldChar")
 _FIELD_TYPE = qn("w:fldCharType")
+_EXCLUDED_FIELD_CONTAINERS = {
+    qn(f"w:{tag}") for tag in ("del", "fldSimple", "moveFrom", "txbxContent")
+}
 
 
 def translate_docx(source: Path, destination: Path, translate: Callable[[str], str]) -> None:
@@ -58,12 +64,12 @@ def _paragraphs(blocks: Iterator[Paragraph | Table]) -> Iterator[Paragraph]:
             yield block
             continue
 
-        seen: set[CT_Tc] = set()
+        # Walk physical cells once. The grid view repeats merged cells and recursively
+        # resolves a vertical continuation through every row above it.
         for row in block.rows:
-            for cell in row.cells:
-                # A merged cell can occupy several grid positions, including later rows.
-                if cell._tc not in seen:
-                    seen.add(cell._tc)
+            for cell_element in row._tr.tc_lst:
+                if cell_element.vMerge != "continue":
+                    cell = _Cell(cell_element, block)
                     yield from _paragraphs(cell.iter_inner_content())
 
 
@@ -104,17 +110,24 @@ def _translate_container(
 
         _translate_runs(container, runs, translate)
         runs.clear()
-        if isinstance(child, CT_R):
-            # Field instructions and cached results can span multiple paragraphs.
-            for field in child.xpath("./w:fldChar"):
-                match field.get(_FIELD_TYPE):
-                    case "begin":
-                        field_depth += 1
-                    case "end":
-                        field_depth = max(0, field_depth - 1)
-        elif isinstance(child, CT_Hyperlink):
+        if isinstance(child, CT_Hyperlink):
             field_depth = _translate_container(child, translate, field_depth)
+        else:
+            field_depth = _field_depth_after(child, field_depth)
     _translate_runs(container, runs, translate)
+    return field_depth
+
+
+def _field_depth_after(element: etree._Element, field_depth: int) -> int:
+    # An inline wrapper can contain one boundary of a field spanning multiple runs or paragraphs.
+    for field in element.iter(_FIELD_MARKER):
+        if any(ancestor.tag in _EXCLUDED_FIELD_CONTAINERS for ancestor in field.iterancestors()):
+            continue
+        match field.get(_FIELD_TYPE):
+            case "begin":
+                field_depth += 1
+            case "end":
+                field_depth = max(0, field_depth - 1)
     return field_depth
 
 
