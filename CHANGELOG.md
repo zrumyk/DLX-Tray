@@ -7,6 +7,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- Load preferences from `%APPDATA%\DLX Tray\settings.json` with `DLX_*` development overrides,
+  and keep a rotating startup and diagnostics log in `%APPDATA%\DLX Tray\logs`.
 - Language, formality, chunk and translation result models with a translation error hierarchy.
 - Text chunker that splits any text into pieces of at most 1500 UTF-16 units (1400 by default),
   cutting at paragraph, line, sentence and word boundaries and restoring the layout exactly.

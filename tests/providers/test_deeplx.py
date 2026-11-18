@@ -1,6 +1,7 @@
 """Tests for the DLX client, with HTTP mocked by respx."""
 
 import json
+import logging
 from collections.abc import Callable, Iterator
 
 import httpx
@@ -116,6 +117,27 @@ def test_auth_errors(mock: respx.MockRouter, dlx: DeeplxTranslator, status: int)
     mock.post(URL).mock(return_value=httpx.Response(status, json=body))
     with pytest.raises(AuthError, match="Invalid access token"):
         translate(dlx, "Hello")
+
+
+def test_logging_excludes_input_and_server_supplied_details(
+    mock: respx.MockRouter, dlx: DeeplxTranslator, caplog: pytest.LogCaptureFixture
+) -> None:
+    source_text = "private source text"
+    route = mock.post(URL)
+    route.side_effect = [
+        ok("private translation", source_lang=TOKEN),
+        httpx.Response(401, json={"message": f"{source_text} {TOKEN}"}),
+    ]
+    with caplog.at_level(logging.DEBUG, logger="dlx_tray.providers.deeplx"):
+        translate(dlx, source_text)
+        with pytest.raises(AuthError):
+            translate(dlx, source_text)
+
+    assert "unknown source language" in caplog.text
+    assert "DLX answered HTTP 401" in caplog.text
+    assert TOKEN not in caplog.text
+    assert source_text not in caplog.text
+    assert "private translation" not in caplog.text
 
 
 def test_413_is_text_too_long(mock: respx.MockRouter, dlx: DeeplxTranslator) -> None:
