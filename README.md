@@ -3,25 +3,23 @@
 A free desktop translator for Windows, in development. It is designed to translate long texts
 in chunks using a bundled [DLX](https://github.com/OwO-Network/DLX) (formerly DeepLX) server.
 
-> **Status:** v0.2.0 implements the core translation engine. The desktop app opens a placeholder
-> window. The translation interface is planned for v0.3.0.
+> **Status:** v0.3.0 adds the desktop translation window with automatic DLX startup, chunk
+> progress, and cancellation.
 
-## Available in v0.2.0
+## Available in v0.3.0
 
 - Split long input on text boundaries into chunks of up to 1500 UTF-16 code units and reassemble
   the translated chunks with their original separators.
-- Start, health-check, and stop a local DLX server through the process manager. The DLX client
-  sends authenticated translation requests.
-- Run translation jobs with progress, retry backoff, and cancellation that preserves partial results.
+- Translate in side-by-side editors using the Translate button or Ctrl+Enter, and copy the result.
+- Choose languages or use Auto-detect, then swap the languages and texts.
+- See translated chunks as they finish and cancel while keeping the completed result.
+- Start and stop the bundled DLX server automatically, with startup status in the main window.
 - Load local preferences with development overrides and write rotating diagnostic logs.
 
-## Features (planned for v1.0)
+## Planned features
 
-- Translate texts of any length: input is split on paragraph, sentence and word boundaries into
-  chunks of at most 1500 UTF-16 code units, translated one by one and reassembled.
-- Bundled DLX server, started and stopped automatically. No setup.
 - Optional fallback to the official DeepL API Free (bring your own key) when DLX fails.
-- Automatic source language detection, language swap, formality (official API only).
+- Formality control for the official DeepL API.
 - Open and save `.txt` and `.docx` files (formatting preserved). `.pdf` input is saved as `.docx` or `.txt`.
 - Local translation history with search.
 - Ukrainian and English interface, light and dark themes.
@@ -61,16 +59,16 @@ uv run pre-commit install
 ### Configuration
 
 Copy `.env.example` to `.env` for local development. The app loads preferences from
-`%APPDATA%\DLX Tray\settings.json` and applies `DLX_*` development overrides. A Settings dialog and
-Windows Credential Manager integration are planned.
+`%APPDATA%\DLX Tray\settings.json` and applies `DLX_*` development overrides. Set
+`DLX_DEEPLX_URL` and, if required, `DLX_DEEPLX_TOKEN` to use an external DLX server.
 
 ## Roadmap
 
 | Version | Scope |
 |---|---|
 | 0.1.0 | Project skeleton, tooling, CI (completed) |
-| 0.2.0 | Chunker, DLX client and process manager, translation pipeline, local settings and logs (current) |
-| 0.3.0 | Main window: languages, progress, cancel (next) |
+| 0.2.0 | Chunker, DLX client and process manager, translation pipeline, local settings and logs (completed) |
+| 0.3.0 | Main window: languages, progress, cancel, automatic DLX startup (current) |
 | 0.4.0 | Official DeepL API fallback, error handling |
 | 0.5.0 | Settings and themes |
 | 0.6.0 | `.txt` / `.docx` / `.pdf` files |

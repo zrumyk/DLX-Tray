@@ -6,15 +6,24 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-18
+
 ### Added
 - Translator layout with side-by-side editors, language pickers and swap, a character and chunk
   counter, a Translate control with Ctrl+Enter, and result copying.
-- Translate through a configured DLX server in the background with chunk progress and live results.
+- Translate in the background with chunk progress and results that appear as chunks finish.
   Cancel to stop after the current request and keep completed chunks.
 - Auto-detect shows the detected source language after translation and uses it to swap languages
   and texts.
 - Start bundled DLX in the background, show its startup status, and stop it when Tray exits.
   A configured external DLX server takes precedence.
+
+### Fixed
+- Preserve path prefixes and query parameters in configured DLX server URLs.
+
+### Known issues
+- The bundled DLX server can receive HTTP 429 from DeepL. If retries are exhausted, translation
+  stops and keeps any completed chunks. Live translation through bundled DLX remains unverified.
 
 ## [0.2.0] - 2026-11-18
 
@@ -44,6 +53,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   pre-commit hooks and CI on Windows.
 - Script to download the pinned DLX v1.3.1 binary with SHA-256 verification.
 
-[Unreleased]: https://github.com/zrumyk/DLX-Tray/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/zrumyk/DLX-Tray/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/zrumyk/DLX-Tray/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/zrumyk/DLX-Tray/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/zrumyk/DLX-Tray/releases/tag/v0.1.0
