@@ -32,8 +32,19 @@ def test_connection_loss_falls_back_for_the_failed_chunk(fake_dlx: FakeDLXFactor
         job = TranslationJob(
             translator=FallbackTranslator(primary, secondary), max_units=5, request_delay=0
         )
-        result = job.run("Hello\r\nWorld\r\nAgain", Language.AUTO, Language.UK, Formality.MORE)
+        providers: list[str] = []
+        rate_limits: list[str] = []
+        result = job.run(
+            "Hello\r\nWorld\r\nAgain",
+            Language.AUTO,
+            Language.UK,
+            Formality.MORE,
+            on_provider=providers.append,
+            on_rate_limit=rate_limits.append,
+        )
 
+    assert providers == ["dlx", "dlx", "deepl", "dlx"]
+    assert rate_limits == []
     assert result == JobResult(
         "[UK] Hello\r\n[DeepL] World\r\n[UK] Again",
         Language.EN,
@@ -56,12 +67,25 @@ def test_rate_limit_cooldown_across_jobs(
     with fake_dlx([status, "ok"]) as server, DeeplxTranslator(server.url, server.token) as primary:
         job = TranslationJob(translator=FallbackTranslator(primary, secondary))
 
-        assert job.run("World", Language.AUTO, Language.UK).chunk_providers == ("deepl",)
-        time += pause - 0.1
-        assert job.run("World", Language.AUTO, Language.UK).chunk_providers == ("deepl",)
-        time = 100.0 + pause
-        assert job.run("World", Language.AUTO, Language.UK).chunk_providers == ("dlx",)
+        def run() -> JobResult:
+            return job.run(
+                "World",
+                Language.AUTO,
+                Language.UK,
+                on_provider=providers.append,
+                on_rate_limit=rate_limits.append,
+            )
 
+        providers: list[str] = []
+        rate_limits: list[str] = []
+        assert run().chunk_providers == ("deepl",)
+        time += pause - 0.1
+        assert run().chunk_providers == ("deepl",)
+        time = 100.0 + pause
+        assert run().chunk_providers == ("dlx",)
+
+    assert providers == ["dlx", "deepl", "deepl", "dlx"]
+    assert rate_limits == ["dlx", "dlx"]
     assert secondary.translate.call_count == 2
 
 

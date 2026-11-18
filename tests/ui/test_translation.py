@@ -5,7 +5,7 @@ from threading import Event
 
 import pytest
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QLabel
 from pytestqt.qtbot import QtBot
 from tests.fakes.fake_dlx import FakeDLXFactory
 
@@ -142,9 +142,16 @@ def test_cancel_interrupts_retry_and_keeps_streamed_text(
         job = TranslationJob(translator=translator, max_units=6, request_delay=0, sleep=sleep)
         window = translation_window(job)
         window.source_editor.setPlainText(" first\u00a0\n\nsecond third")
+        provider = window.findChild(QLabel, "provider_status")
+        warning = window.findChild(QLabel, "rate_limit_status")
+        assert provider is not None and warning is not None
+        assert not provider.isVisible() and not warning.isVisible()
         window.translate_button.click()
         qtbot.waitUntil(waiting.is_set)
         qtbot.waitUntil(lambda: window.progress_bar.value() == 1)
+        qtbot.waitUntil(lambda: warning.text() == "DLX rate limit reached. Retrying in 9 s.")
+        assert warning.isVisible()
+        assert provider.isVisible() and provider.text() == "Provider: DLX"
         assert window.progress_label.text() == "Chunk 1 of 3"
         assert window.progress_bar.maximum() == 3
         assert window.result_editor.document().toRawText() == " [EN] first\u00a0\u2029\u2029"
@@ -156,6 +163,7 @@ def test_cancel_interrupts_retry_and_keeps_streamed_text(
         assert window.progress_label.text() == "Cancelling…"
         qtbot.waitUntil(window.translate_button.isEnabled)
         assert window.statusBar().currentMessage() == "Translation cancelled."
+        assert warning.isVisible() and warning.text() == "DLX rate limit reached."
         window.copy_button.click()
         assert QApplication.clipboard().text() == " [EN] first\u00a0\n\n"
         assert window.swap_button.isEnabled()
@@ -166,6 +174,7 @@ def test_cancel_interrupts_retry_and_keeps_streamed_text(
         qtbot.waitUntil(window.translate_button.isEnabled)
         assert window.statusBar().currentMessage() == "Translation complete."
         assert window.result_editor.toPlainText() == "[EN] fresh"
+        assert not warning.isVisible()
 
 
 def _wait_for_failure_dialog(qtbot: QtBot, window: MainWindow) -> ErrorDialog:
