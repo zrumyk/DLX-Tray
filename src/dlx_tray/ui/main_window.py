@@ -89,6 +89,10 @@ class MainWindow(QMainWindow):
         )
         if translation_unavailable_reason:
             self.statusBar().showMessage(translation_unavailable_reason)
+        self._dlx_status = QLabel()
+        self._dlx_status.setObjectName("dlx_status")
+        self._dlx_status.hide()
+        self.statusBar().addPermanentWidget(self._dlx_status)
 
         languages = QHBoxLayout()
         source_controls = QHBoxLayout()
@@ -141,6 +145,19 @@ class MainWindow(QMainWindow):
         self._update_copy()
         self._update_swap()
         self.source_editor.setFocus()
+
+    def set_dlx_connection(self, status: str, job: TranslationJob | None = None) -> None:
+        """Show the startup outcome and enable translation when a job is available."""
+        self._job = job
+        self._translation_unavailable_reason = status if job is None else None
+        self._dlx_status.setText(status)
+        self._dlx_status.show()
+        self.translate_button.setToolTip(
+            self._translation_unavailable_reason or self.tr("Translate (Ctrl+Enter)")
+        )
+        if job is not None:
+            self._chunk_size = job.max_units
+        self._update_counter()
 
     def _populate_languages(self, source: Language, target: Language) -> None:
         names = {
