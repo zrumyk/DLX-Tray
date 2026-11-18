@@ -6,17 +6,24 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-18
+
 ### Added
 - With `DLX_DEEPL_API_KEY` configured, use the official DeepL API for a chunk when DLX is
   rate-limited or unavailable. Translation can also start when bundled DLX fails to launch.
 - After DLX returns HTTP 429, use the configured official API during a cooldown that carries
   over to the next translation job.
-- Read the official DeepL API key from Windows Credential Manager at startup. A non-blank
-  `DLX_DEEPL_API_KEY` environment or development `.env` value takes precedence.
+- Read the official DeepL API key from Windows Credential Manager at startup when the effective
+  `DLX_DEEPL_API_KEY` override from the process environment or development `.env` is missing or blank.
 - If a chunk cannot be translated after retries, pause so you can retry it, keep its original
   text and move on, or cancel and keep the result so far.
 - The status bar shows which provider is handling translation and warns when DLX reaches its
   rate limit, including the retry delay when the app is waiting to retry DLX.
+
+### Known issues
+- Bundled DLX v1.3.1 can return HTTP 429 even on a short request. The cause is unconfirmed.
+  See [DLX issue #248](https://github.com/OwO-Network/DLX/issues/248) for upstream reports.
+  Translation through the official DeepL API was verified with a configured key.
 
 ## [0.3.0] - 2026-11-18
 
@@ -65,7 +72,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   pre-commit hooks and CI on Windows.
 - Script to download the pinned DLX v1.3.1 binary with SHA-256 verification.
 
-[Unreleased]: https://github.com/zrumyk/DLX-Tray/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/zrumyk/DLX-Tray/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/zrumyk/DLX-Tray/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/zrumyk/DLX-Tray/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/zrumyk/DLX-Tray/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/zrumyk/DLX-Tray/releases/tag/v0.1.0
