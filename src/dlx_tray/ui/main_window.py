@@ -36,6 +36,7 @@ def _editor_text(editor: QPlainTextEdit) -> str:
 
 class MainWindow(QMainWindow):
     translation_requested = Signal(str, object, object)
+    settings_requested = Signal()
 
     def __init__(
         self,
@@ -49,6 +50,8 @@ class MainWindow(QMainWindow):
         translation_unavailable_reason: str | None = None,
     ) -> None:
         super().__init__(parent)
+        self.settings_action = self.menuBar().addAction(self.tr("&Settings…"))
+        self.settings_action.triggered.connect(self.settings_requested)
         self._chunk_size = translation_job.max_units if translation_job else chunk_size
         self._job = translation_job
         self._formality = formality
@@ -160,7 +163,14 @@ class MainWindow(QMainWindow):
         self._update_swap()
         self.source_editor.setFocus()
 
-    def set_dlx_connection(self, status: str, job: TranslationJob | None = None) -> None:
+    def set_dlx_connection(
+        self,
+        status: str,
+        job: TranslationJob | None = None,
+        *,
+        chunk_size: int | None = None,
+        formality: Formality | None = None,
+    ) -> None:
         """Show the startup outcome and enable translation when a job is available."""
         self._job = job
         self._translation_unavailable_reason = status if job is None else None
@@ -171,6 +181,10 @@ class MainWindow(QMainWindow):
         )
         if job is not None:
             self._chunk_size = job.max_units
+        elif chunk_size is not None:
+            self._chunk_size = chunk_size
+        if formality is not None:
+            self._formality = formality
         self._update_counter()
 
     def _populate_languages(self, source: Language, target: Language) -> None:
@@ -315,6 +329,7 @@ class MainWindow(QMainWindow):
         thread.start()
 
     def _set_input_locked(self, locked: bool) -> None:
+        self.settings_action.setEnabled(not locked)
         self.source_editor.setReadOnly(locked)
         self.source_languages.setEnabled(not locked)
         self.target_languages.setEnabled(not locked)

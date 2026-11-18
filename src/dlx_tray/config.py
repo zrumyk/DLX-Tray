@@ -20,6 +20,7 @@ from pydantic_settings import (
 )
 
 from dlx_tray import APP_NAME
+from dlx_tray._file_lock import file_lock
 from dlx_tray.core.models import Formality, Language
 
 type UiLanguage = Literal["en", "uk"]
@@ -119,6 +120,9 @@ class Settings(BaseSettings):
         """Convert retries into the total attempt budget expected by RetryPolicy."""
         return 1 + self.retries
 
+    def is_overridden(self, name: str) -> bool:
+        return name in self._overridden_preferences
+
     @classmethod
     def load(cls, path: Path | None = None, *, env_file: Path | None = Path(".env")) -> Self:
         if path is None:
@@ -135,25 +139,30 @@ class Settings(BaseSettings):
         settings._overridden_preferences = preference_fields & overrides.keys()
         return settings
 
-    def save(self, path: Path | None = None) -> None:
-        """Atomically save preferences and preserve any values shadowed by overrides."""
+    def save(self, path: Path | None = None, *, changes_from: Settings | None = None) -> None:
+        """Atomically save preferences, preserving settings unedited since changes_from."""
         if path is None:
             path = app_data_dir() / "settings.json"
         saved = self.model_dump(mode="json", exclude=self._overridden_preferences)
-        if self._overridden_preferences:
-            existing = _read_preferences(path)
-            saved.update(
-                {name: existing[name] for name in self._overridden_preferences & existing.keys()}
-            )
         path.parent.mkdir(parents=True, exist_ok=True)
-        temporary: Path | None = None
-        try:
-            with NamedTemporaryFile(
-                mode="w", encoding="utf-8", dir=path.parent, delete=False
-            ) as stream:
-                temporary = Path(stream.name)
-                stream.write(json.dumps(saved, indent=2, ensure_ascii=False) + "\n")
-            temporary.replace(path)
-        finally:
-            if temporary is not None:
-                temporary.unlink(missing_ok=True)
+        with file_lock(path.with_name(f"{path.name}.lock")):
+            preserve = self._overridden_preferences.copy()
+            if changes_from is not None:
+                before = changes_from.model_dump(mode="json")
+                preserve.update(name for name, value in saved.items() if before[name] == value)
+                saved = {name: value for name, value in saved.items() if name not in preserve}
+            if preserve:
+                existing = _read_preferences(path)
+                saved.update({name: existing[name] for name in preserve & existing.keys()})
+
+            temporary: Path | None = None
+            try:
+                with NamedTemporaryFile(
+                    mode="w", encoding="utf-8", dir=path.parent, delete=False
+                ) as stream:
+                    temporary = Path(stream.name)
+                    stream.write(json.dumps(saved, indent=2, ensure_ascii=False) + "\n")
+                temporary.replace(path)
+            finally:
+                if temporary is not None:
+                    temporary.unlink(missing_ok=True)

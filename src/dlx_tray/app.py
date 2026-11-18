@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from contextlib import ExitStack
 
+from keyring.errors import KeyringError
 from pydantic_settings import SettingsError
 from PySide6.QtCore import QCoreApplication, Qt, QThread
 from PySide6.QtWidgets import QApplication, QMessageBox
@@ -19,9 +20,10 @@ from dlx_tray.providers.base import Translator
 from dlx_tray.providers.deepl_official import DeepLOfficialTranslator
 from dlx_tray.providers.deeplx import DeeplxTranslator
 from dlx_tray.providers.fallback import FallbackTranslator
-from dlx_tray.secrets import get_deepl_api_key
+from dlx_tray.secrets import delete_deepl_api_key, get_deepl_api_key, set_deepl_api_key
 from dlx_tray.services.deeplx_process import DLXProcess
 from dlx_tray.ui.main_window import MainWindow
+from dlx_tray.ui.settings_dialog import SettingsDialog
 
 log = logging.getLogger(__name__)
 
@@ -41,6 +43,14 @@ class _DLXStartup(QThread):
             self.ready = True
 
 
+def _check_deepl_api_key(key: str) -> None:
+    official = DeepLOfficialTranslator(key, timeout=5.0)
+    try:
+        official.check_key()
+    finally:
+        official.close()
+
+
 def _run_window(app: QApplication, settings: Settings, stack: ExitStack) -> int:
     window = MainWindow(
         source=settings.source_lang,
@@ -50,58 +60,121 @@ def _run_window(app: QApplication, settings: Settings, stack: ExitStack) -> int:
     )
 
     override = settings.deepl_api_key
-    api_key = get_deepl_api_key(override.get_secret_value() if override is not None else None)
+    override_key = (override.get_secret_value().strip() or None) if override else None
+    api_key = get_deepl_api_key(override_key)
     official = DeepLOfficialTranslator(api_key) if api_key else None
-    if official is not None:
-        stack.callback(official.close)
+    dlx: DeeplxTranslator | None = None
+    translator: Translator | None = None
+    status = QCoreApplication.translate("Startup", "Starting DLX…")
+    starting = settings.deeplx_url is None
 
-    def connect_translator(status: str, translator: Translator | None) -> None:
-        if translator is None:
-            window.set_dlx_connection(status)
-            return
-        job = TranslationJob(
-            translator=translator,
-            max_units=settings.chunk_size,
-            request_delay=settings.request_delay,
-            retry_policy=RetryPolicy(max_attempts=settings.max_attempts),
+    def close_official() -> None:
+        if official is not None:
+            official.close()
+
+    stack.callback(close_official)
+
+    def refresh_job() -> None:
+        job = (
+            TranslationJob(
+                translator=translator,
+                max_units=settings.chunk_size,
+                request_delay=settings.request_delay,
+                retry_policy=RetryPolicy(max_attempts=settings.max_attempts),
+            )
+            if translator is not None
+            else None
         )
-        window.set_dlx_connection(status, job)
+        window.set_dlx_connection(
+            status, job, chunk_size=settings.chunk_size, formality=settings.formality
+        )
 
-    def connect_dlx(url: str, token: str, status: str) -> None:
-        dlx = stack.enter_context(DeeplxTranslator(url, token))
-        connect_translator(status, FallbackTranslator(dlx, official) if official else dlx)
+    def refresh_provider() -> None:
+        nonlocal translator
+        if starting:
+            translator = None
+        elif dlx is not None and official is not None:
+            translator = FallbackTranslator(dlx, official)
+        else:
+            translator = dlx or official
+
+    def save_preferences(updated: Settings, key: str | None) -> str | None:
+        nonlocal settings, official, api_key
+        try:
+            updated.save(changes_from=settings)
+        except (OSError, ValueError) as exc:
+            log.warning("Could not save settings (%s)", type(exc).__name__)
+            return QCoreApplication.translate("SettingsDialog", "Could not save settings.")
+
+        settings = updated
+        error = None
+        if override_key is None and key != api_key:
+            try:
+                if key is None:
+                    delete_deepl_api_key()
+                else:
+                    set_deepl_api_key(key)
+            except KeyringError:
+                log.warning("Could not update the stored DeepL API key")
+                error = QCoreApplication.translate(
+                    "SettingsDialog", "Preferences saved. Could not update the stored API key."
+                )
+            else:
+                close_official()
+                api_key = key
+                official = DeepLOfficialTranslator(key) if key is not None else None
+                if isinstance(translator, FallbackTranslator) and official is not None:
+                    translator.replace_secondary(official)
+                else:
+                    refresh_provider()
+        refresh_job()
+        return error
+
+    def open_settings() -> None:
+        dialog = SettingsDialog(
+            settings,
+            api_key,
+            key_overridden=override_key is not None,
+            save=save_preferences,
+            check_key=_check_deepl_api_key,
+            parent=window,
+        )
+        try:
+            dialog.exec()
+        finally:
+            dialog.wait_for_key_check()
+            dialog.deleteLater()
+
+    window.settings_requested.connect(open_settings)
 
     startup = None
     if settings.deeplx_url is not None:
         token = settings.deeplx_token.get_secret_value() if settings.deeplx_token else ""
-        connect_dlx(
-            str(settings.deeplx_url),
-            token,
-            QCoreApplication.translate("Startup", "Using external DLX server"),
-        )
+        dlx = stack.enter_context(DeeplxTranslator(str(settings.deeplx_url), token))
+        status = QCoreApplication.translate("Startup", "Using external DLX server")
+        refresh_provider()
     else:
         process = DLXProcess()
         stack.callback(process.stop)
         startup = _DLXStartup(process)
-        window.set_dlx_connection(QCoreApplication.translate("Startup", "Starting DLX…"))
 
         def startup_finished() -> None:
+            nonlocal dlx, status, starting
             if not window.isVisible():
                 return
+            starting = False
             if startup.ready:
-                connect_dlx(
-                    process.base_url,
-                    process.token,
-                    QCoreApplication.translate("Startup", "DLX ready"),
-                )
+                dlx = stack.enter_context(DeeplxTranslator(process.base_url, process.token))
+                status = QCoreApplication.translate("Startup", "DLX ready")
             else:
-                connect_translator(
-                    QCoreApplication.translate("Startup", "DLX unavailable"), official
-                )
+                status = QCoreApplication.translate("Startup", "DLX unavailable")
+            refresh_provider()
+            refresh_job()
 
         connection = startup.finished.connect(startup_finished, Qt.ConnectionType.QueuedConnection)
         stack.callback(startup.disconnect, connection)
 
+    refresh_job()
     try:
         window.show()
         if startup is not None:

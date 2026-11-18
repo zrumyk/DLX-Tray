@@ -38,6 +38,14 @@ class DeepLOfficialTranslator:
     def close(self) -> None:
         self._client.close()
 
+    def check_key(self) -> None:
+        """Verify authentication without submitting a translation."""
+        try:
+            self._client.get_usage()
+        except deepl.DeepLException as exc:
+            log.warning("DeepL key check failed (%s)", type(exc).__name__)
+            raise _translation_error(exc) from None
+
     def translate(
         self,
         texts: Sequence[str],

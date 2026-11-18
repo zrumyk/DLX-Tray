@@ -4,20 +4,23 @@ from collections.abc import Callable
 from contextlib import ExitStack, nullcontext
 from pathlib import Path
 from threading import Event
-from unittest.mock import Mock
+from unittest.mock import Mock, call
 
 import pytest
+from keyring.errors import KeyringError
 from PySide6.QtCore import QTimer
 from PySide6.QtGui import QShortcut
-from PySide6.QtWidgets import QApplication, QLabel
+from PySide6.QtWidgets import QApplication, QDialogButtonBox, QLabel
 from pytestqt.qtbot import QtBot
 from tests.fakes.fake_dlx import FakeDLXFactory
 
-from dlx_tray import app, secrets
+from dlx_tray import app, config, secrets
 from dlx_tray.config import Settings
 from dlx_tray.core.models import Formality, Language, ProviderUnavailableError, TranslationResult
+from dlx_tray.providers import fallback
 from dlx_tray.services.deeplx_process import DLXProcess
 from dlx_tray.ui.main_window import MainWindow
+from dlx_tray.ui.settings_dialog import SettingsDialog
 
 
 @pytest.fixture
@@ -232,3 +235,164 @@ def test_close_during_dlx_startup_joins_worker_before_stopping_process(
 
     run_window(Settings(), check)
     process.stop.assert_called_once_with()
+
+
+def _edit_settings(
+    window: MainWindow, edit: Callable[[SettingsDialog], None], *, save: bool = True
+) -> None:
+    def interact() -> None:
+        dialog = QApplication.activeModalWidget()
+        assert isinstance(dialog, SettingsDialog)
+        try:
+            edit(dialog)
+            if save:
+                dialog.buttons.button(QDialogButtonBox.StandardButton.Save).click()
+                assert not dialog.isVisible()
+        finally:
+            if dialog.isVisible():
+                dialog.reject()
+
+    QTimer.singleShot(0, interact)
+    window.settings_action.trigger()
+
+
+def test_settings_save_applies_to_next_job_and_reloads(
+    run_window: Callable[[Settings, Callable[[MainWindow, QLabel], None]], None],
+    qtbot: QtBot,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    fake_dlx: FakeDLXFactory,
+    fixture_text: Callable[[str], str],
+    vault: Mock,
+) -> None:
+    monkeypatch.setattr(config, "app_data_dir", lambda: tmp_path)
+    monkeypatch.setattr(fallback, "monotonic", lambda: 100.0)
+    vault._read_credential.return_value = None
+    official = Mock(spec=app.DeepLOfficialTranslator, name="official")
+    official.name = "deepl"
+    official.translate.side_effect = lambda texts, *_: [
+        TranslationResult(text, Language.EN, "deepl") for text in texts
+    ]
+    rotated_official = Mock(spec=app.DeepLOfficialTranslator)
+    rotated_official.name = "deepl"
+    rotated_official.translate.side_effect = official.translate.side_effect
+    official_factory = Mock(side_effect=[official, rotated_official])
+    monkeypatch.setattr(app, "DeepLOfficialTranslator", official_factory)
+    job_factory = Mock(wraps=app.TranslationJob)
+    monkeypatch.setattr(app, "TranslationJob", job_factory)
+    source = fixture_text("en_article.txt")[:240]
+    path = tmp_path / "settings.json"
+
+    def edit(dialog: SettingsDialog) -> None:
+        assert not dialog.formality.isEnabled()
+        dialog.api_key.setText("saved-key:fx")
+        dialog.formality.setCurrentIndex(dialog.formality.findData(Formality.PREFER_MORE.value))
+        dialog.chunk_size.setValue(200)
+        dialog.delay.setValue(0)
+        dialog.retries.setText("0")
+        dialog.theme.setCurrentIndex(dialog.theme.findData("dark"))
+        dialog.ui_language.setCurrentIndex(dialog.ui_language.findData("uk"))
+        dialog.history_limit.setText("125")
+        dialog.history_enabled.setChecked(False)
+
+    def check(window: MainWindow, status: QLabel) -> None:
+        window.source_editor.setPlainText(source)
+        assert "1 chunks" in window.counter.text()
+        _edit_settings(window, edit)
+        assert "2 chunks" in window.counter.text()
+        job_arguments = job_factory.call_args.kwargs
+        assert job_arguments["max_units"] == 200
+        assert job_arguments["request_delay"] == 0
+        assert job_arguments["retry_policy"].max_attempts == 1
+        window.translate_button.click()
+        assert not window.settings_action.isEnabled()
+        qtbot.waitUntil(window.settings_action.isEnabled)
+        assert window.result_editor.toPlainText() == source
+        assert official.translate.call_count == 2
+        assert all(
+            call.args[3] == Formality.PREFER_MORE for call in official.translate.call_args_list
+        )
+
+        assert "saved-key" not in path.read_text(encoding="utf-8")
+        persisted = Settings.load(path, env_file=None)
+        assert persisted.chunk_size == 200
+        assert persisted.request_delay == 0
+        assert persisted.retries == 0
+        assert persisted.formality == Formality.PREFER_MORE
+        assert persisted.theme == "dark"
+        assert persisted.ui_language == "uk"
+        assert not persisted.history_enabled
+        assert persisted.history_limit == 125
+
+        def rotate(dialog: SettingsDialog) -> None:
+            assert dialog.api_key.text() == "saved-key:fx"
+            dialog.api_key.setText("rotated-key:fx")
+
+        _edit_settings(window, rotate)
+        official.close.assert_called_once_with()
+        window.translate_button.click()
+        qtbot.waitUntil(window.settings_action.isEnabled)
+        assert window.result_editor.toPlainText() == source
+        assert rotated_official.translate.call_count == 2
+
+        def clear(dialog: SettingsDialog) -> None:
+            assert dialog.api_key.text() == "rotated-key:fx"
+            dialog.api_key.clear()
+
+        _edit_settings(window, clear)
+        rotated_official.close.assert_called_once_with()
+        window.translate_button.click()
+        qtbot.waitUntil(window.settings_action.isEnabled)
+        assert window.result_editor.toPlainText().startswith("[UK]")
+        assert official.translate.call_count == 2
+
+    with fake_dlx(["429"]) as server:
+        settings = Settings.model_validate({"deeplx_url": server.url, "deeplx_token": server.token})
+        run_window(settings, check)
+
+    assert vault._set_password.call_args_list == [
+        call("DLX Tray", "deepl_api_key", "saved-key:fx"),
+        call("DLX Tray", "deepl_api_key", "rotated-key:fx"),
+    ]
+    vault.delete_password.assert_called_once_with("DLX Tray", "deepl_api_key")
+    assert official_factory.call_args_list == [call("saved-key:fx"), call("rotated-key:fx")]
+
+
+@pytest.mark.parametrize("settings_fail", [True, False], ids=["json", "credential-manager"])
+def test_settings_save_reports_storage_failures(
+    run_window: Callable[[Settings, Callable[[MainWindow, QLabel], None]], None],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    fake_dlx: FakeDLXFactory,
+    settings_fail: bool,
+) -> None:
+    monkeypatch.setattr(config, "app_data_dir", lambda: tmp_path)
+    write_key = Mock(side_effect=KeyringError("store unavailable"))
+    monkeypatch.setattr(app, "set_deepl_api_key", write_key)
+    if settings_fail:
+        monkeypatch.setattr(Settings, "save", Mock(side_effect=OSError("file unavailable")))
+
+    def edit(dialog: SettingsDialog) -> None:
+        dialog.chunk_size.setValue(200)
+        dialog.api_key.setText("test-key")
+        dialog.buttons.button(QDialogButtonBox.StandardButton.Save).click()
+        assert dialog.isVisible()
+        assert dialog.save_status.text() == (
+            "Could not save settings."
+            if settings_fail
+            else "Preferences saved. Could not update the stored API key."
+        )
+
+    def check(window: MainWindow, status: QLabel) -> None:
+        window.source_editor.setPlainText("a" * 201)
+        _edit_settings(window, edit, save=False)
+        assert window.counter.text().endswith("1 chunks" if settings_fail else "2 chunks")
+
+    with fake_dlx([]) as server:
+        run_window(Settings.model_validate({"deeplx_url": server.url}), check)
+
+    if settings_fail:
+        write_key.assert_not_called()
+    else:
+        write_key.assert_called_once_with("test-key")
+        assert Settings.load(tmp_path / "settings.json", env_file=None).chunk_size == 200

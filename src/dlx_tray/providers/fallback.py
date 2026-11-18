@@ -30,6 +30,11 @@ class FallbackTranslator:
         self._lock = Lock()
         self._primary_blocked_until = 0.0
 
+    def replace_secondary(self, secondary: Translator) -> None:
+        """Keep the primary cooldown when its fallback credentials change."""
+        with self._lock:
+            self._secondary = secondary
+
     def translate(
         self,
         texts: Sequence[str],
@@ -46,6 +51,7 @@ class FallbackTranslator:
             return []
         with self._lock:
             primary_available = monotonic() >= self._primary_blocked_until
+            secondary = self._secondary
         if primary_available:
             if on_provider is not None:
                 on_provider(self._primary.name)
@@ -63,12 +69,12 @@ class FallbackTranslator:
                     "Translation provider %s failed (%s), falling back to %s",
                     self._primary.name,
                     type(exc).__name__,
-                    self._secondary.name,
+                    secondary.name,
                 )
         elif on_rate_limit is not None:
             on_rate_limit(self._primary.name)
         if cancel is not None and cancel.is_set():
             raise TranslationCancelledError("cancelled before fallback request")
         if on_provider is not None:
-            on_provider(self._secondary.name)
-        return self._secondary.translate(texts, source, target, formality)
+            on_provider(secondary.name)
+        return secondary.translate(texts, source, target, formality)

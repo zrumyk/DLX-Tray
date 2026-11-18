@@ -6,6 +6,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- A Settings dialog for chunk size, request delay, retries, and official DeepL formality.
+- Save, remove, or test a masked DeepL API key from Settings. Changes apply to the next translation.
+- Save preferences for the upcoming theme, interface language, and translation history features.
+
 ## [0.4.0] - 2026-11-18
 
 ### Added
