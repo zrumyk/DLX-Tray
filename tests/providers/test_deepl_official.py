@@ -37,6 +37,36 @@ def _response(status: int, data: object) -> requests.Response:
     return response
 
 
+def test_key_check_uses_usage_without_submitting_text(send: MagicMock) -> None:
+    send.return_value = _response(200, {"character_count": 0, "character_limit": 500000})
+    translator = DeepLOfficialTranslator("test-key:fx", timeout=5.0)
+    try:
+        translator.check_key()
+    finally:
+        translator.close()
+
+    send.assert_called_once()
+    request = send.call_args.args[0]
+    assert request.method == "GET"
+    assert request.url == "https://api-free.deepl.com/v2/usage"
+    assert request.headers["Authorization"] == "DeepL-Auth-Key test-key:fx"
+    assert request.body is None
+    assert send.call_args.kwargs["timeout"] == 5.0
+
+
+def test_key_check_sanitizes_rejection(send: MagicMock, caplog: pytest.LogCaptureFixture) -> None:
+    send.return_value = _response(403, {"message": "sensitive response"})
+    translator = DeepLOfficialTranslator("test-key")
+    try:
+        with pytest.raises(AuthError, match="DeepL rejected the API key"):
+            translator.check_key()
+    finally:
+        translator.close()
+
+    assert "sensitive response" not in caplog.text
+    assert "test-key" not in caplog.text
+
+
 @pytest.mark.parametrize(
     ("key", "host"),
     [("test-key:fx", "api-free.deepl.com"), ("test-key", "api.deepl.com")],

@@ -119,6 +119,9 @@ class Settings(BaseSettings):
         """Convert retries into the total attempt budget expected by RetryPolicy."""
         return 1 + self.retries
 
+    def is_overridden(self, name: str) -> bool:
+        return name in self._overridden_preferences
+
     @classmethod
     def load(cls, path: Path | None = None, *, env_file: Path | None = Path(".env")) -> Self:
         if path is None:
