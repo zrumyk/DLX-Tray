@@ -19,8 +19,9 @@ from PySide6.QtWidgets import (
 
 from dlx_tray import APP_NAME, __version__
 from dlx_tray.core import chunker
-from dlx_tray.core.models import Formality, Language
+from dlx_tray.core.models import Formality, Language, TranslationError
 from dlx_tray.core.pipeline import JobResult, TranslationJob
+from dlx_tray.ui.error_dialog import ErrorDialog
 from dlx_tray.ui.workers import TranslationWorker
 
 
@@ -50,6 +51,7 @@ class MainWindow(QMainWindow):
         self._translation_unavailable_reason = translation_unavailable_reason
         self._thread: QThread | None = None
         self._worker: TranslationWorker | None = None
+        self._error_dialog: ErrorDialog | None = None
         self._detected_source: Language | None = None
         self._close_pending = False
         self._rendered_chars = 0
@@ -276,6 +278,7 @@ class MainWindow(QMainWindow):
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
         worker.progress.connect(self._show_progress)
+        worker.chunk_failed.connect(self._show_chunk_failure)
         worker.finished.connect(self._show_finished)
         worker.failed.connect(self._show_failure)
         worker.finished.connect(thread.quit)
@@ -345,12 +348,33 @@ class MainWindow(QMainWindow):
     def _show_failure(self) -> None:
         self.statusBar().showMessage(self.tr("Translation failed. Check DLX and try again."))
 
+    @Slot(object)
+    def _show_chunk_failure(self, error: TranslationError) -> None:
+        if self._worker is None or not self.cancel_button.isEnabled():
+            return
+        dialog = ErrorDialog(
+            self.progress_bar.value() + 1, self.progress_bar.maximum(), error, self
+        )
+        self._error_dialog = dialog
+        dialog.finished.connect(self._answer_chunk_failure)
+        dialog.show()
+
+    @Slot()
+    def _answer_chunk_failure(self) -> None:
+        dialog = self._error_dialog
+        assert dialog is not None and self._worker is not None
+        self._error_dialog = None
+        self._worker.answer_failure(dialog.action)
+        dialog.deleteLater()
+
     @Slot()
     def _cancel_translation(self) -> None:
         if self._worker is not None:
-            self._worker.cancel.set()
+            self._worker.cancel()
             self.cancel_button.setEnabled(False)
             self.progress_label.setText(self.tr("Cancelling…"))
+            if self._error_dialog is not None:
+                self._error_dialog.reject()
 
     @Slot()
     def _translation_stopped(self) -> None:
