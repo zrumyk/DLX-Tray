@@ -15,6 +15,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `DLX_DEEPL_API_KEY` environment or development `.env` value takes precedence.
 - If a chunk cannot be translated after retries, pause so you can retry it, keep its original
   text and move on, or cancel and keep the result so far.
+- The status bar shows which provider is handling translation and warns when DLX reaches its
+  rate limit, including the retry delay when the app is waiting to retry DLX.
 
 ## [0.3.0] - 2026-11-18
 

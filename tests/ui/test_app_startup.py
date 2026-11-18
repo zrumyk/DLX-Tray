@@ -167,6 +167,13 @@ def test_uses_official_api_when_dlx_is_unavailable(
         assert status.text() == (
             "DLX unavailable" if startup_fails else "Using external DLX server"
         )
+        provider = window.findChild(QLabel, "provider_status")
+        warning = window.findChild(QLabel, "rate_limit_status")
+        assert provider is not None and provider.isVisible()
+        assert provider.text() == "Provider: DeepL API"
+        assert warning is not None and warning.isVisible() == (not startup_fails)
+        if not startup_fails:
+            assert warning.text() == "DLX rate limit reached."
         official.close.assert_not_called()
 
     with fake_dlx(["429"]) as server:

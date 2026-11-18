@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from threading import Event, Lock
 from time import monotonic
 
@@ -38,6 +38,8 @@ class FallbackTranslator:
         formality: Formality = Formality.DEFAULT,
         *,
         cancel: Event | None = None,
+        on_provider: Callable[[str], None] | None = None,
+        on_rate_limit: Callable[[str], None] | None = None,
     ) -> list[TranslationResult]:
         """Try the whole input on each provider in order, preserving result attribution."""
         if not texts:
@@ -45,6 +47,8 @@ class FallbackTranslator:
         with self._lock:
             primary_available = monotonic() >= self._primary_blocked_until
         if primary_available:
+            if on_provider is not None:
+                on_provider(self._primary.name)
             try:
                 return self._primary.translate(texts, source, target, formality)
             except RETRYABLE_ERRORS as exc:
@@ -53,12 +57,18 @@ class FallbackTranslator:
                     deadline = monotonic() + min(delay, _RETRY_DEFAULTS.max_retry_after)
                     with self._lock:
                         self._primary_blocked_until = max(self._primary_blocked_until, deadline)
+                    if on_rate_limit is not None:
+                        on_rate_limit(self._primary.name)
                 log.info(
                     "Translation provider %s failed (%s), falling back to %s",
                     self._primary.name,
                     type(exc).__name__,
                     self._secondary.name,
                 )
+        elif on_rate_limit is not None:
+            on_rate_limit(self._primary.name)
         if cancel is not None and cancel.is_set():
             raise TranslationCancelledError("cancelled before fallback request")
+        if on_provider is not None:
+            on_provider(self._secondary.name)
         return self._secondary.translate(texts, source, target, formality)

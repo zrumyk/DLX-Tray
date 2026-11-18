@@ -7,14 +7,17 @@ from threading import Event
 
 from PySide6.QtCore import QObject, Signal, Slot
 
-from dlx_tray.core.models import Chunk, Formality, Language, TranslationError
+from dlx_tray.core.models import Chunk, Formality, Language, RateLimitedError, TranslationError
 from dlx_tray.core.pipeline import FailureAction, TranslationJob
+from dlx_tray.providers.deeplx import PROVIDER_NAME as DLX_NAME
 
 log = logging.getLogger(__name__)
 
 
 class TranslationWorker(QObject):
     progress = Signal(int, int, str)
+    provider_changed = Signal(str)
+    dlx_rate_limited = Signal(float)
     chunk_failed = Signal(object)
     finished = Signal(object)
     failed = Signal()
@@ -54,6 +57,14 @@ class TranslationWorker(QObject):
         self._failure_answered.wait()
         return self._failure_action
 
+    def _report_rate_limit(self, provider: str) -> None:
+        if provider == DLX_NAME:
+            self.dlx_rate_limited.emit(0.0)
+
+    def _report_retry(self, _attempt: int, delay: float, error: TranslationError) -> None:
+        if self._job.translator.name == DLX_NAME and isinstance(error, RateLimitedError):
+            self.dlx_rate_limited.emit(delay)
+
     @Slot()
     def run(self) -> None:
         try:
@@ -65,6 +76,9 @@ class TranslationWorker(QObject):
                 cancel=self._cancel,
                 on_progress=self.progress.emit,
                 on_failure=self._ask_about_failure,
+                on_retry=self._report_retry,
+                on_provider=self.provider_changed.emit,
+                on_rate_limit=self._report_rate_limit,
             )
         except Exception as exc:
             # Exception messages from a provider may contain user text or credentials.

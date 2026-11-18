@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from math import ceil
+
 from PySide6.QtCore import Qt, QThread, Signal, Slot
 from PySide6.QtGui import QCloseEvent, QKeySequence, QShortcut, QTextCursor
 from PySide6.QtWidgets import (
@@ -21,6 +23,8 @@ from dlx_tray import APP_NAME, __version__
 from dlx_tray.core import chunker
 from dlx_tray.core.models import Formality, Language, TranslationError
 from dlx_tray.core.pipeline import JobResult, TranslationJob
+from dlx_tray.providers.deepl_official import PROVIDER_NAME as DEEPL_NAME
+from dlx_tray.providers.deeplx import PROVIDER_NAME as DLX_NAME
 from dlx_tray.ui.error_dialog import ErrorDialog
 from dlx_tray.ui.workers import TranslationWorker
 
@@ -95,6 +99,14 @@ class MainWindow(QMainWindow):
         self._dlx_status.setObjectName("dlx_status")
         self._dlx_status.hide()
         self.statusBar().addPermanentWidget(self._dlx_status)
+        self._provider_status = QLabel()
+        self._provider_status.setObjectName("provider_status")
+        self._provider_status.hide()
+        self.statusBar().addPermanentWidget(self._provider_status)
+        self._rate_limit_status = QLabel()
+        self._rate_limit_status.setObjectName("rate_limit_status")
+        self._rate_limit_status.hide()
+        self.statusBar().addPermanentWidget(self._rate_limit_status)
 
         languages = QHBoxLayout()
         source_controls = QHBoxLayout()
@@ -278,6 +290,8 @@ class MainWindow(QMainWindow):
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
         worker.progress.connect(self._show_progress)
+        worker.provider_changed.connect(self._show_provider)
+        worker.dlx_rate_limited.connect(self._show_dlx_rate_limit)
         worker.chunk_failed.connect(self._show_chunk_failure)
         worker.finished.connect(self._show_finished)
         worker.failed.connect(self._show_failure)
@@ -290,6 +304,8 @@ class MainWindow(QMainWindow):
         self._clear_detected_source()
         self.result_editor.clear()
         self.statusBar().clearMessage()
+        self._provider_status.hide()
+        self._rate_limit_status.hide()
         self.progress_bar.setRange(0, self._chunk_count)
         self.progress_bar.setValue(0)
         self.progress_label.setText(self.tr("Starting translation…"))
@@ -313,6 +329,26 @@ class MainWindow(QMainWindow):
             label = self.tr("Chunk {processed} of {total}")
             self.progress_label.setText(label.format(processed=processed, total=total))
         self._append_result(text)
+
+    @Slot(str)
+    def _show_provider(self, provider: str) -> None:
+        names = {DLX_NAME: "DLX", DEEPL_NAME: self.tr("DeepL API")}
+        self._provider_status.setText(
+            self.tr("Provider: {name}").format(name=names.get(provider, provider))
+        )
+        self._provider_status.show()
+        if not self._rate_limit_status.isHidden():
+            self._show_dlx_rate_limit(0.0)
+
+    @Slot(float)
+    def _show_dlx_rate_limit(self, retry_delay: float) -> None:
+        warning = self.tr("DLX rate limit reached.")
+        if retry_delay > 0:
+            warning = self.tr("DLX rate limit reached. Retrying in {seconds} s.").format(
+                seconds=ceil(retry_delay)
+            )
+        self._rate_limit_status.setText(warning)
+        self._rate_limit_status.show()
 
     def _append_result(self, text: str) -> None:
         if len(text) > self._rendered_chars:
@@ -385,6 +421,8 @@ class MainWindow(QMainWindow):
         self._thread = None
         self._worker = None
         self._progress_row.hide()
+        if not self._rate_limit_status.isHidden():
+            self._show_dlx_rate_limit(0.0)
         self._set_input_locked(False)
         if self._close_pending:
             self.close()

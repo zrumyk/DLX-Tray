@@ -14,6 +14,7 @@ from dlx_tray.core.models import (
     Chunk,
     Formality,
     Language,
+    RateLimitedError,
     TranslationCancelledError,
     TranslationError,
     TranslationResult,
@@ -72,12 +73,15 @@ class TranslationJob:
         on_progress: ProgressCallback | None = None,
         on_failure: FailureCallback | None = None,
         on_retry: RetryCallback | None = None,
+        on_provider: Callable[[str], None] | None = None,
+        on_rate_limit: Callable[[str], None] | None = None,
     ) -> JobResult:
         """Report (processed, total, partial text) after each translated or skipped chunk.
 
         Continue retries the failed chunk with a fresh retry budget. Skip keeps its source
         text. Without a failure callback, the result carries the error and processed prefix.
         An in-flight request can finish after cancellation and its result is kept.
+        Report the backend before each request and any primary rate limit before a wait or fallback.
         """
         if cancel is None:
             cancel = Event()
@@ -98,12 +102,26 @@ class TranslationJob:
                 break
 
             def translate(chunk_text: str = chunk.text) -> TranslationResult:
-                if isinstance(self.translator, FallbackTranslator):
-                    (result,) = self.translator.translate(
-                        [chunk_text], source, target, formality, cancel=cancel
+                translator = self.translator
+                if isinstance(translator, FallbackTranslator):
+                    (result,) = translator.translate(
+                        [chunk_text],
+                        source,
+                        target,
+                        formality,
+                        cancel=cancel,
+                        on_provider=on_provider,
+                        on_rate_limit=on_rate_limit,
                     )
                 else:
-                    (result,) = self.translator.translate([chunk_text], source, target, formality)
+                    if on_provider is not None:
+                        on_provider(translator.name)
+                    try:
+                        (result,) = translator.translate([chunk_text], source, target, formality)
+                    except RateLimitedError:
+                        if on_rate_limit is not None:
+                            on_rate_limit(translator.name)
+                        raise
                 return result
 
             try:
