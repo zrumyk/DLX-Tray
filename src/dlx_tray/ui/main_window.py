@@ -2,17 +2,29 @@
 
 from __future__ import annotations
 
+from functools import partial
 from math import ceil
+from pathlib import Path
 
 from PySide6.QtCore import Qt, QThread, Signal, Slot
-from PySide6.QtGui import QCloseEvent, QKeySequence, QShortcut, QTextCursor
+from PySide6.QtGui import (
+    QCloseEvent,
+    QDragEnterEvent,
+    QDragMoveEvent,
+    QDropEvent,
+    QKeySequence,
+    QShortcut,
+    QTextCursor,
+)
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
+    QFileDialog,
     QGridLayout,
     QHBoxLayout,
     QLabel,
     QMainWindow,
+    QMessageBox,
     QPlainTextEdit,
     QProgressBar,
     QPushButton,
@@ -23,15 +35,31 @@ from dlx_tray import APP_NAME, __version__
 from dlx_tray.core import chunker
 from dlx_tray.core.models import Formality, Language, TranslationError
 from dlx_tray.core.pipeline import JobResult, TranslationJob
+from dlx_tray.fileio.pdf_io import NoTextLayerError
+from dlx_tray.fileio.translation import (
+    FILE_SUFFIXES,
+    EmptyFileError,
+    SourceFile,
+    SourceOverwriteError,
+)
 from dlx_tray.providers.deepl_official import PROVIDER_NAME as DEEPL_NAME
 from dlx_tray.providers.deeplx import PROVIDER_NAME as DLX_NAME
 from dlx_tray.ui.error_dialog import ErrorDialog
-from dlx_tray.ui.workers import TranslationWorker
+from dlx_tray.ui.workers import FileIOWorker, FileJobResult, TranslationWorker
 
 
 def _editor_text(editor: QPlainTextEdit) -> str:
     # QTextDocument.toPlainText() turns non-breaking spaces into ordinary spaces.
     return editor.document().toRawText().replace("\u2029", "\n")
+
+
+class _TextEditor(QPlainTextEdit):
+    # File drops belong to the window. Ordinary text drops keep the editor's behavior.
+    def dragEnterEvent(self, event: QDragEnterEvent) -> None:
+        if any(url.isLocalFile() for url in event.mimeData().urls()):
+            event.ignore()
+        else:
+            super().dragEnterEvent(event)
 
 
 class MainWindow(QMainWindow):
@@ -50,6 +78,15 @@ class MainWindow(QMainWindow):
         translation_unavailable_reason: str | None = None,
     ) -> None:
         super().__init__(parent)
+        file_menu = self.menuBar().addMenu(self.tr("&File"))
+        self.open_file_action = file_menu.addAction(self.tr("&Open file…"))
+        self.open_file_action.setShortcut(QKeySequence.StandardKey.Open)
+        self.open_file_action.triggered.connect(self._choose_file)
+        self.save_file_action = file_menu.addAction(self.tr("&Save translation…"))
+        self.save_file_action.setShortcut(QKeySequence.StandardKey.Save)
+        self.save_file_action.triggered.connect(self._choose_destination)
+        self.close_file_action = file_menu.addAction(self.tr("&Close file"))
+        self.close_file_action.triggered.connect(self._close_file)
         self.settings_action = self.menuBar().addAction(self.tr("&Settings…"))
         self.settings_action.triggered.connect(self.settings_requested)
         self._chunk_size = translation_job.max_units if translation_job else chunk_size
@@ -57,12 +94,15 @@ class MainWindow(QMainWindow):
         self._formality = formality
         self._translation_unavailable_reason = translation_unavailable_reason
         self._thread: QThread | None = None
-        self._worker: TranslationWorker | None = None
+        self._worker: TranslationWorker | FileIOWorker | None = None
+        self._file: SourceFile | None = None
+        self._file_translations: tuple[str, ...] | None = None
         self._error_dialog: ErrorDialog | None = None
         self._detected_source: Language | None = None
         self._close_pending = False
         self._rendered_chars = 0
         self.setWindowTitle(f"{APP_NAME} {__version__}")
+        self.setAcceptDrops(True)
         self.resize(1100, 700)
 
         central = QWidget(self)
@@ -82,15 +122,14 @@ class MainWindow(QMainWindow):
 
         self.swap_button = QPushButton(self.tr("Swap"))
         self.swap_button.setAccessibleName(self.tr("Swap languages and texts"))
-        self.source_editor = QPlainTextEdit()
+        self.source_editor = _TextEditor()
         self.source_editor.setAccessibleName(self.tr("Source text"))
         self.source_editor.setPlaceholderText(self.tr("Enter text to translate"))
-        self.result_editor = QPlainTextEdit()
+        self.result_editor = _TextEditor()
         self.result_editor.setAccessibleName(self.tr("Translation result"))
         self.result_editor.setPlaceholderText(self.tr("Translation"))
         self.result_editor.setReadOnly(True)
         self.counter = QLabel()
-        self.counter.setToolTip(self.tr("Characters are counted in UTF-16 code units."))
         self.copy_button = QPushButton(self.tr("Copy result"))
         self.translate_button = QPushButton(self.tr("Translate"))
         self.translate_button.setToolTip(
@@ -160,8 +199,162 @@ class MainWindow(QMainWindow):
         self.target_languages.currentIndexChanged.connect(self._clear_detected_source)
         self._update_counter()
         self._update_copy()
-        self._update_swap()
+        self._set_input_locked(False)
         self.source_editor.setFocus()
+
+    @Slot()
+    def _choose_file(self) -> None:
+        if self._thread is not None:
+            return
+        filename, _ = QFileDialog.getOpenFileName(
+            self, self.tr("Open file"), "", self.tr("Supported files (*.txt *.docx *.pdf)")
+        )
+        if filename:
+            self._open_file(Path(filename))
+
+    def _drop_path(self, event: QDropEvent) -> Path | None:
+        if self._thread is not None or not event.possibleActions() & Qt.DropAction.CopyAction:
+            return None
+        urls = event.mimeData().urls()
+        if len(urls) == 1 and urls[0].isLocalFile():
+            path = Path(urls[0].toLocalFile())
+            if path.suffix.lower() in FILE_SUFFIXES:
+                return path
+        return None
+
+    def dragEnterEvent(self, event: QDragEnterEvent) -> None:
+        self.dragMoveEvent(event)
+
+    def dragMoveEvent(self, event: QDragMoveEvent) -> None:
+        if self._drop_path(event) is None:
+            event.ignore()
+        else:
+            event.setDropAction(Qt.DropAction.CopyAction)
+            event.accept()
+
+    def dropEvent(self, event: QDropEvent) -> None:
+        path = self._drop_path(event)
+        if path is None:
+            event.ignore()
+            return
+        event.setDropAction(Qt.DropAction.CopyAction)
+        event.accept()
+        self._open_file(path)
+
+    def _open_file(self, path: Path) -> None:
+        worker = FileIOWorker(partial(SourceFile.read, path))
+        worker.finished.connect(self._show_opened_file)
+        worker.failed.connect(self._show_open_failure)
+        self._start_file_operation(worker, self.tr("Opening file…"))
+
+    @Slot(object)
+    def _show_opened_file(self, source: SourceFile) -> None:
+        self._file = source
+        self._file_translations = None
+        self.setWindowTitle(f"{source.path.name} — {APP_NAME} {__version__}")
+        self.source_editor.setPlainText("\n\n".join(source.segments))
+        self.result_editor.clear()
+        self._provider_status.hide()
+        self._rate_limit_status.hide()
+        self.statusBar().clearMessage()
+
+    @Slot(object)
+    def _show_open_failure(self, error: type[Exception]) -> None:
+        if issubclass(error, NoTextLayerError):
+            message = self.tr("This PDF has no extractable text layer.")
+        elif issubclass(error, EmptyFileError):
+            message = self.tr("The file contains no text to translate.")
+        else:
+            message = self.tr("Could not open the file. Check its format and access permissions.")
+        self.statusBar().showMessage(message)
+
+    @Slot()
+    def _close_file(self) -> None:
+        if self._thread is not None or self._file is None:
+            return
+        self._file = None
+        self._file_translations = None
+        self.setWindowTitle(f"{APP_NAME} {__version__}")
+        self.source_editor.clear()
+        self.result_editor.clear()
+        self._provider_status.hide()
+        self._rate_limit_status.hide()
+        self.statusBar().clearMessage()
+        self._set_input_locked(False)
+        self.source_editor.setFocus()
+
+    @Slot()
+    def _choose_destination(self) -> None:
+        source = self._file
+        translations = self._file_translations
+        if self._thread is not None or source is None or translations is None:
+            return
+        filters = {".docx": self.tr("Word document (*.docx)"), ".txt": self.tr("Text file (*.txt)")}
+        suffixes = source.output_suffixes
+        default = source.path.with_name(
+            self.tr("{name}-translated{extension}").format(
+                name=source.path.stem, extension=suffixes[0]
+            )
+        )
+        filename, selected = QFileDialog.getSaveFileName(
+            self,
+            self.tr("Save translation"),
+            str(default),
+            ";;".join(filters[suffix] for suffix in suffixes),
+        )
+        if not filename:
+            return
+        destination = Path(filename)
+        if not destination.suffix:
+            extension = next(
+                (suffix for suffix in suffixes if filters[suffix] == selected), suffixes[0]
+            )
+            destination = destination.with_suffix(extension)
+            # The native dialog confirmed the entered path, before the extension was appended.
+            if destination.exists() and not self._confirm_replace(destination):
+                return
+        if destination.suffix.lower() not in suffixes:
+            self.statusBar().showMessage(
+                self.tr("Choose a supported file extension ({extensions}).").format(
+                    extensions=", ".join(suffixes)
+                )
+            )
+            return
+
+        worker = FileIOWorker(partial(source.save, destination, translations))
+        worker.finished.connect(self._show_saved_file)
+        worker.failed.connect(self._show_save_failure)
+        self._start_file_operation(worker, self.tr("Saving translation…"))
+
+    def _confirm_replace(self, path: Path) -> bool:
+        answer = QMessageBox.question(
+            self,
+            self.tr("Replace file?"),
+            self.tr("Replace the existing file {name}?").format(name=path.name),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        return answer == QMessageBox.StandardButton.Yes
+
+    @Slot()
+    def _show_saved_file(self) -> None:
+        self.statusBar().showMessage(self.tr("Translation saved."))
+
+    @Slot(object)
+    def _show_save_failure(self, error: type[Exception]) -> None:
+        self.statusBar().showMessage(
+            self.tr("Choose a different name to keep the original file.")
+            if issubclass(error, SourceOverwriteError)
+            else self.tr("Could not save the translation. Check the destination and try again.")
+        )
+
+    def _start_file_operation(self, worker: FileIOWorker, label: str) -> None:
+        self.statusBar().clearMessage()
+        self.progress_bar.setRange(0, 0)
+        self.progress_label.setText(label)
+        self.cancel_button.hide()
+        self._progress_row.show()
+        self._start_worker(worker)
 
     def set_dlx_connection(
         self,
@@ -235,6 +428,12 @@ class MainWindow(QMainWindow):
         self.target_languages.setCurrentIndex(self.target_languages.findData(target.value))
 
     def _update_counter(self) -> None:
+        if self._file is not None:
+            self.counter.setText(self.tr("File translation"))
+            self.counter.setToolTip("")
+            self._update_translate()
+            return
+        self.counter.setToolTip(self.tr("Characters are counted in UTF-16 code units."))
         text = _editor_text(self.source_editor)
         chars = chunker.utf16_len(text)
         self._chunk_count = sum(
@@ -248,7 +447,7 @@ class MainWindow(QMainWindow):
         enabled = (
             self._translation_unavailable_reason is None
             and self._thread is None
-            and self._chunk_count > 0
+            and (self._file is not None or self._chunk_count > 0)
         )
         self.translate_button.setEnabled(enabled)
         self._translate_shortcut.setEnabled(enabled)
@@ -259,11 +458,15 @@ class MainWindow(QMainWindow):
     def _update_swap(self) -> None:
         explicit_source = self.source_languages.currentData() != Language.AUTO.value
         enabled = explicit_source or self._detected_source is not None
-        self.swap_button.setEnabled(enabled and self._thread is None)
+        self.swap_button.setEnabled(enabled and self._thread is None and self._file is None)
         self.swap_button.setToolTip(
-            self.tr("Swap languages and texts")
-            if enabled
-            else self.tr("Translate to detect the source language, or choose it to swap.")
+            self.tr("Close the file to swap languages and texts.")
+            if self._file is not None
+            else (
+                self.tr("Swap languages and texts")
+                if enabled
+                else self.tr("Translate to detect the source language, or choose it to swap.")
+            )
         )
 
     def _clear_detected_source(self) -> None:
@@ -293,47 +496,67 @@ class MainWindow(QMainWindow):
         )
 
     def _request_translation(self) -> None:
-        self.translation_requested.emit(_editor_text(self.source_editor), *self.selected_languages)
+        if self._file is not None:
+            self._translate(self._file, *self.selected_languages)
+        else:
+            self.translation_requested.emit(
+                _editor_text(self.source_editor), *self.selected_languages
+            )
 
     @Slot(str, object, object)
     def _start_translation(self, text: str, source: Language, target: Language) -> None:
-        if self._job is None or self._thread is not None or not text.strip():
+        if self._file is None and text.strip():
+            self._translate(text, source, target)
+
+    def _translate(self, content: str | SourceFile, source: Language, target: Language) -> None:
+        if self._job is None or self._thread is not None:
             return
 
-        thread = QThread(self)
-        worker = TranslationWorker(self._job, text, source, target, self._formality)
-        self._thread = thread
-        self._worker = worker
-        worker.moveToThread(thread)
-        thread.started.connect(worker.run)
+        worker = TranslationWorker(self._job, content, source, target, self._formality)
         worker.progress.connect(self._show_progress)
         worker.provider_changed.connect(self._show_provider)
         worker.dlx_rate_limited.connect(self._show_dlx_rate_limit)
         worker.chunk_failed.connect(self._show_chunk_failure)
         worker.finished.connect(self._show_finished)
         worker.failed.connect(self._show_failure)
-        worker.finished.connect(thread.quit)
-        worker.failed.connect(thread.quit)
-        thread.finished.connect(worker.deleteLater)
-        thread.finished.connect(self._translation_stopped)
-
+        self._file_translations = None
         self._rendered_chars = 0
         self._clear_detected_source()
         self.result_editor.clear()
         self.statusBar().clearMessage()
         self._provider_status.hide()
         self._rate_limit_status.hide()
-        self.progress_bar.setRange(0, self._chunk_count)
+        self.progress_bar.setRange(0, 0 if self._file is not None else self._chunk_count)
         self.progress_bar.setValue(0)
-        self.progress_label.setText(self.tr("Starting translation…"))
+        self.progress_label.setText(
+            self.tr("Preparing file translation…")
+            if self._file is not None
+            else self.tr("Starting translation…")
+        )
         self.cancel_button.setEnabled(True)
+        self.cancel_button.show()
         self._progress_row.show()
+        self._start_worker(worker)
+
+    def _start_worker(self, worker: TranslationWorker | FileIOWorker) -> None:
+        thread = QThread(self)
+        self._thread = thread
+        self._worker = worker
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.finished.connect(thread.quit)
+        worker.failed.connect(thread.quit)
+        thread.finished.connect(worker.deleteLater)
+        thread.finished.connect(self._worker_stopped)
         self._set_input_locked(True)
         thread.start()
 
     def _set_input_locked(self, locked: bool) -> None:
         self.settings_action.setEnabled(not locked)
-        self.source_editor.setReadOnly(locked)
+        self.open_file_action.setEnabled(not locked)
+        self.close_file_action.setEnabled(not locked and self._file is not None)
+        self.save_file_action.setEnabled(not locked and self._file_translations is not None)
+        self.source_editor.setReadOnly(locked or self._file is not None)
         self.source_languages.setEnabled(not locked)
         self.target_languages.setEnabled(not locked)
         self._update_translate()
@@ -344,7 +567,11 @@ class MainWindow(QMainWindow):
         self.progress_bar.setMaximum(total)
         self.progress_bar.setValue(processed)
         if self.cancel_button.isEnabled():
-            label = self.tr("Chunk {processed} of {total}")
+            label = (
+                self.tr("File translation · Chunk {processed} of {total}")
+                if self._file is not None
+                else self.tr("Chunk {processed} of {total}")
+            )
             self.progress_label.setText(label.format(processed=processed, total=total))
         self._append_result(text)
 
@@ -376,7 +603,10 @@ class MainWindow(QMainWindow):
             self._rendered_chars = len(text)
 
     @Slot(object)
-    def _show_finished(self, result: JobResult) -> None:
+    def _show_finished(self, result: JobResult | FileJobResult) -> None:
+        if isinstance(result, FileJobResult):
+            self._file_translations = result.translations
+            result = result.preview
         self._append_result(result.text)
         detected = result.detected_source
         if (
@@ -404,7 +634,7 @@ class MainWindow(QMainWindow):
 
     @Slot(object)
     def _show_chunk_failure(self, error: TranslationError) -> None:
-        if self._worker is None or not self.cancel_button.isEnabled():
+        if not isinstance(self._worker, TranslationWorker) or not self.cancel_button.isEnabled():
             return
         dialog = ErrorDialog(
             self.progress_bar.value() + 1, self.progress_bar.maximum(), error, self
@@ -416,14 +646,14 @@ class MainWindow(QMainWindow):
     @Slot()
     def _answer_chunk_failure(self) -> None:
         dialog = self._error_dialog
-        assert dialog is not None and self._worker is not None
+        assert dialog is not None and isinstance(self._worker, TranslationWorker)
         self._error_dialog = None
         self._worker.answer_failure(dialog.action)
         dialog.deleteLater()
 
     @Slot()
     def _cancel_translation(self) -> None:
-        if self._worker is not None:
+        if isinstance(self._worker, TranslationWorker):
             self._worker.cancel()
             self.cancel_button.setEnabled(False)
             self.progress_label.setText(self.tr("Cancelling…"))
@@ -431,7 +661,7 @@ class MainWindow(QMainWindow):
                 self._error_dialog.reject()
 
     @Slot()
-    def _translation_stopped(self) -> None:
+    def _worker_stopped(self) -> None:
         thread = self._thread
         assert thread is not None
         thread.wait()
@@ -454,7 +684,7 @@ class MainWindow(QMainWindow):
         super().closeEvent(event)
 
     def stop_translation(self) -> None:
-        """Join an active worker if the application event loop has exited."""
+        """Join an active translation or file worker after the event loop exits."""
         if self._thread is not None:
             self._cancel_translation()
             self._thread.quit()
