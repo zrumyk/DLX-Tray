@@ -138,9 +138,7 @@ def _status_error(response: httpx.Response, body: Any) -> TranslationError:
     message = _message(body, f"HTTP {status}")
     too_large = status == httpx.codes.REQUEST_ENTITY_TOO_LARGE
     # A 413 means a chunk over the limit slipped past the chunker: a bug, hence ERROR.
-    log.log(
-        logging.ERROR if too_large else logging.WARNING, "DLX answered HTTP %d: %s", status, message
-    )
+    log.log(logging.ERROR if too_large else logging.WARNING, "DLX answered HTTP %d", status)
     if status in (httpx.codes.UNAUTHORIZED, httpx.codes.FORBIDDEN):
         return AuthError(f"DLX rejected the token: {message}")
     if too_large:
@@ -176,6 +174,6 @@ def _detected_language(code: Any) -> Language | None:
     try:
         language = Language.from_code(code)
     except ValueError:
-        log.debug("DLX reported an unknown source language %r", code)
+        log.debug("DLX reported an unknown source language")
         return None
     return None if language is Language.AUTO else language
