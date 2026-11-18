@@ -4,8 +4,16 @@ from unittest.mock import Mock
 
 import pytest
 
-from dlx_tray.core.models import AuthError, Formality, Language, TranslationResult
+from dlx_tray.core.models import (
+    AuthError,
+    Formality,
+    Language,
+    ProviderUnavailableError,
+    RateLimitedError,
+    TranslationResult,
+)
 from dlx_tray.core.pipeline import JobResult, TranslationJob
+from dlx_tray.core.retry import RetryPolicy
 from dlx_tray.providers import fallback
 from dlx_tray.providers.base import Translator
 from dlx_tray.providers.deeplx import DeeplxTranslator
@@ -68,3 +76,35 @@ def test_empty_and_terminal_primary_failure_do_not_use_fallback() -> None:
     with pytest.raises(AuthError, match="rejected"):
         translator.translate(["Hello"], Language.AUTO, Language.UK)
     secondary.translate.assert_not_called()
+
+
+def test_secondary_failure_uses_job_retry_budget_and_preserves_prefix(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(fallback, "monotonic", lambda: 100.0)
+    primary = Mock(spec=Translator)
+    primary.name = "dlx"
+    primary.translate.side_effect = [
+        [TranslationResult("[UK] Hello", Language.EN, "dlx")],
+        RateLimitedError("rate limited"),
+    ]
+    error = ProviderUnavailableError("official API unavailable")
+    secondary = Mock(spec=Translator)
+    secondary.name = "deepl"
+    secondary.translate.side_effect = error
+    sleep = Mock(return_value=True)
+    job = TranslationJob(
+        translator=FallbackTranslator(primary, secondary),
+        max_units=5,
+        request_delay=0,
+        retry_policy=RetryPolicy(max_attempts=2, jitter=0),
+        sleep=sleep,
+    )
+
+    result = job.run("Hello World", Language.AUTO, Language.UK)
+
+    assert result == JobResult("[UK] Hello ", Language.EN, error=error, chunk_providers=("dlx",))
+    assert primary.translate.call_count == 2
+    assert secondary.translate.call_count == 2
+    sleep.assert_called_once()
+    assert sleep.call_args.args[0] == 5.0
