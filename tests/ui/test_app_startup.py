@@ -1,7 +1,7 @@
 """Exercise startup and shutdown through the application event loop."""
 
 from collections.abc import Callable
-from contextlib import ExitStack
+from contextlib import ExitStack, nullcontext
 from pathlib import Path
 from threading import Event
 from unittest.mock import Mock
@@ -13,7 +13,7 @@ from PySide6.QtWidgets import QApplication, QLabel
 from pytestqt.qtbot import QtBot
 from tests.fakes.fake_dlx import FakeDLXFactory
 
-from dlx_tray import app
+from dlx_tray import app, secrets
 from dlx_tray.config import Settings
 from dlx_tray.core.models import Formality, Language, ProviderUnavailableError, TranslationResult
 from dlx_tray.services.deeplx_process import DLXProcess
@@ -21,8 +21,16 @@ from dlx_tray.ui.main_window import MainWindow
 
 
 @pytest.fixture
+def vault(monkeypatch: pytest.MonkeyPatch) -> Mock:
+    vault = Mock()
+    vault.get_password.return_value = None
+    monkeypatch.setattr(secrets, "_credential_manager", lambda: nullcontext(vault))
+    return vault
+
+
+@pytest.fixture
 def run_window(
-    qapp: QApplication, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch
+    qapp: QApplication, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, vault: Mock
 ) -> Callable[[Settings, Callable[[MainWindow, QLabel], None]], None]:
     def run(settings: Settings, check: Callable[[MainWindow, QLabel], None]) -> None:
         windows: list[MainWindow] = []
@@ -126,6 +134,7 @@ def test_external_dlx_skips_bundled_process(
 
 
 @pytest.mark.parametrize("startup_fails", [False, True], ids=["runtime-429", "startup-failure"])
+@pytest.mark.parametrize("key_source", ["environment", "dotenv", "vault"])
 def test_uses_official_api_when_dlx_is_unavailable(
     run_window: Callable[[Settings, Callable[[MainWindow, QLabel], None]], None],
     qtbot: QtBot,
@@ -133,13 +142,21 @@ def test_uses_official_api_when_dlx_is_unavailable(
     fake_dlx: FakeDLXFactory,
     startup_fails: bool,
     tmp_path: Path,
+    key_source: str,
+    vault: Mock,
 ) -> None:
     official = Mock(spec=app.DeepLOfficialTranslator)
     official.name = "deepl"
     official.translate.return_value = [TranslationResult("Привіт", Language.EN, "deepl")]
     official_factory = Mock(return_value=official)
     monkeypatch.setattr(app, "DeepLOfficialTranslator", official_factory)
-    monkeypatch.setenv("DLX_DEEPL_API_KEY", "test-key:fx")
+    monkeypatch.delenv("DLX_DEEPL_API_KEY", raising=False)
+    env_file = tmp_path / ".env"
+    vault.get_password.return_value = "stored-key:fx"
+    if key_source != "vault":
+        env_file.write_text("DLX_DEEPL_API_KEY=dotenv-key:fx\n", encoding="utf-8")
+    if key_source == "environment":
+        monkeypatch.setenv("DLX_DEEPL_API_KEY", "env-key:fx")
 
     def check(window: MainWindow, status: QLabel) -> None:
         window.source_editor.setPlainText("Hello")
@@ -161,10 +178,19 @@ def test_uses_official_api_when_dlx_is_unavailable(
         else:
             monkeypatch.setenv("DLX_DEEPLX_URL", server.url)
             monkeypatch.setenv("DLX_DEEPLX_TOKEN", server.token)
-        settings = Settings.load(tmp_path / "settings.json", env_file=None)
+        settings = Settings.load(tmp_path / "settings.json", env_file=env_file)
         run_window(settings, check)
 
-    official_factory.assert_called_once_with("test-key:fx")
+    if key_source == "vault":
+        vault.get_password.assert_called_once_with("DLX Tray", "deepl_api_key")
+    else:
+        vault.get_password.assert_not_called()
+    expected_keys = {
+        "environment": "env-key:fx",
+        "dotenv": "dotenv-key:fx",
+        "vault": "stored-key:fx",
+    }
+    official_factory.assert_called_once_with(expected_keys[key_source])
     official.translate.assert_called_once_with(
         ["Hello"], Language.AUTO, Language.UK, Formality.DEFAULT
     )
