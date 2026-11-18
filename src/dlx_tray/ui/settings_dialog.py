@@ -109,9 +109,7 @@ class SettingsDialog(QDialog):
         self.ui_language.addItem(self.tr("Ukrainian"), "uk")
         self.ui_language.setCurrentIndex(self.ui_language.findData(settings.ui_language))
         self._add(form, self.tr("Interface &language"), self.ui_language, "ui_language")
-        form.addRow(
-            "", QLabel(self.tr("Theme and interface language are saved for future updates."))
-        )
+        form.addRow("", QLabel(self.tr("Interface language is saved for a future update.")))
 
         self.history_enabled = QCheckBox(self.tr("&Enable translation history"))
         self.history_enabled.setChecked(settings.history_enabled)

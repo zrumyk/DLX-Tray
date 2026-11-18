@@ -24,6 +24,7 @@ from dlx_tray._file_lock import file_lock
 from dlx_tray.core.models import Formality, Language
 
 type UiLanguage = Literal["en", "uk"]
+type Theme = Literal["system", "light", "dark"]
 type LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR"]
 
 
@@ -68,7 +69,7 @@ class Settings(BaseSettings):
     formality: Formality = Formality.DEFAULT
     history_enabled: bool = True
     history_limit: int = Field(default=500, ge=1)
-    theme: Literal["system", "light", "dark"] = "system"
+    theme: Theme = "system"
     ui_language: UiLanguage = Field(default_factory=_system_ui_language)
 
     deepl_api_key: SecretStr | None = Field(default=None, exclude=True, repr=False)

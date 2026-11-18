@@ -24,6 +24,7 @@ from dlx_tray.secrets import delete_deepl_api_key, get_deepl_api_key, set_deepl_
 from dlx_tray.services.deeplx_process import DLXProcess
 from dlx_tray.ui.main_window import MainWindow
 from dlx_tray.ui.settings_dialog import SettingsDialog
+from dlx_tray.ui.theme import apply_theme
 
 log = logging.getLogger(__name__)
 
@@ -52,6 +53,7 @@ def _check_deepl_api_key(key: str) -> None:
 
 
 def _run_window(app: QApplication, settings: Settings, stack: ExitStack) -> int:
+    apply_theme(app, settings.theme)
     window = MainWindow(
         source=settings.source_lang,
         target=settings.target_lang,
@@ -106,6 +108,8 @@ def _run_window(app: QApplication, settings: Settings, stack: ExitStack) -> int:
             log.warning("Could not save settings (%s)", type(exc).__name__)
             return QCoreApplication.translate("SettingsDialog", "Could not save settings.")
 
+        if updated.theme != settings.theme:
+            apply_theme(app, updated.theme)
         settings = updated
         error = None
         if override_key is None and key != api_key:
