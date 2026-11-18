@@ -1,16 +1,24 @@
 # DLX Tray
 
-A free desktop translator for Windows. It runs a bundled [DLX](https://github.com/OwO-Network/DLX)
-(formerly DeepLX) server in the background and splits large texts into small chunks, so you can
-translate whole documents, not just a few sentences.
+A free desktop translator for Windows, in development. It is designed to translate long texts
+in chunks using a bundled [DLX](https://github.com/OwO-Network/DLX) (formerly DeepLX) server.
 
-> **Status:** early development (v0.1.0, project skeleton). The translator UI is not usable yet.
-> See the roadmap below.
+> **Status:** v0.2.0 implements the core translation engine. The desktop app opens a placeholder
+> window. The translation interface is planned for v0.3.0.
+
+## Available in v0.2.0
+
+- Split long input on text boundaries into chunks of up to 1500 UTF-16 code units and reassemble
+  the translated chunks with their original separators.
+- Start, health-check, and stop a local DLX server through the process manager. The DLX client
+  sends authenticated translation requests.
+- Run translation jobs with progress, retry backoff, and cancellation that preserves partial results.
+- Load local preferences with development overrides and write rotating diagnostic logs.
 
 ## Features (planned for v1.0)
 
 - Translate texts of any length: input is split on paragraph, sentence and word boundaries into
-  chunks of at most 1500 characters, translated one by one and reassembled.
+  chunks of at most 1500 UTF-16 code units, translated one by one and reassembled.
 - Bundled DLX server, started and stopped automatically. No setup.
 - Optional fallback to the official DeepL API Free (bring your own key) when DLX fails.
 - Automatic source language detection, language swap, formality (official API only).
@@ -42,7 +50,7 @@ Development commands:
 
 ```powershell
 uv run pytest            # tests (network tests are skipped; run them with -m live)
-uv run pytest --cov      # tests + coverage gate (85% of the non-UI code)
+uv run pytest --cov      # 85% coverage gate for core, providers, services and fileio
 uv run --isolated --no-dev --with pip-licenses python scripts/check_licenses.py
 uv run ruff check --fix  # lint
 uv run ruff format       # format
@@ -52,16 +60,17 @@ uv run pre-commit install
 
 ### Configuration
 
-Copy `.env.example` to `.env` for local development. `.env` is never committed. In the installed
-app, the DeepL API key is entered in Settings and stored in Windows Credential Manager.
+Copy `.env.example` to `.env` for local development. The app loads preferences from
+`%APPDATA%\DLX Tray\settings.json` and applies `DLX_*` development overrides. A Settings dialog and
+Windows Credential Manager integration are planned.
 
 ## Roadmap
 
 | Version | Scope |
 |---|---|
-| 0.1.0 | Project skeleton, tooling, CI |
-| 0.2.0 | Chunker, DLX client and process manager, translation pipeline |
-| 0.3.0 | Main window: languages, progress, cancel |
+| 0.1.0 | Project skeleton, tooling, CI (completed) |
+| 0.2.0 | Chunker, DLX client and process manager, translation pipeline, local settings and logs (current) |
+| 0.3.0 | Main window: languages, progress, cancel (next) |
 | 0.4.0 | Official DeepL API fallback, error handling |
 | 0.5.0 | Settings and themes |
 | 0.6.0 | `.txt` / `.docx` / `.pdf` files |
@@ -78,8 +87,8 @@ See [CHANGELOG.md](CHANGELOG.md) for what changed in each version.
 This is a personal, non-commercial project. It is **not** affiliated with, endorsed by or sponsored
 by DeepL SE. "DeepL" is a trademark of DeepL SE. DLX talks to DeepL's free web service in a way
 DeepL does not officially support. It may stop working at any time, it is rate limited, and using it
-may conflict with DeepL's terms of service. Use at your own risk. For reliable use, configure an
-official DeepL API key.
+may conflict with DeepL's terms of service. Use at your own risk. Official DeepL API support is
+planned for v0.4.0.
 
 ## License
 
