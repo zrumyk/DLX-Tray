@@ -6,11 +6,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-19
+
 ### Added
 - Open or drop TXT, DOCX and PDF files, follow translation progress, and save the result.
+- Open plain text with encodings such as Windows-1251 and UTF-16 and save as UTF-8.
 - Keep text editor contents while translating a file and confirm before discarding a file translation.
 - DOCX translation preserves paragraph styles, headings, lists, tables, headers and footers.
 - PDF translation reconstructs paragraphs from the text layer and exports to DOCX or UTF-8 TXT.
+
+### Known issues
+- File translation was verified with a local scripted server. Live file translation remains
+  unverified. Bundled DLX v1.3.1 can return HTTP 429. See
+  [DLX issue #248](https://github.com/OwO-Network/DLX/issues/248).
 
 ## [0.5.0] - 2026-11-18
 
@@ -95,7 +103,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   pre-commit hooks and CI on Windows.
 - Script to download the pinned DLX v1.3.1 binary with SHA-256 verification.
 
-[Unreleased]: https://github.com/zrumyk/DLX-Tray/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/zrumyk/DLX-Tray/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/zrumyk/DLX-Tray/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/zrumyk/DLX-Tray/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/zrumyk/DLX-Tray/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/zrumyk/DLX-Tray/compare/v0.2.0...v0.3.0

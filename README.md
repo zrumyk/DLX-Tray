@@ -3,10 +3,12 @@
 A free desktop translator for Windows, in development. It is designed to translate long texts
 in chunks using a bundled [DLX](https://github.com/OwO-Network/DLX) (formerly DeepLX) server.
 
-> **Status:** v0.5.0 adds Settings, Windows theme support, and restores the window and language selections.
+> **Status:** v0.6.0 adds file translation for TXT, DOCX and text-based PDF.
 
-## Available in v0.5.0
+## Available in v0.6.0
 
+- Open or drop a TXT, DOCX or text-based PDF file and follow translation progress across the document.
+- Save TXT as UTF-8, preserve headings, lists and tables in DOCX, and export PDF text to DOCX or TXT.
 - Split long input on text boundaries into chunks of up to 1500 UTF-16 code units and reassemble
   the translated chunks with their original separators.
 - Translate in side-by-side editors using the Translate button or Ctrl+Enter, and copy the result.
@@ -24,7 +26,6 @@ in chunks using a bundled [DLX](https://github.com/OwO-Network/DLX) (formerly De
 
 ## Planned features
 
-- Open and save `.txt` and `.docx` files (formatting preserved). `.pdf` input is saved as `.docx` or `.txt`.
 - Local translation history with search.
 - Ukrainian and English interface.
 - Windows installer.
@@ -79,8 +80,8 @@ precedence over `.env`. If the effective override is missing or blank, the app u
 | 0.2.0 | Chunker, DLX client and process manager, translation pipeline, local settings and logs (completed) |
 | 0.3.0 | Main window: languages, progress, cancel, automatic DLX startup (completed) |
 | 0.4.0 | Official DeepL API fallback, error recovery, API key storage (completed) |
-| 0.5.0 | Settings, themes, saved window geometry and language selections (current) |
-| 0.6.0 | `.txt` / `.docx` / `.pdf` files |
+| 0.5.0 | Settings, themes, saved window geometry and language selections (completed) |
+| 0.6.0 | `.txt` / `.docx` / `.pdf` files (current) |
 | 0.7.0 | Translation history |
 | 0.8.0 | Ukrainian and English UI |
 | 0.9.0 | Installer and GitHub Releases |
