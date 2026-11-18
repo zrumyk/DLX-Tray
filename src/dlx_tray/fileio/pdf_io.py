@@ -13,6 +13,10 @@ from .docx_io import _save_docx
 from .txt import write_txt
 
 
+class NoTextLayerError(ValueError):
+    """The PDF contains no extractable text."""
+
+
 @dataclass(frozen=True, slots=True)
 class _Line:
     text: str
@@ -39,7 +43,7 @@ def read_pdf(path: Path) -> list[str]:
             paragraphs.extend(_page_paragraphs(lines))
 
     if not paragraphs:
-        raise ValueError("The PDF has no extractable text layer.")
+        raise NoTextLayerError("The PDF has no extractable text layer.")
     return paragraphs
 
 
@@ -85,10 +89,17 @@ def translate_pdf(source: Path, destination: Path, translate: Callable[[str], st
     if suffix not in {".docx", ".txt"}:
         raise ValueError("PDF translations must be saved as .docx or .txt.")
 
-    paragraphs = [translate(paragraph) for paragraph in read_pdf(source)]
+    write_pdf_translation(destination, [translate(paragraph) for paragraph in read_pdf(source)])
+
+
+def write_pdf_translation(destination: Path, paragraphs: list[str] | tuple[str, ...]) -> None:
+    """Export already translated PDF paragraphs to DOCX or TXT."""
+    suffix = destination.suffix.lower()
     if suffix == ".txt":
         write_txt(destination, "\n\n".join(paragraphs))
         return
+    if suffix != ".docx":
+        raise ValueError("PDF translations must be saved as .docx or .txt.")
 
     document = Document()
     for paragraph in paragraphs:

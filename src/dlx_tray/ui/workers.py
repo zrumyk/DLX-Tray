@@ -3,15 +3,44 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
+from dataclasses import dataclass
 from threading import Event
 
 from PySide6.QtCore import QObject, Signal, Slot
 
+from dlx_tray.core import chunker
 from dlx_tray.core.models import Chunk, Formality, Language, RateLimitedError, TranslationError
-from dlx_tray.core.pipeline import FailureAction, TranslationJob
+from dlx_tray.core.pipeline import FailureAction, JobResult, ProgressCallback, TranslationJob
+from dlx_tray.fileio.translation import SourceFile
 from dlx_tray.providers.deeplx import PROVIDER_NAME as DLX_NAME
 
 log = logging.getLogger(__name__)
+
+
+class FileIOWorker(QObject):
+    finished = Signal(object)
+    failed = Signal(object)
+
+    def __init__(self, operation: Callable[[], SourceFile | None]) -> None:
+        super().__init__()
+        self._operation = operation
+
+    @Slot()
+    def run(self) -> None:
+        try:
+            result = self._operation()
+        except Exception as exc:
+            log.warning("File operation failed (%s)", type(exc).__name__)
+            self.failed.emit(type(exc))
+        else:
+            self.finished.emit(result)
+
+
+@dataclass(frozen=True, slots=True)
+class FileJobResult:
+    preview: JobResult
+    translations: tuple[str, ...] | None
 
 
 class TranslationWorker(QObject):
@@ -25,14 +54,14 @@ class TranslationWorker(QObject):
     def __init__(
         self,
         job: TranslationJob,
-        text: str,
+        content: str | SourceFile,
         source: Language,
         target: Language,
         formality: Formality,
     ) -> None:
         super().__init__()
         self._job = job
-        self._text = text
+        self._content = content
         self._source = source
         self._target = target
         self._formality = formality
@@ -68,24 +97,70 @@ class TranslationWorker(QObject):
     @Slot()
     def run(self) -> None:
         try:
-            result = self._job.run(
-                self._text,
-                self._source,
-                self._target,
-                self._formality,
-                cancel=self._cancel,
-                on_progress=self.progress.emit,
-                on_failure=self._ask_about_failure,
-                on_retry=self._report_retry,
-                on_provider=self.provider_changed.emit,
-                on_rate_limit=self._report_rate_limit,
+            result = (
+                self._translate_file(self._content)
+                if isinstance(self._content, SourceFile)
+                else self._translate_text(self._content, self.progress.emit)
             )
         except Exception as exc:
             # Exception messages from a provider may contain user text or credentials.
             log.error("Unexpected translation worker failure (%s)", type(exc).__name__)
             self.failed.emit()
         else:
-            if result.error is None:
+            preview = result.preview if isinstance(result, FileJobResult) else result
+            if preview.error is None:
                 self.finished.emit(result)
             else:
                 self.failed.emit()
+
+    def _translate_text(self, text: str, on_progress: ProgressCallback) -> JobResult:
+        return self._job.run(
+            text,
+            self._source,
+            self._target,
+            self._formality,
+            cancel=self._cancel,
+            on_progress=on_progress,
+            on_failure=self._ask_about_failure,
+            on_retry=self._report_retry,
+            on_provider=self.provider_changed.emit,
+            on_rate_limit=self._report_rate_limit,
+        )
+
+    def _translate_file(self, source: SourceFile) -> FileJobResult:
+        counts = [
+            sum(chunk.translatable for chunk in chunker.split(text, self._job.max_units))
+            for text in source.segments
+        ]
+        total = sum(counts)
+        offset = 0
+        self.progress.emit(0, total, "")
+        translations: list[str] = []
+        detected: Language | None = None
+        error: TranslationError | None = None
+
+        def report(processed: int, _total: int, _text: str) -> None:
+            self.progress.emit(offset + processed, total, "")
+
+        for text, count in zip(source.segments, counts, strict=True):
+            if self._cancel.is_set():
+                break
+            # Each segment is a separate job, so enforce the request delay at its boundary.
+            if (
+                offset
+                and self._job.request_delay
+                and not self._job.sleep(self._job.request_delay, self._cancel)
+            ):
+                self._cancel.set()
+                break
+            result = self._translate_text(text, report)
+            if result.text or not result.cancelled:
+                translations.append(result.text)
+            detected = detected or result.detected_source
+            error = result.error
+            if result.cancelled or error is not None:
+                break
+            offset += count
+        cancelled = error is None and (self._cancel.is_set() or offset < total)
+        preview = JobResult("\n\n".join(translations), detected, cancelled, error)
+        return FileJobResult(preview, None if cancelled or error else tuple(translations))

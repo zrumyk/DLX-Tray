@@ -7,6 +7,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- Open or drop TXT, DOCX and PDF files, follow translation progress, and save the result.
+- Keep text editor contents while translating a file and confirm before discarding a file translation.
 - DOCX translation preserves paragraph styles, headings, lists, tables, headers and footers.
 - PDF translation reconstructs paragraphs from the text layer and exports to DOCX or UTF-8 TXT.
 

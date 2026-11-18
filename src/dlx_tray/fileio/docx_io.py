@@ -42,11 +42,14 @@ def translate_docx(source: Path, destination: Path, translate: Callable[[str], s
     with source.open("rb") as stream:
         document = Document(stream)
 
+    _translate_document(document, translate)
+    _save_docx(document, destination)
+
+
+def _translate_document(document: WordDocument, translate: Callable[[str], str]) -> None:
     _translate_story(document.iter_inner_content(), translate)
     for blocks in _header_footer_blocks(document):
         _translate_story(blocks, translate)
-
-    _save_docx(document, destination)
 
 
 def _save_docx(document: WordDocument, destination: Path) -> None:
