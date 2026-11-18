@@ -31,8 +31,9 @@ PROVIDER_NAME = "dlx"
 class DeeplxTranslator:
     """Translates through DLX. One request per call: all ``texts`` go in one batch.
 
-    DLX has no formality support, so ``formality`` is ignored. Pass ``client`` to share or mock
-    the ``httpx.Client``; otherwise the translator owns one and ``close()`` closes it.
+    DLX has no formality support, so ``formality`` is ignored. Pass an empty token for a
+    server without authentication. Pass ``client`` to share or mock the ``httpx.Client``;
+    otherwise the translator owns one and ``close()`` closes it.
     """
 
     def __init__(
@@ -43,10 +44,15 @@ class DeeplxTranslator:
         timeout: float = DEFAULT_TIMEOUT,
         client: httpx.Client | None = None,
     ) -> None:
-        if httpx.URL(base_url).scheme not in ("http", "https"):
-            raise ValueError(f"DLX URL must start with http:// or https://, got {base_url!r}")
-        self._url = base_url.rstrip("/") + "/translate"
-        self._headers = {"Authorization": f"Bearer {token}"}
+        url = httpx.URL(base_url)
+        if url.scheme not in ("http", "https"):
+            raise ValueError("DLX URL must start with http:// or https://")
+        path, separator, query = url.raw_path.partition(b"?")
+        self._url = url.copy_with(
+            raw_path=path.rstrip(b"/") + b"/translate" + separator + query,
+            fragment=None,
+        )
+        self._headers = {"Authorization": f"Bearer {token}"} if token else {}
         self._timeout = timeout
         self._owns_client = client is None
         # trust_env=False: on Windows httpx would pick up the system proxy from the registry and

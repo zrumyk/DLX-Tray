@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QKeySequence, QShortcut
+from PySide6.QtCore import Qt, QThread, Signal, Slot
+from PySide6.QtGui import QCloseEvent, QKeySequence, QShortcut, QTextCursor
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -12,13 +12,16 @@ from PySide6.QtWidgets import (
     QLabel,
     QMainWindow,
     QPlainTextEdit,
+    QProgressBar,
     QPushButton,
     QWidget,
 )
 
 from dlx_tray import APP_NAME, __version__
 from dlx_tray.core import chunker
-from dlx_tray.core.models import Language
+from dlx_tray.core.models import Formality, Language
+from dlx_tray.core.pipeline import JobResult, TranslationJob
+from dlx_tray.ui.workers import TranslationWorker
 
 
 def _editor_text(editor: QPlainTextEdit) -> str:
@@ -36,9 +39,19 @@ class MainWindow(QMainWindow):
         source: Language = Language.AUTO,
         target: Language = Language.UK,
         chunk_size: int = chunker.DEFAULT_MAX_UNITS,
+        translation_job: TranslationJob | None = None,
+        formality: Formality = Formality.DEFAULT,
+        translation_unavailable_reason: str | None = None,
     ) -> None:
         super().__init__(parent)
-        self._chunk_size = chunk_size
+        self._chunk_size = translation_job.max_units if translation_job else chunk_size
+        self._job = translation_job
+        self._formality = formality
+        self._translation_unavailable_reason = translation_unavailable_reason
+        self._thread: QThread | None = None
+        self._worker: TranslationWorker | None = None
+        self._close_pending = False
+        self._rendered_chars = 0
         self.setWindowTitle(f"{APP_NAME} {__version__}")
         self.resize(1100, 700)
 
@@ -68,7 +81,11 @@ class MainWindow(QMainWindow):
         self.counter.setToolTip(self.tr("Characters are counted in UTF-16 code units."))
         self.copy_button = QPushButton(self.tr("Copy result"))
         self.translate_button = QPushButton(self.tr("Translate"))
-        self.translate_button.setToolTip(self.tr("Translate (Ctrl+Enter)"))
+        self.translate_button.setToolTip(
+            translation_unavailable_reason or self.tr("Translate (Ctrl+Enter)")
+        )
+        if translation_unavailable_reason:
+            self.statusBar().showMessage(translation_unavailable_reason)
 
         languages = QHBoxLayout()
         languages.addWidget(self.source_languages, 1)
@@ -86,11 +103,27 @@ class MainWindow(QMainWindow):
         layout.addLayout(source_actions, 2, 0)
         layout.addWidget(self.copy_button, 2, 1, alignment=Qt.AlignmentFlag.AlignRight)
 
+        self._progress_row = QWidget()
+        progress_layout = QHBoxLayout(self._progress_row)
+        progress_layout.setContentsMargins(0, 0, 0, 0)
+        self.progress_label = QLabel()
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setAccessibleName(self.tr("Translation progress"))
+        self.progress_bar.setTextVisible(False)
+        self.cancel_button = QPushButton(self.tr("Cancel"))
+        progress_layout.addWidget(self.progress_label)
+        progress_layout.addWidget(self.progress_bar, 1)
+        progress_layout.addWidget(self.cancel_button)
+        layout.addWidget(self._progress_row, 3, 0, 1, 2)
+        self._progress_row.hide()
+
         self._translate_shortcut = QShortcut(self)
         self._translate_shortcut.setKeys([QKeySequence("Ctrl+Return"), QKeySequence("Ctrl+Enter")])
         self._translate_shortcut.setAutoRepeat(False)
         self._translate_shortcut.activated.connect(self.translate_button.click)
         self.translate_button.clicked.connect(self._request_translation)
+        self.translation_requested.connect(self._start_translation)
+        self.cancel_button.clicked.connect(self._cancel_translation)
         self.copy_button.clicked.connect(self._copy_result)
         self.swap_button.clicked.connect(self._swap)
         self.source_editor.textChanged.connect(self._update_counter)
@@ -151,18 +184,28 @@ class MainWindow(QMainWindow):
     def _update_counter(self) -> None:
         text = _editor_text(self.source_editor)
         chars = chunker.utf16_len(text)
-        chunks = sum(chunk.translatable for chunk in chunker.split(text, self._chunk_size))
+        self._chunk_count = sum(
+            chunk.translatable for chunk in chunker.split(text, self._chunk_size)
+        )
         label = self.tr("{chars} characters · {chunks} chunks")
-        self.counter.setText(label.format(chars=chars, chunks=chunks))
-        self.translate_button.setEnabled(chunks > 0)
-        self._translate_shortcut.setEnabled(chunks > 0)
+        self.counter.setText(label.format(chars=chars, chunks=self._chunk_count))
+        self._update_translate()
+
+    def _update_translate(self) -> None:
+        enabled = (
+            self._translation_unavailable_reason is None
+            and self._thread is None
+            and self._chunk_count > 0
+        )
+        self.translate_button.setEnabled(enabled)
+        self._translate_shortcut.setEnabled(enabled)
 
     def _update_copy(self) -> None:
         self.copy_button.setEnabled(not self.result_editor.document().isEmpty())
 
     def _update_swap(self) -> None:
         enabled = self.source_languages.currentData() != Language.AUTO.value
-        self.swap_button.setEnabled(enabled)
+        self.swap_button.setEnabled(enabled and self._thread is None)
         self.swap_button.setToolTip(
             self.tr("Swap languages and texts")
             if enabled
@@ -185,6 +228,107 @@ class MainWindow(QMainWindow):
             Language(self.source_languages.currentData()),
             Language(self.target_languages.currentData()),
         )
+
+    @Slot(str, object, object)
+    def _start_translation(self, text: str, source: Language, target: Language) -> None:
+        if self._job is None or self._thread is not None or not text.strip():
+            return
+
+        thread = QThread(self)
+        worker = TranslationWorker(self._job, text, source, target, self._formality)
+        self._thread = thread
+        self._worker = worker
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.progress.connect(self._show_progress)
+        worker.finished.connect(self._show_finished)
+        worker.failed.connect(self._show_failure)
+        worker.finished.connect(thread.quit)
+        worker.failed.connect(thread.quit)
+        thread.finished.connect(worker.deleteLater)
+        thread.finished.connect(self._translation_stopped)
+
+        self._rendered_chars = 0
+        self.result_editor.clear()
+        self.statusBar().clearMessage()
+        self.progress_bar.setRange(0, self._chunk_count)
+        self.progress_bar.setValue(0)
+        self.progress_label.setText(self.tr("Starting translation…"))
+        self.cancel_button.setEnabled(True)
+        self._progress_row.show()
+        self._set_input_locked(True)
+        thread.start()
+
+    def _set_input_locked(self, locked: bool) -> None:
+        self.source_editor.setReadOnly(locked)
+        self.source_languages.setEnabled(not locked)
+        self.target_languages.setEnabled(not locked)
+        self._update_translate()
+        self._update_swap()
+
+    @Slot(int, int, str)
+    def _show_progress(self, processed: int, total: int, text: str) -> None:
+        self.progress_bar.setMaximum(total)
+        self.progress_bar.setValue(processed)
+        if self.cancel_button.isEnabled():
+            label = self.tr("Chunk {processed} of {total}")
+            self.progress_label.setText(label.format(processed=processed, total=total))
+        self._append_result(text)
+
+    def _append_result(self, text: str) -> None:
+        if len(text) > self._rendered_chars:
+            cursor = QTextCursor(self.result_editor.document())
+            cursor.movePosition(QTextCursor.MoveOperation.End)
+            cursor.insertText(text[self._rendered_chars :])
+            self._rendered_chars = len(text)
+
+    @Slot(object)
+    def _show_finished(self, result: JobResult) -> None:
+        self._append_result(result.text)
+        self.statusBar().showMessage(
+            self.tr("Translation cancelled.")
+            if result.cancelled
+            else self.tr("Translation complete.")
+        )
+
+    @Slot()
+    def _show_failure(self) -> None:
+        self.statusBar().showMessage(self.tr("Translation failed. Check DLX and try again."))
+
+    @Slot()
+    def _cancel_translation(self) -> None:
+        if self._worker is not None:
+            self._worker.cancel.set()
+            self.cancel_button.setEnabled(False)
+            self.progress_label.setText(self.tr("Cancelling…"))
+
+    @Slot()
+    def _translation_stopped(self) -> None:
+        thread = self._thread
+        assert thread is not None
+        thread.wait()
+        thread.deleteLater()
+        self._thread = None
+        self._worker = None
+        self._progress_row.hide()
+        self._set_input_locked(False)
+        if self._close_pending:
+            self.close()
+
+    def closeEvent(self, event: QCloseEvent) -> None:
+        if self._thread is not None:
+            self._close_pending = True
+            self._cancel_translation()
+            event.ignore()
+            return
+        super().closeEvent(event)
+
+    def stop_translation(self) -> None:
+        """Join an active worker if the application event loop has exited."""
+        if self._thread is not None:
+            self._cancel_translation()
+            self._thread.quit()
+            self._thread.wait()
 
     def _copy_result(self) -> None:
         QApplication.clipboard().setText(_editor_text(self.result_editor))
