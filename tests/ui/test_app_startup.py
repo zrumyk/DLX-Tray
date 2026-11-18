@@ -1,5 +1,6 @@
 """Exercise startup and shutdown through the application event loop."""
 
+import json
 from collections.abc import Callable
 from contextlib import ExitStack, nullcontext
 from pathlib import Path
@@ -8,7 +9,7 @@ from unittest.mock import Mock, call
 
 import pytest
 from keyring.errors import KeyringError
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QRect, Qt, QTimer
 from PySide6.QtGui import QShortcut
 from PySide6.QtWidgets import QApplication, QDialogButtonBox, QLabel
 from pytestqt.qtbot import QtBot
@@ -33,8 +34,12 @@ def vault(monkeypatch: pytest.MonkeyPatch) -> Mock:
 
 @pytest.fixture
 def run_window(
-    qapp: QApplication, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, vault: Mock
+    qapp: QApplication, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, vault: Mock, tmp_path: Path
 ) -> Callable[[Settings, Callable[[MainWindow, QLabel], None]], None]:
+    monkeypatch.setattr(config, "app_data_dir", lambda: tmp_path)
+    for name in ("DLX_SOURCE_LANG", "DLX_TARGET_LANG", "DLX_WINDOW_GEOMETRY", "DLX_THEME"):
+        monkeypatch.delenv(name, raising=False)
+
     def run(settings: Settings, check: Callable[[MainWindow, QLabel], None]) -> None:
         windows: list[MainWindow] = []
 
@@ -62,6 +67,130 @@ def run_window(
             assert app._run_window(qapp, settings, stack) == 0
 
     return run
+
+
+@pytest.mark.parametrize("maximized", [False, True], ids=["normal", "maximized"])
+def test_window_geometry_and_languages_survive_restart(
+    run_window: Callable[[Settings, Callable[[MainWindow, QLabel], None]], None],
+    monkeypatch: pytest.MonkeyPatch,
+    fake_dlx: FakeDLXFactory,
+    fixture_text: Callable[[str], str],
+    maximized: bool,
+) -> None:
+    expected = QRect(60, 65, 700, 400)
+
+    def change_window(window: MainWindow, _status: QLabel) -> None:
+        assert window.selected_languages == (Language.AUTO, Language.UK)
+        window.setGeometry(expected)
+        if maximized:
+            window.showMaximized()
+        window.source_languages.setCurrentIndex(window.source_languages.findData(Language.DE.value))
+        window.target_languages.setCurrentIndex(
+            window.target_languages.findData(Language.EN_GB.value)
+        )
+        window.source_editor.setPlainText(fixture_text("en_article.txt"))
+
+    def check_restored(window: MainWindow, _status: QLabel) -> None:
+        assert window.selected_languages == (Language.DE, Language.EN_GB)
+        assert window.isMaximized() == maximized
+        if maximized:
+            window.showNormal()
+        assert window.geometry() == expected
+        assert window.source_editor.document().isEmpty()
+        assert window.result_editor.document().isEmpty()
+
+    with fake_dlx([]) as server:
+        monkeypatch.setenv("DLX_DEEPLX_URL", server.url)
+        run_window(Settings.load(env_file=None), change_window)
+        run_window(Settings.load(env_file=None), check_restored)
+
+
+def test_window_save_preserves_overrides_and_concurrent_settings(
+    run_window: Callable[[Settings, Callable[[MainWindow, QLabel], None]], None],
+    monkeypatch: pytest.MonkeyPatch,
+    fake_dlx: FakeDLXFactory,
+) -> None:
+    initial = Settings(source_lang=Language.DE)
+    initial.save()
+
+    def change_window(window: MainWindow, _status: QLabel) -> None:
+        assert window.selected_languages == (Language.FR, Language.UK)
+        window.source_languages.setCurrentIndex(window.source_languages.findData(Language.ES.value))
+        window.target_languages.setCurrentIndex(
+            window.target_languages.findData(Language.EN_GB.value)
+        )
+        concurrent = Settings.load(env_file=None)
+        concurrent.theme = "dark"
+        concurrent.save(changes_from=initial)
+
+    with fake_dlx([]) as server:
+        monkeypatch.setenv("DLX_DEEPLX_URL", server.url)
+        monkeypatch.setenv("DLX_SOURCE_LANG", "FR")
+        run_window(Settings.load(env_file=None), change_window)
+
+    monkeypatch.delenv("DLX_SOURCE_LANG")
+    restored = Settings.load(env_file=None)
+    assert restored.source_lang is Language.DE
+    assert restored.target_lang is Language.EN_GB
+    assert restored.theme == "dark"
+
+
+def test_untouched_restored_window_keeps_concurrent_geometry(
+    run_window: Callable[[Settings, Callable[[MainWindow, QLabel], None]], None],
+    qtbot: QtBot,
+    monkeypatch: pytest.MonkeyPatch,
+    fake_dlx: FakeDLXFactory,
+) -> None:
+    other_window = MainWindow()
+    qtbot.addWidget(other_window)
+    other_window.setGeometry(100_000, 100_000, 700, 400)
+    other_window.setWindowState(Qt.WindowState.WindowMaximized)
+    initial = Settings(window_geometry=other_window.saveGeometry().data().hex())
+    initial.save()
+    other_window.setWindowState(Qt.WindowState.WindowNoState)
+    other_window.setGeometry(40, 50, 710, 420)
+    concurrent_geometry = other_window.saveGeometry().data().hex()
+
+    def change_languages(window: MainWindow, _status: QLabel) -> None:
+        assert window.isMaximized()
+        assert window.screen().availableGeometry().intersects(window.frameGeometry())
+        Settings(window_geometry=concurrent_geometry).save(changes_from=initial)
+        window.target_languages.setCurrentIndex(window.target_languages.findData(Language.DE.value))
+
+    with fake_dlx([]) as server:
+        monkeypatch.setenv("DLX_DEEPLX_URL", server.url)
+        run_window(Settings.load(env_file=None), change_languages)
+
+    restored = Settings.load(env_file=None)
+    assert restored.window_geometry == concurrent_geometry
+    assert restored.target_lang is Language.DE
+
+
+@pytest.mark.parametrize("geometry", ["not hex", "01d9d0cb", "00" * 66, 42])
+def test_invalid_window_geometry_is_replaced(
+    run_window: Callable[[Settings, Callable[[MainWindow, QLabel], None]], None],
+    monkeypatch: pytest.MonkeyPatch,
+    fake_dlx: FakeDLXFactory,
+    tmp_path: Path,
+    geometry: object,
+) -> None:
+    (tmp_path / "settings.json").write_text(
+        json.dumps({"window_geometry": geometry, "source_lang": "DE"}), encoding="utf-8"
+    )
+    saved_geometry: str | None = None
+
+    def check(window: MainWindow, _status: QLabel) -> None:
+        nonlocal saved_geometry
+        assert not window.isMaximized()
+        assert window.selected_languages == (Language.DE, Language.UK)
+        saved_geometry = window.saveGeometry().data().hex()
+
+    with fake_dlx([]) as server:
+        monkeypatch.setenv("DLX_DEEPLX_URL", server.url)
+        run_window(Settings.load(env_file=None), check)
+
+    assert saved_geometry is not None
+    assert Settings.load(env_file=None).window_geometry == saved_geometry
 
 
 @pytest.mark.parametrize("fails", [False, True], ids=["ready", "unavailable"])
