@@ -19,6 +19,7 @@ from dlx_tray.core.models import (
 )
 from dlx_tray.core.pipeline import FailureAction, JobResult, TranslationJob
 from dlx_tray.core.retry import RetryPolicy
+from dlx_tray.providers.fallback import FallbackTranslator
 
 
 class FakeTranslator:
@@ -74,7 +75,7 @@ def test_streams_chunks_with_original_layout_and_pauses_between_requests() -> No
     ]
     assert waits == [(1.5, 1)]
     assert progress == [(1, 2, "\t ONE\r\n\r\n"), (2, 2, "\t ONE\r\n\r\nTWO  ")]
-    assert result == JobResult("\t ONE\r\n\r\nTWO  ", Language.EN)
+    assert result == JobResult("\t ONE\r\n\r\nTWO  ", Language.EN, chunk_providers=("fake", "fake"))
 
 
 @pytest.mark.parametrize("text", ["", " \t\r\n "])
@@ -117,7 +118,7 @@ def test_cancel_during_inter_request_wait_keeps_completed_chunk() -> None:
     job = TranslationJob(translator=translator, max_units=3, sleep=sleep)
     result = job.run("one two", Language.AUTO, Language.UK)
 
-    assert result == JobResult("ONE ", Language.EN, cancelled=True)
+    assert result == JobResult("ONE ", Language.EN, cancelled=True, chunk_providers=("fake",))
     assert len(translator.calls) == 1
 
 
@@ -128,7 +129,7 @@ def test_cancel_during_successful_request_keeps_its_translation() -> None:
 
     result = job.run("one two", Language.AUTO, Language.UK, cancel=cancel)
 
-    assert result == JobResult("ONE ", Language.EN, cancelled=True)
+    assert result == JobResult("ONE ", Language.EN, cancelled=True, chunk_providers=("fake",))
     assert len(translator.calls) == 1
 
 
@@ -152,25 +153,31 @@ def test_cancel_during_backoff_does_not_ask_for_failure_action() -> None:
 
 
 @pytest.mark.parametrize(
-    ("action", "expected", "sent", "progress_texts"),
+    ("action", "expected", "sent", "progress_texts", "providers"),
     [
         (
             FailureAction.CONTINUE,
             "ONE TWO END",
             ["one", "two", "two", "end"],
             ["ONE ", "ONE TWO ", "ONE TWO END"],
+            ("fake", "fake", "fake"),
         ),
         (
             FailureAction.SKIP,
             "ONE two END",
             ["one", "two", "end"],
             ["ONE ", "ONE two ", "ONE two END"],
+            ("fake", None, "fake"),
         ),
-        (FailureAction.CANCEL, "ONE ", ["one", "two"], ["ONE "]),
+        (FailureAction.CANCEL, "ONE ", ["one", "two"], ["ONE "], ("fake",)),
     ],
 )
 def test_failure_actions(
-    action: FailureAction, expected: str, sent: list[str], progress_texts: list[str]
+    action: FailureAction,
+    expected: str,
+    sent: list[str],
+    progress_texts: list[str],
+    providers: tuple[str | None, ...],
 ) -> None:
     error = ProviderUnavailableError("offline")
     translator = FakeTranslator(lambda: None, error)
@@ -204,7 +211,9 @@ def test_failure_actions(
     assert failures == [(Chunk("two", " ", 1), error)]
     assert progress == [(index, 3, text) for index, text in enumerate(progress_texts, start=1)]
     assert cancel.is_set() is (action is FailureAction.CANCEL)
-    assert result == JobResult(expected, Language.EN, cancelled=cancel.is_set())
+    assert result == JobResult(
+        expected, Language.EN, cancelled=cancel.is_set(), chunk_providers=providers
+    )
 
 
 def test_unhandled_failure_returns_error_and_processed_prefix() -> None:
@@ -214,7 +223,7 @@ def test_unhandled_failure_returns_error_and_processed_prefix() -> None:
 
     result = job.run("one two end", Language.AUTO, Language.UK)
 
-    assert result == JobResult("ONE ", Language.EN, error=error)
+    assert result == JobResult("ONE ", Language.EN, error=error, chunk_providers=("fake",))
     assert len(translator.calls) == 2
 
 
@@ -245,8 +254,27 @@ def test_request_that_fails_after_cancellation_returns_cancelled(
         on_retry=on_retry,
     )
 
-    assert result == JobResult("ONE ", Language.EN, cancelled=True)
+    assert result == JobResult("ONE ", Language.EN, cancelled=True, chunk_providers=("fake",))
     assert len(translator.calls) == 2
+
+
+def test_cancel_during_primary_failure_prevents_fallback() -> None:
+    cancel = Event()
+
+    def fail() -> None:
+        cancel.set()
+        raise ProviderUnavailableError("offline")
+
+    primary = FakeTranslator(lambda: None, fail)
+    secondary = FakeTranslator()
+    job = TranslationJob(
+        translator=FallbackTranslator(primary, secondary), max_units=3, request_delay=0
+    )
+
+    result = job.run("one two", Language.AUTO, Language.UK, cancel=cancel)
+
+    assert result == JobResult("ONE ", Language.EN, cancelled=True, chunk_providers=("fake",))
+    assert secondary.calls == []
 
 
 def test_cancel_while_waiting_for_failure_action() -> None:

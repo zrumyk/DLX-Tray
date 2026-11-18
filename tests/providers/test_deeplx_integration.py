@@ -74,7 +74,9 @@ def test_job_retries_only_the_failed_chunk(
     assert waits == [1.5, backoff]
     assert retries == [(1, backoff, error)]
     assert progress == [(1, 2, "[UK] Hello\r\n"), (2, 2, "[UK] Hello\r\n[UK] dlroW")]
-    assert result == JobResult("[UK] Hello\r\n[UK] dlroW", Language.EN)
+    assert result == JobResult(
+        "[UK] Hello\r\n[UK] dlroW", Language.EN, chunk_providers=("dlx", "dlx")
+    )
 
 
 @pytest.mark.parametrize(
