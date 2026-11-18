@@ -53,8 +53,7 @@ def _check_deepl_api_key(key: str) -> None:
 
 
 def _run_window(app: QApplication, settings: Settings, stack: ExitStack) -> int:
-    style_hints = app.styleHints()
-    apply_theme(style_hints, settings.theme)
+    apply_theme(app, settings.theme)
     window = MainWindow(
         source=settings.source_lang,
         target=settings.target_lang,
@@ -110,7 +109,7 @@ def _run_window(app: QApplication, settings: Settings, stack: ExitStack) -> int:
             return QCoreApplication.translate("SettingsDialog", "Could not save settings.")
 
         if updated.theme != settings.theme:
-            apply_theme(style_hints, updated.theme)
+            apply_theme(app, updated.theme)
         settings = updated
         error = None
         if override_key is None and key != api_key:
