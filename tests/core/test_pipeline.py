@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from threading import Event
+from threading import TIMEOUT_MAX, Event
 from typing import cast
 
 import pytest
@@ -218,20 +218,35 @@ def test_unhandled_failure_returns_error_and_processed_prefix() -> None:
     assert len(translator.calls) == 2
 
 
-def test_request_that_fails_after_cancellation_returns_cancelled() -> None:
+@pytest.mark.parametrize("error_type", [AuthError, ProviderUnavailableError])
+def test_request_that_fails_after_cancellation_returns_cancelled(
+    error_type: type[TranslationError],
+) -> None:
     cancel = Event()
 
     def fail() -> None:
         cancel.set()
-        raise AuthError("rejected")
+        raise error_type("request failed")
 
     def on_failure(chunk: Chunk, exc: TranslationError) -> FailureAction:
         pytest.fail("Cancellation must take precedence over prompting for a failure action")
 
-    job = TranslationJob(translator=FakeTranslator(fail))
-    result = job.run("one", Language.AUTO, Language.UK, cancel=cancel, on_failure=on_failure)
+    def on_retry(attempt: int, delay: float, exc: TranslationError) -> None:
+        pytest.fail("Cancellation must take precedence over scheduling a retry")
 
-    assert result == JobResult("", None, cancelled=True)
+    translator = FakeTranslator(lambda: None, fail)
+    job = TranslationJob(translator=translator, max_units=3, request_delay=0)
+    result = job.run(
+        "one two",
+        Language.AUTO,
+        Language.UK,
+        cancel=cancel,
+        on_failure=on_failure,
+        on_retry=on_retry,
+    )
+
+    assert result == JobResult("ONE ", Language.EN, cancelled=True)
+    assert len(translator.calls) == 2
 
 
 def test_cancel_while_waiting_for_failure_action() -> None:
@@ -256,7 +271,7 @@ def test_invalid_failure_action_is_rejected() -> None:
         job.run("one", Language.AUTO, Language.UK, on_failure=on_failure)
 
 
-@pytest.mark.parametrize("delay", [-1.0, float("nan"), float("inf")])
+@pytest.mark.parametrize("delay", [-1.0, float("nan"), float("inf"), TIMEOUT_MAX * 2])
 def test_invalid_delay_is_rejected(delay: float) -> None:
-    with pytest.raises(ValueError, match="request_delay must be finite and non-negative"):
+    with pytest.raises(ValueError, match="request_delay must be between"):
         TranslationJob(translator=FakeTranslator(), request_delay=delay)

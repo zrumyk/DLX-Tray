@@ -109,6 +109,8 @@ def call_with_retry[T](
         try:
             return fn()
         except RETRYABLE_ERRORS as error:
+            if cancel.is_set():
+                raise TranslationCancelledError("cancelled during the request") from error
             if attempt >= policy.max_attempts:
                 raise
             delay = policy.delay_for(error, attempt, rng)

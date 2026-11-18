@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 import logging
-import math
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
-from threading import Event
+from threading import TIMEOUT_MAX, Event
 from typing import TYPE_CHECKING
 
 from dlx_tray.core import chunker
@@ -56,8 +55,8 @@ class TranslationJob:
     sleep: Sleeper = event_sleep
 
     def __post_init__(self) -> None:
-        if not math.isfinite(self.request_delay) or self.request_delay < 0:
-            raise ValueError("request_delay must be finite and non-negative")
+        if not 0 <= self.request_delay <= TIMEOUT_MAX:
+            raise ValueError(f"request_delay must be between 0 and {TIMEOUT_MAX} seconds")
 
     def run(
         self,
