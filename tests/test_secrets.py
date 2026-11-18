@@ -1,10 +1,12 @@
 """Test credential handling without accessing the user's Windows vault."""
 
 import logging
+from contextlib import nullcontext
 from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
+from keyring.backends.Windows import DecodingCredential, WinVaultKeyring
 from keyring.errors import KeyringError, NoKeyringError, PasswordDeleteError
 
 from dlx_tray import secrets
@@ -47,9 +49,31 @@ def test_no_stored_key(vault: Mock, stored: str | None) -> None:
     assert secrets.get_deepl_api_key() is None
 
 
-def test_set_key(vault: Mock) -> None:
+def test_replacing_key_does_not_leave_a_second_entry(monkeypatch: pytest.MonkeyPatch) -> None:
+    credentials: dict[str, DecodingCredential] = {}
+    vault = WinVaultKeyring()
+
+    def write(target: str, username: str, key: str) -> None:
+        credentials[target] = DecodingCredential(
+            UserName=username, CredentialBlob=key.encode("utf-16-le")
+        )
+
+    monkeypatch.setattr(vault, "_read_credential", credentials.get)
+    monkeypatch.setattr(vault, "_set_password", write)
+    monkeypatch.setattr(secrets, "_credential_manager", lambda: nullcontext(vault))
+
+    secrets.set_deepl_api_key("old:fx")
+    secrets.set_deepl_api_key(" new:fx ")
+    assert secrets.get_deepl_api_key() == "new:fx"
+    del credentials["DLX Tray"]
+    assert secrets.get_deepl_api_key() is None
+
+
+def test_set_key_preserves_another_username(vault: Mock) -> None:
+    vault._read_credential.return_value = {"UserName": "another-user"}
     secrets.set_deepl_api_key(" stored:fx ")
     vault.set_password.assert_called_once_with("DLX Tray", "deepl_api_key", "stored:fx")
+    vault._set_password.assert_not_called()
 
 
 def test_reject_blank_key(vault: Mock) -> None:
@@ -85,7 +109,8 @@ def test_failed_read_logs_without_backend_details(
 
 
 def test_failed_writes_raise_safe_errors(vault: Mock) -> None:
-    vault.set_password.side_effect = _VaultError("test-key")
+    vault._read_credential.return_value = None
+    vault._set_password.side_effect = _VaultError("test-key")
     vault.delete_password.side_effect = _VaultError("test-key")
     with pytest.raises(KeyringError, match="could not access") as set_error:
         secrets.set_deepl_api_key("test-key")
