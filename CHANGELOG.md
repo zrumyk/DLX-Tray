@@ -11,6 +11,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   counter, a Translate control with Ctrl+Enter, and result copying.
 - Translate through a configured DLX server in the background with chunk progress and live results.
   Cancel to stop after the current request and keep completed chunks.
+- Auto-detect shows the detected source language after translation and uses it to swap languages
+  and texts.
 
 ## [0.2.0] - 2026-11-18
 
