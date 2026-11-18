@@ -176,6 +176,13 @@ class SettingsDialog(QDialog):
 
     @Slot(bool)
     def _update_history(self, enabled: bool) -> None:
+        if not enabled:
+            try:
+                valid_limit = int(self.history_limit.text()) >= 1
+            except ValueError:
+                valid_limit = False
+            if not valid_limit:
+                self.history_limit.setText(str(self._settings.history_limit))
         self.history_limit.setEnabled(enabled and not self._settings.is_overridden("history_limit"))
 
     def _effective_key(self) -> str | None:

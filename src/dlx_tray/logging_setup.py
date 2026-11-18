@@ -1,34 +1,13 @@
 """Attach a rotating file handler for the lifetime of the DLX Tray application."""
 
 import logging
-import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-if sys.platform == "win32":
-    import msvcrt
-else:
-    import fcntl
-
+from dlx_tray._file_lock import file_lock
 from dlx_tray.config import LogLevel, app_data_dir
-
-
-@contextmanager
-def _log_lock(path: Path) -> Iterator[None]:
-    # All processes lock the same byte. Keep the lock file in place between writes.
-    with path.open("a+b") as lock:
-        lock.seek(0)
-        if sys.platform == "win32":
-            msvcrt.locking(lock.fileno(), msvcrt.LK_LOCK, 1)
-            try:
-                yield
-            finally:
-                msvcrt.locking(lock.fileno(), msvcrt.LK_UNLCK, 1)
-        else:
-            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
-            yield
 
 
 class _SharedRotatingFileHandler(RotatingFileHandler):
@@ -37,13 +16,13 @@ class _SharedRotatingFileHandler(RotatingFileHandler):
     def __init__(self, path: Path) -> None:
         self.lock_path = path.with_suffix(".lock")
         # Check permissions before startup succeeds, without holding the log open.
-        with _log_lock(self.lock_path), path.open("a", encoding="utf-8"):
+        with file_lock(self.lock_path), path.open("a", encoding="utf-8"):
             pass
         super().__init__(path, maxBytes=1024**2, backupCount=2, encoding="utf-8", delay=True)
 
     def emit(self, record: logging.LogRecord) -> None:
         try:
-            with _log_lock(self.lock_path):
+            with file_lock(self.lock_path):
                 try:
                     super().emit(record)
                 finally:

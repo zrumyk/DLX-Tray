@@ -4,7 +4,7 @@ from collections.abc import Callable
 from contextlib import ExitStack, nullcontext
 from pathlib import Path
 from threading import Event
-from unittest.mock import Mock
+from unittest.mock import Mock, call
 
 import pytest
 from keyring.errors import KeyringError
@@ -17,6 +17,7 @@ from tests.fakes.fake_dlx import FakeDLXFactory
 from dlx_tray import app, config, secrets
 from dlx_tray.config import Settings
 from dlx_tray.core.models import Formality, Language, ProviderUnavailableError, TranslationResult
+from dlx_tray.providers import fallback
 from dlx_tray.services.deeplx_process import DLXProcess
 from dlx_tray.ui.main_window import MainWindow
 from dlx_tray.ui.settings_dialog import SettingsDialog
@@ -265,13 +266,17 @@ def test_settings_save_applies_to_next_job_and_reloads(
     vault: Mock,
 ) -> None:
     monkeypatch.setattr(config, "app_data_dir", lambda: tmp_path)
+    monkeypatch.setattr(fallback, "monotonic", lambda: 100.0)
     vault._read_credential.return_value = None
     official = Mock(spec=app.DeepLOfficialTranslator, name="official")
     official.name = "deepl"
     official.translate.side_effect = lambda texts, *_: [
         TranslationResult(text, Language.EN, "deepl") for text in texts
     ]
-    official_factory = Mock(return_value=official)
+    rotated_official = Mock(spec=app.DeepLOfficialTranslator)
+    rotated_official.name = "deepl"
+    rotated_official.translate.side_effect = official.translate.side_effect
+    official_factory = Mock(side_effect=[official, rotated_official])
     monkeypatch.setattr(app, "DeepLOfficialTranslator", official_factory)
     job_factory = Mock(wraps=app.TranslationJob)
     monkeypatch.setattr(app, "TranslationJob", job_factory)
@@ -319,12 +324,23 @@ def test_settings_save_applies_to_next_job_and_reloads(
         assert not persisted.history_enabled
         assert persisted.history_limit == 125
 
-        def clear(dialog: SettingsDialog) -> None:
+        def rotate(dialog: SettingsDialog) -> None:
             assert dialog.api_key.text() == "saved-key:fx"
+            dialog.api_key.setText("rotated-key:fx")
+
+        _edit_settings(window, rotate)
+        official.close.assert_called_once_with()
+        window.translate_button.click()
+        qtbot.waitUntil(window.settings_action.isEnabled)
+        assert window.result_editor.toPlainText() == source
+        assert rotated_official.translate.call_count == 2
+
+        def clear(dialog: SettingsDialog) -> None:
+            assert dialog.api_key.text() == "rotated-key:fx"
             dialog.api_key.clear()
 
         _edit_settings(window, clear)
-        official.close.assert_called_once_with()
+        rotated_official.close.assert_called_once_with()
         window.translate_button.click()
         qtbot.waitUntil(window.settings_action.isEnabled)
         assert window.result_editor.toPlainText().startswith("[UK]")
@@ -334,9 +350,12 @@ def test_settings_save_applies_to_next_job_and_reloads(
         settings = Settings.model_validate({"deeplx_url": server.url, "deeplx_token": server.token})
         run_window(settings, check)
 
-    vault._set_password.assert_called_once_with("DLX Tray", "deepl_api_key", "saved-key:fx")
+    assert vault._set_password.call_args_list == [
+        call("DLX Tray", "deepl_api_key", "saved-key:fx"),
+        call("DLX Tray", "deepl_api_key", "rotated-key:fx"),
+    ]
     vault.delete_password.assert_called_once_with("DLX Tray", "deepl_api_key")
-    official_factory.assert_called_once_with("saved-key:fx")
+    assert official_factory.call_args_list == [call("saved-key:fx"), call("rotated-key:fx")]
 
 
 @pytest.mark.parametrize("settings_fail", [True, False], ids=["json", "credential-manager"])

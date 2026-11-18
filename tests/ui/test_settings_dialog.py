@@ -99,3 +99,20 @@ def test_override_and_invalid_values(
     assert updated.retries == 0
     assert updated.is_overridden("chunk_size")
     assert key == "override-key"
+
+
+def test_disabling_history_discards_an_incomplete_limit(qtbot: QtBot) -> None:
+    save = Mock(return_value=None)
+    dialog = SettingsDialog(
+        Settings(history_limit=125), None, key_overridden=False, save=save, check_key=Mock()
+    )
+    qtbot.addWidget(dialog)
+    dialog.show()
+    dialog.history_limit.clear()
+    dialog.history_enabled.setChecked(False)
+    assert not dialog.history_limit.isEnabled()
+    dialog.buttons.button(QDialogButtonBox.StandardButton.Save).click()
+    assert dialog.result() == QDialog.DialogCode.Accepted
+    settings, _ = save.call_args.args
+    assert not settings.history_enabled
+    assert settings.history_limit == 125

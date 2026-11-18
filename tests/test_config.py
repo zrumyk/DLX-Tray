@@ -91,6 +91,23 @@ def test_save_preserves_preferences_shadowed_by_overrides(
     assert "request_delay" not in json.loads(path.read_text(encoding="utf-8"))
 
 
+def test_partial_saves_merge_edits_from_two_settings_snapshots(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    path = tmp_path / "settings.json"
+    path.write_text('{"chunk_size": 900, "retries": 2, "deepl_api_key": "stale"}', encoding="utf-8")
+    monkeypatch.setenv("DLX_RETRIES", "1")
+    first, second = Settings.load(path), Settings.load(path)
+    first.model_copy(update={"chunk_size": 200}).save(path, changes_from=first)
+    second.model_copy(update={"request_delay": 0}).save(path, changes_from=second)
+
+    assert json.loads(path.read_text(encoding="utf-8")) == {
+        "chunk_size": 200,
+        "request_delay": 0.0,
+        "retries": 2,
+    }
+
+
 def test_round_trip_keeps_preferences_and_excludes_runtime_fields(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -185,4 +202,4 @@ def test_failed_save_preserves_previous_file(
     with pytest.raises(PermissionError, match="destination locked"):
         settings.save(path)
     assert Settings.load(path).chunk_size == 700
-    assert list(tmp_path.iterdir()) == [path]
+    assert set(tmp_path.iterdir()) == {path, tmp_path / "settings.json.lock"}

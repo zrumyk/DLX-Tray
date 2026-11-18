@@ -101,7 +101,7 @@ def _run_window(app: QApplication, settings: Settings, stack: ExitStack) -> int:
     def save_preferences(updated: Settings, key: str | None) -> str | None:
         nonlocal settings, official, api_key
         try:
-            updated.save()
+            updated.save(changes_from=settings)
         except (OSError, ValueError) as exc:
             log.warning("Could not save settings (%s)", type(exc).__name__)
             return QCoreApplication.translate("SettingsDialog", "Could not save settings.")
@@ -123,7 +123,10 @@ def _run_window(app: QApplication, settings: Settings, stack: ExitStack) -> int:
                 close_official()
                 api_key = key
                 official = DeepLOfficialTranslator(key) if key is not None else None
-                refresh_provider()
+                if isinstance(translator, FallbackTranslator) and official is not None:
+                    translator.replace_secondary(official)
+                else:
+                    refresh_provider()
         refresh_job()
         return error
 
