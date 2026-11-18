@@ -1,6 +1,8 @@
 """Verify that the application log filters records and bounds retained history."""
 
 import logging
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -38,4 +40,33 @@ def test_rotates_and_retains_two_backups(tmp_path: Path) -> None:
         path = tmp_path / f"dlx-tray.log{suffix}"
         assert path.stat().st_size < 1024**2
         assert f"record {index}" in path.read_text(encoding="utf-8")
-    assert len(list(tmp_path.iterdir())) == 3
+    assert len(list(tmp_path.glob("dlx-tray.log*"))) == 3
+
+
+def test_rotates_while_another_instance_is_running(tmp_path: Path) -> None:
+    child_script = """
+import logging
+import sys
+from pathlib import Path
+from dlx_tray.logging_setup import file_logging
+
+with file_logging(directory=Path(sys.argv[1])):
+    logging.getLogger('dlx_tray.test').info('child record')
+"""
+    path = tmp_path / "dlx-tray.log"
+    path.write_bytes(b"x" * 1024**2)
+    with file_logging(directory=tmp_path):
+        result = subprocess.run(
+            [sys.executable, "-c", child_script, str(tmp_path)],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=15,
+        )
+        assert not result.stderr
+        logging.getLogger("dlx_tray.test").info("parent record after rotation")
+
+    contents = path.read_text(encoding="utf-8")
+    assert "child record" in contents
+    assert "parent record after rotation" in contents
+    assert (tmp_path / "dlx-tray.log.1").stat().st_size == 1024**2

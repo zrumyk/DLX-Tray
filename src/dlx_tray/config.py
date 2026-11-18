@@ -10,8 +10,14 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Literal, Self
 
-from pydantic import AnyHttpUrl, Field, SecretStr, field_validator
-from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
+from pydantic import AnyHttpUrl, Field, PrivateAttr, SecretStr, field_validator
+from pydantic_settings import (
+    BaseSettings,
+    DotEnvSettingsSource,
+    EnvSettingsSource,
+    PydanticBaseSettingsSource,
+    SettingsConfigDict,
+)
 
 from dlx_tray import APP_NAME
 from dlx_tray.core.models import Formality, Language
@@ -32,6 +38,16 @@ def _system_ui_language() -> UiLanguage:
     return "uk" if primary in {"uk", "ukrainian"} else "en"
 
 
+def _read_preferences(path: Path) -> dict[str, object]:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
+    except FileNotFoundError:
+        return {}
+    if not isinstance(data, dict):
+        raise ValueError("settings.json must contain a JSON object")
+    return data
+
+
 class Settings(BaseSettings):
     """Effective preferences, with environment and dotenv taking priority over JSON."""
 
@@ -39,7 +55,6 @@ class Settings(BaseSettings):
         env_prefix="DLX_",
         env_file_encoding="utf-8",
         env_ignore_empty=True,
-        extra="ignore",
         validate_assignment=True,
         hide_input_in_errors=True,
     )
@@ -61,6 +76,8 @@ class Settings(BaseSettings):
     deeplx_port: int | None = Field(default=None, ge=1, le=65535, exclude=True)
     log_level: LogLevel = Field(default="INFO", exclude=True)
 
+    _overridden_preferences: set[str] = PrivateAttr(default_factory=set)
+
     @classmethod
     def settings_customise_sources(
         cls,
@@ -70,12 +87,18 @@ class Settings(BaseSettings):
         dotenv_settings: PydanticBaseSettingsSource,
         file_secret_settings: PydanticBaseSettingsSource,
     ) -> tuple[PydanticBaseSettingsSource, ...]:
-        return env_settings, dotenv_settings, init_settings
+        # load() reads the ambient sources once to track which fields are temporary.
+        return (init_settings,)
 
     @field_validator("source_lang", "target_lang", mode="before")
     @classmethod
     def _parse_language(cls, value: object) -> object:
-        return Language.from_code(value) if isinstance(value, str) else value
+        if not isinstance(value, str):
+            return value
+        try:
+            return Language.from_code(value)
+        except ValueError:
+            raise ValueError("Unknown language code") from None
 
     @field_validator("source_lang")
     @classmethod
@@ -100,24 +123,28 @@ class Settings(BaseSettings):
     def load(cls, path: Path | None = None, *, env_file: Path | None = Path(".env")) -> Self:
         if path is None:
             path = app_data_dir() / "settings.json"
-        try:
-            data = json.loads(path.read_text(encoding="utf-8-sig"))
-        except FileNotFoundError:
-            data = {}
-        if not isinstance(data, dict):
-            raise ValueError("settings.json must contain a JSON object")
-        settings_kwargs = {
-            name: data[name]
-            for name, field in cls.model_fields.items()
-            if name in data and not field.exclude
-        }
-        settings_kwargs["_env_file"] = None if getattr(sys, "frozen", False) else env_file
-        return cls(**settings_kwargs)
+        data = _read_preferences(path)
+        preference_fields = {name for name, field in cls.model_fields.items() if not field.exclude}
+        preferences = {name: data[name] for name in preference_fields & data.keys()}
+        dotenv = DotEnvSettingsSource(
+            cls, env_file=None if getattr(sys, "frozen", False) else env_file
+        )
+        # Match declared DLX_* fields only, just as for the process environment.
+        overrides = EnvSettingsSource.__call__(dotenv) | EnvSettingsSource(cls)()
+        settings = cls.model_validate(preferences | overrides)
+        settings._overridden_preferences = preference_fields & overrides.keys()
+        return settings
 
     def save(self, path: Path | None = None) -> None:
-        """Atomically save the current preferences without development-only fields."""
+        """Atomically save preferences and preserve any values shadowed by overrides."""
         if path is None:
             path = app_data_dir() / "settings.json"
+        saved = self.model_dump(mode="json", exclude=self._overridden_preferences)
+        if self._overridden_preferences:
+            existing = _read_preferences(path)
+            saved.update(
+                {name: existing[name] for name in self._overridden_preferences & existing.keys()}
+            )
         path.parent.mkdir(parents=True, exist_ok=True)
         temporary: Path | None = None
         try:
@@ -125,7 +152,7 @@ class Settings(BaseSettings):
                 mode="w", encoding="utf-8", dir=path.parent, delete=False
             ) as stream:
                 temporary = Path(stream.name)
-                stream.write(self.model_dump_json(indent=2) + "\n")
+                stream.write(json.dumps(saved, indent=2, ensure_ascii=False) + "\n")
             temporary.replace(path)
         finally:
             if temporary is not None:

@@ -69,6 +69,28 @@ def test_frozen_app_ignores_dotenv(monkeypatch: pytest.MonkeyPatch, tmp_path: Pa
     assert Settings.load().chunk_size == 1400
 
 
+def test_save_preserves_preferences_shadowed_by_overrides(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    path = tmp_path / "settings.json"
+    path.write_text('{"chunk_size": 900}', encoding="utf-8")
+    (tmp_path / ".env").write_text("DLX_REQUEST_DELAY=6\nTHEME=light\n", encoding="utf-8")
+    monkeypatch.setenv("DLX_CHUNK_SIZE", "1200")
+    settings = Settings.load(path)
+    assert settings.chunk_size == 1200
+    assert settings.request_delay == 6
+    assert settings.theme == "system"
+    settings.history_enabled = False
+    settings.save(path)
+
+    monkeypatch.delenv("DLX_CHUNK_SIZE")
+    loaded = Settings.load(path, env_file=None)
+    assert loaded.chunk_size == 900
+    assert loaded.request_delay == 1.5
+    assert not loaded.history_enabled
+    assert "request_delay" not in json.loads(path.read_text(encoding="utf-8"))
+
+
 def test_round_trip_keeps_preferences_and_excludes_runtime_fields(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -130,6 +152,13 @@ def test_invalid_override_is_rejected(
     monkeypatch.setenv(f"DLX_{name}", value)
     with pytest.raises(ValidationError, match=name.lower()):
         Settings.load()
+
+
+def test_invalid_language_is_not_echoed_in_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DLX_TARGET_LANG", "private-sentinel")
+    with pytest.raises(ValidationError, match="Unknown language code") as error:
+        Settings.load()
+    assert "private-sentinel" not in str(error.value)
 
 
 @pytest.mark.parametrize("content", ["[", "[]"])
