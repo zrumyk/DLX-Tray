@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
     QGridLayout,
+    QHBoxLayout,
     QLabel,
     QMainWindow,
     QPlainTextEdit,
@@ -44,7 +45,7 @@ class MainWindow(QMainWindow):
         central = QWidget(self)
         layout = QGridLayout(central)
         layout.setColumnStretch(0, 1)
-        layout.setColumnStretch(2, 1)
+        layout.setColumnStretch(1, 1)
         layout.setRowStretch(1, 1)
         self.setCentralWidget(central)
 
@@ -69,14 +70,21 @@ class MainWindow(QMainWindow):
         self.translate_button = QPushButton(self.tr("Translate"))
         self.translate_button.setToolTip(self.tr("Translate (Ctrl+Enter)"))
 
-        layout.addWidget(self.source_languages, 0, 0)
-        layout.addWidget(self.swap_button, 0, 1)
-        layout.addWidget(self.target_languages, 0, 2)
+        languages = QHBoxLayout()
+        languages.addWidget(self.source_languages, 1)
+        languages.addWidget(self.swap_button)
+        languages.addWidget(self.target_languages, 1)
+        layout.addLayout(languages, 0, 0, 1, 2)
+
         layout.addWidget(self.source_editor, 1, 0)
-        layout.addWidget(self.result_editor, 1, 2)
-        layout.addWidget(self.counter, 2, 0)
-        layout.addWidget(self.translate_button, 2, 1)
-        layout.addWidget(self.copy_button, 2, 2)
+        layout.addWidget(self.result_editor, 1, 1)
+
+        source_actions = QHBoxLayout()
+        source_actions.addWidget(self.counter)
+        source_actions.addStretch()
+        source_actions.addWidget(self.translate_button)
+        layout.addLayout(source_actions, 2, 0)
+        layout.addWidget(self.copy_button, 2, 1, alignment=Qt.AlignmentFlag.AlignRight)
 
         self._translate_shortcut = QShortcut(self)
         self._translate_shortcut.setKeys([QKeySequence("Ctrl+Return"), QKeySequence("Ctrl+Enter")])
