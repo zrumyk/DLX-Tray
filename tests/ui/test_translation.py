@@ -33,6 +33,16 @@ def translation_window(qtbot: QtBot) -> Iterator[Callable[[TranslationJob], Main
         window.stop_translation()
 
 
+def test_unconfigured_server_disables_translation(qtbot: QtBot) -> None:
+    reason = "Set DLX_DEEPLX_URL to translate."
+    window = MainWindow(translation_unavailable_reason=reason)
+    qtbot.addWidget(window)
+    window.source_editor.setPlainText("A phrase")
+    assert window.statusBar().currentMessage() == reason
+    assert not window.translate_button.isEnabled()
+    assert not window._translate_shortcut.isEnabled()
+
+
 def test_large_translation_with_loopback_server(
     qtbot: QtBot,
     translation_window: Callable[[TranslationJob], MainWindow],

@@ -65,11 +65,12 @@ def run(argv: list[str]) -> int:
             chunk_size=settings.chunk_size,
             translation_job=job,
             formality=settings.formality,
-        )
-        if job is None:
-            window.statusBar().showMessage(
+            translation_unavailable_reason=(
                 QCoreApplication.translate("Startup", "Set DLX_DEEPLX_URL to translate.")
-            )
+                if job is None
+                else None
+            ),
+        )
         window.show()
         try:
             return app.exec()

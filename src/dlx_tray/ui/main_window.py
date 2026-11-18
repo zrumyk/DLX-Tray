@@ -41,11 +41,13 @@ class MainWindow(QMainWindow):
         chunk_size: int = chunker.DEFAULT_MAX_UNITS,
         translation_job: TranslationJob | None = None,
         formality: Formality = Formality.DEFAULT,
+        translation_unavailable_reason: str | None = None,
     ) -> None:
         super().__init__(parent)
         self._chunk_size = translation_job.max_units if translation_job else chunk_size
         self._job = translation_job
         self._formality = formality
+        self._translation_unavailable_reason = translation_unavailable_reason
         self._thread: QThread | None = None
         self._worker: TranslationWorker | None = None
         self._close_pending = False
@@ -79,7 +81,11 @@ class MainWindow(QMainWindow):
         self.counter.setToolTip(self.tr("Characters are counted in UTF-16 code units."))
         self.copy_button = QPushButton(self.tr("Copy result"))
         self.translate_button = QPushButton(self.tr("Translate"))
-        self.translate_button.setToolTip(self.tr("Translate (Ctrl+Enter)"))
+        self.translate_button.setToolTip(
+            translation_unavailable_reason or self.tr("Translate (Ctrl+Enter)")
+        )
+        if translation_unavailable_reason:
+            self.statusBar().showMessage(translation_unavailable_reason)
 
         languages = QHBoxLayout()
         languages.addWidget(self.source_languages, 1)
@@ -186,7 +192,11 @@ class MainWindow(QMainWindow):
         self._update_translate()
 
     def _update_translate(self) -> None:
-        enabled = self._thread is None and self._chunk_count > 0
+        enabled = (
+            self._translation_unavailable_reason is None
+            and self._thread is None
+            and self._chunk_count > 0
+        )
         self.translate_button.setEnabled(enabled)
         self._translate_shortcut.setEnabled(enabled)
 

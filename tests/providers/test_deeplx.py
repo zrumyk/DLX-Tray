@@ -79,6 +79,14 @@ def test_omits_authorization_when_no_token_is_configured(mock: respx.MockRouter)
     assert "Authorization" not in route.calls.last.request.headers
 
 
+def test_appends_endpoint_to_base_path_before_query(mock: respx.MockRouter) -> None:
+    route = mock.post(f"{BASE}/proxy%2Fdlx/translate?source=dev").mock(return_value=ok("Привіт"))
+    with DeeplxTranslator(f"{BASE}/proxy%2Fdlx/?source=dev#setup", TOKEN) as translator:
+        assert translate(translator, "Hello") == ["Привіт"]
+    assert route.calls.last.request.url.raw_path == b"/proxy%2Fdlx/translate?source=dev"
+    assert not route.calls.last.request.url.fragment
+
+
 def test_uses_30_second_timeout(mock: respx.MockRouter, dlx: DeeplxTranslator) -> None:
     route = mock.post(URL).mock(return_value=ok(["x"]))
     translate(dlx, "Hello")
