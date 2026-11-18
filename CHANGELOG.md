@@ -6,12 +6,22 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-18
+
 ### Added
 - A Settings dialog for chunk size, request delay, retries, and official DeepL formality.
 - Save, remove, or test a masked DeepL API key from Settings. Changes apply to the next translation.
 - Choose Light, Dark, or Follow Windows in Settings. Themes change without restarting.
 - Save preferences for the upcoming interface language and translation history features.
 - Restore the main window's size, position, maximized state, and last selected languages at startup.
+
+### Fixed
+- Keep unrelated changes from other running instances when saving preferences.
+
+### Known issues
+- Bundled DLX v1.3.1 can return HTTP 429 even on a short request. Live translation through the
+  bundled server was deferred for this release. The official DeepL API was verified with a
+  configured key. See [DLX issue #248](https://github.com/OwO-Network/DLX/issues/248).
 
 ## [0.4.0] - 2026-11-18
 
@@ -79,7 +89,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   pre-commit hooks and CI on Windows.
 - Script to download the pinned DLX v1.3.1 binary with SHA-256 verification.
 
-[Unreleased]: https://github.com/zrumyk/DLX-Tray/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/zrumyk/DLX-Tray/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/zrumyk/DLX-Tray/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/zrumyk/DLX-Tray/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/zrumyk/DLX-Tray/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/zrumyk/DLX-Tray/compare/v0.1.0...v0.2.0

@@ -3,9 +3,9 @@
 A free desktop translator for Windows, in development. It is designed to translate long texts
 in chunks using a bundled [DLX](https://github.com/OwO-Network/DLX) (formerly DeepLX) server.
 
-> **Status:** v0.4.0 adds optional official DeepL API fallback and recovery when a chunk fails.
+> **Status:** v0.5.0 adds Settings, Windows theme support, and restores the window and language selections.
 
-## Available in v0.4.0
+## Available in v0.5.0
 
 - Split long input on text boundaries into chunks of up to 1500 UTF-16 code units and reassemble
   the translated chunks with their original separators.
@@ -16,14 +16,17 @@ in chunks using a bundled [DLX](https://github.com/OwO-Network/DLX) (formerly De
 - Fall back to the official DeepL API when DLX is rate-limited or unavailable, using your own
   DeepL API Free or Pro key. The status bar shows which provider is translating.
 - Retry, skip, or cancel when translation pauses on a failed chunk.
-- Load local preferences with development overrides and write rotating diagnostic logs.
+- Set chunk size, request delay, retries, and official API formality in Settings.
+- Save, test, or remove your DeepL API key in Settings.
+- Choose Light, Dark, or Follow Windows. Theme changes apply immediately.
+- Restore the window's size, position, maximized state, and last languages when the app starts.
+- Apply development overrides and write rotating diagnostic logs.
 
 ## Planned features
 
-- Settings dialog with controls for the DeepL API key and official API formality.
 - Open and save `.txt` and `.docx` files (formatting preserved). `.pdf` input is saved as `.docx` or `.txt`.
 - Local translation history with search.
-- Ukrainian and English interface, light and dark themes.
+- Ukrainian and English interface.
 - Windows installer.
 
 Later (v2): system tray icon, global hotkey to translate selected text.
@@ -63,9 +66,10 @@ Copy `.env.example` to `.env` for local development. The app loads preferences f
 `%APPDATA%\DLX Tray\settings.json` and applies `DLX_*` development overrides. Set
 `DLX_DEEPLX_URL` and, if required, `DLX_DEEPLX_TOKEN` to use an external DLX server.
 
-For official DeepL API fallback, set `DLX_DEEPL_API_KEY` in the local `.env` and restart the app.
-The process environment takes precedence over `.env`. If the resulting key is missing or blank,
-the app checks Windows Credential Manager.
+For official DeepL API fallback, save a key in Settings. The app stores it in Windows Credential
+Manager and uses changes for the next translation. For development, set `DLX_DEEPL_API_KEY` in
+the process environment or local `.env` before starting the app. The process environment takes
+precedence over `.env`. If the effective override is missing or blank, the app uses the stored key.
 
 ## Roadmap
 
@@ -74,8 +78,8 @@ the app checks Windows Credential Manager.
 | 0.1.0 | Project skeleton, tooling, CI (completed) |
 | 0.2.0 | Chunker, DLX client and process manager, translation pipeline, local settings and logs (completed) |
 | 0.3.0 | Main window: languages, progress, cancel, automatic DLX startup (completed) |
-| 0.4.0 | Official DeepL API fallback, error recovery, API key storage (current) |
-| 0.5.0 | Settings and themes |
+| 0.4.0 | Official DeepL API fallback, error recovery, API key storage (completed) |
+| 0.5.0 | Settings, themes, saved window geometry and language selections (current) |
 | 0.6.0 | `.txt` / `.docx` / `.pdf` files |
 | 0.7.0 | Translation history |
 | 0.8.0 | Ukrainian and English UI |
