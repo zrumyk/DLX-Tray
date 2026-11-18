@@ -72,6 +72,13 @@ def test_auto_source_is_sent_lowercase(mock: respx.MockRouter, dlx: DeeplxTransl
     assert json.loads(route.calls.last.request.content)["source_lang"] == "auto"
 
 
+def test_omits_authorization_when_no_token_is_configured(mock: respx.MockRouter) -> None:
+    route = mock.post(URL).mock(return_value=ok("Привіт"))
+    with DeeplxTranslator(BASE, "") as translator:
+        assert translate(translator, "Hello") == ["Привіт"]
+    assert "Authorization" not in route.calls.last.request.headers
+
+
 def test_uses_30_second_timeout(mock: respx.MockRouter, dlx: DeeplxTranslator) -> None:
     route = mock.post(URL).mock(return_value=ok(["x"]))
     translate(dlx, "Hello")

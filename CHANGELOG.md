@@ -9,6 +9,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added
 - Translator layout with side-by-side editors, language pickers and swap, a character and chunk
   counter, a Translate control with Ctrl+Enter, and result copying.
+- Translate through a configured DLX server in the background with chunk progress and live results.
+  Cancel to stop after the current request and keep completed chunks.
 
 ## [0.2.0] - 2026-11-18
 
