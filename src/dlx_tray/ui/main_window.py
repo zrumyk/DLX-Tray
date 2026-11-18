@@ -50,6 +50,7 @@ class MainWindow(QMainWindow):
         self._translation_unavailable_reason = translation_unavailable_reason
         self._thread: QThread | None = None
         self._worker: TranslationWorker | None = None
+        self._detected_source: Language | None = None
         self._close_pending = False
         self._rendered_chars = 0
         self.setWindowTitle(f"{APP_NAME} {__version__}")
@@ -67,6 +68,8 @@ class MainWindow(QMainWindow):
         self.target_languages = QComboBox()
         self.target_languages.setAccessibleName(self.tr("Target language"))
         self._populate_languages(source, target)
+        self.detected_language = QLabel()
+        self.detected_language.hide()
 
         self.swap_button = QPushButton(self.tr("Swap"))
         self.swap_button.setAccessibleName(self.tr("Swap languages and texts"))
@@ -88,7 +91,10 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(translation_unavailable_reason)
 
         languages = QHBoxLayout()
-        languages.addWidget(self.source_languages, 1)
+        source_controls = QHBoxLayout()
+        source_controls.addWidget(self.source_languages, 1)
+        source_controls.addWidget(self.detected_language)
+        languages.addLayout(source_controls, 1)
         languages.addWidget(self.swap_button)
         languages.addWidget(self.target_languages, 1)
         layout.addLayout(languages, 0, 0, 1, 2)
@@ -127,8 +133,10 @@ class MainWindow(QMainWindow):
         self.copy_button.clicked.connect(self._copy_result)
         self.swap_button.clicked.connect(self._swap)
         self.source_editor.textChanged.connect(self._update_counter)
+        self.source_editor.textChanged.connect(self._clear_detected_source)
         self.result_editor.textChanged.connect(self._update_copy)
-        self.source_languages.currentIndexChanged.connect(self._update_swap)
+        self.source_languages.currentIndexChanged.connect(self._clear_detected_source)
+        self.target_languages.currentIndexChanged.connect(self._clear_detected_source)
         self._update_counter()
         self._update_copy()
         self._update_swap()
@@ -204,16 +212,26 @@ class MainWindow(QMainWindow):
         self.copy_button.setEnabled(not self.result_editor.document().isEmpty())
 
     def _update_swap(self) -> None:
-        enabled = self.source_languages.currentData() != Language.AUTO.value
+        explicit_source = self.source_languages.currentData() != Language.AUTO.value
+        enabled = explicit_source or self._detected_source is not None
         self.swap_button.setEnabled(enabled and self._thread is None)
         self.swap_button.setToolTip(
             self.tr("Swap languages and texts")
             if enabled
-            else self.tr("Choose a source language to swap.")
+            else self.tr("Translate to detect the source language, or choose it to swap.")
         )
+
+    def _clear_detected_source(self) -> None:
+        self._detected_source = None
+        self.detected_language.hide()
+        self._update_swap()
 
     def _swap(self) -> None:
         source = self.source_languages.currentData()
+        if source == Language.AUTO.value:
+            if self._detected_source is None:
+                return
+            source = self._detected_source.value
         target = self.target_languages.currentData().partition("-")[0]
         self.source_languages.setCurrentIndex(self.source_languages.findData(target))
         self.target_languages.setCurrentIndex(self.target_languages.findData(source))
@@ -249,6 +267,7 @@ class MainWindow(QMainWindow):
         thread.finished.connect(self._translation_stopped)
 
         self._rendered_chars = 0
+        self._clear_detected_source()
         self.result_editor.clear()
         self.statusBar().clearMessage()
         self.progress_bar.setRange(0, self._chunk_count)
@@ -285,6 +304,20 @@ class MainWindow(QMainWindow):
     @Slot(object)
     def _show_finished(self, result: JobResult) -> None:
         self._append_result(result.text)
+        detected = result.detected_source
+        if (
+            not result.cancelled
+            and self.source_languages.currentData() == Language.AUTO.value
+            and detected is not None
+            and detected.can_be_target
+        ):
+            self._detected_source = detected
+            index = self.target_languages.findData(detected.value)
+            label = self.tr("Detected: {language}")
+            self.detected_language.setText(
+                label.format(language=self.target_languages.itemText(index))
+            )
+            self.detected_language.show()
         self.statusBar().showMessage(
             self.tr("Translation cancelled.")
             if result.cancelled

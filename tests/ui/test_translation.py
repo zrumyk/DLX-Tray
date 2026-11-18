@@ -43,6 +43,60 @@ def test_unconfigured_server_disables_translation(qtbot: QtBot) -> None:
     assert not window._translate_shortcut.isEnabled()
 
 
+@pytest.mark.parametrize("action", ["swap", "edit", "source", "target", "failed retry"])
+def test_auto_detect_swap_uses_only_the_current_translation(
+    qtbot: QtBot,
+    translation_window: Callable[[TranslationJob], MainWindow],
+    fake_dlx: FakeDLXFactory,
+    action: str,
+) -> None:
+    with (
+        fake_dlx(["ok", "401"]) as server,
+        DeeplxTranslator(server.url, server.token) as translator,
+    ):
+        window = translation_window(TranslationJob(translator=translator, request_delay=0))
+        source = window.source_languages
+        target = window.target_languages
+        source.setCurrentIndex(source.findData(Language.AUTO.value))
+        target.setCurrentIndex(target.findData(Language.PT_BR.value))
+        window.source_editor.setPlainText("Hello")
+        assert not window.detected_language.isVisible()
+        assert not window.swap_button.isEnabled()
+
+        window.translate_button.click()
+        qtbot.waitUntil(window.translate_button.isEnabled)
+        assert source.currentData() == Language.AUTO
+        assert window.detected_language.isVisible()
+        assert window.detected_language.text() == "Detected: English"
+        assert window.swap_button.isEnabled()
+
+        if action == "swap":
+            window.swap_button.click()
+            assert source.currentData() == Language.PT
+            assert target.currentData() == Language.EN
+            assert window.source_editor.toPlainText() == "[PT-BR] Hello"
+            assert window.result_editor.toPlainText() == "Hello"
+        elif action == "edit":
+            window.source_editor.setPlainText("Bonjour")
+        elif action == "source":
+            source.setCurrentIndex(source.findData(Language.FR.value))
+            source.setCurrentIndex(source.findData(Language.AUTO.value))
+        elif action == "target":
+            target.setCurrentIndex(target.findData(Language.UK.value))
+        else:
+            window.translate_button.click()
+            assert not window.detected_language.isVisible()
+            assert not window.swap_button.isEnabled()
+            qtbot.waitUntil(window.translate_button.isEnabled)
+            assert (
+                window.statusBar().currentMessage()
+                == "Translation failed. Check DLX and try again."
+            )
+
+        assert not window.detected_language.isVisible()
+        assert window.swap_button.isEnabled() == (action == "swap")
+
+
 def test_large_translation_with_loopback_server(
     qtbot: QtBot,
     translation_window: Callable[[TranslationJob], MainWindow],
@@ -63,6 +117,7 @@ def test_large_translation_with_loopback_server(
         qtbot.mouseClick(window.translate_button, Qt.MouseButton.LeftButton)
         qtbot.waitUntil(window.translate_button.isEnabled, timeout=5000)
         assert window.statusBar().currentMessage() == "Translation complete."
+        assert not window.detected_language.isVisible()
         assert window.progress_bar.value() == sum(c.translatable for c in chunks)
         assert window.result_editor.toPlainText() == expected
 
