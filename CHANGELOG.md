@@ -13,6 +13,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   over to the next translation job.
 - Read the official DeepL API key from Windows Credential Manager at startup. A non-blank
   `DLX_DEEPL_API_KEY` environment or development `.env` value takes precedence.
+- If a chunk cannot be translated after retries, pause so you can retry it, keep its original
+  text and move on, or cancel and keep the result so far.
 
 ## [0.3.0] - 2026-11-18
 

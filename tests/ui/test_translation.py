@@ -14,6 +14,7 @@ from dlx_tray.core.models import Formality, Language, TranslationResult
 from dlx_tray.core.pipeline import TranslationJob
 from dlx_tray.core.retry import RetryPolicy
 from dlx_tray.providers.deeplx import DeeplxTranslator
+from dlx_tray.ui.error_dialog import ErrorDialog
 from dlx_tray.ui.main_window import MainWindow
 
 
@@ -87,11 +88,11 @@ def test_auto_detect_swap_uses_only_the_current_translation(
             window.translate_button.click()
             assert not window.detected_language.isVisible()
             assert not window.swap_button.isEnabled()
+            dialog = _wait_for_failure_dialog(qtbot, window)
+            assert "rejected its credentials" in dialog.informativeText()
+            dialog.cancel_button.click()
             qtbot.waitUntil(window.translate_button.isEnabled)
-            assert (
-                window.statusBar().currentMessage()
-                == "Translation failed. Check DLX and try again."
-            )
+            assert window.statusBar().currentMessage() == "Translation cancelled."
 
         assert not window.detected_language.isVisible()
         assert window.swap_button.isEnabled() == (action == "swap")
@@ -167,29 +168,81 @@ def test_cancel_interrupts_retry_and_keeps_streamed_text(
         assert window.result_editor.toPlainText() == "[EN] fresh"
 
 
-def test_failure_keeps_prefix_and_allows_another_job(
+def _wait_for_failure_dialog(qtbot: QtBot, window: MainWindow) -> ErrorDialog:
+    qtbot.waitUntil(lambda: isinstance(QApplication.activeModalWidget(), ErrorDialog))
+    dialog = QApplication.activeModalWidget()
+    assert isinstance(dialog, ErrorDialog)
+    assert dialog.parentWidget() is window
+    return dialog
+
+
+@pytest.mark.parametrize(
+    ("action", "expected"),
+    [
+        ("continue", "[EN] first [EN] txen [EN] last"),
+        ("skip", "[EN] first next [EN] tsal"),
+        ("cancel", "[EN] first "),
+        ("escape", "[EN] first "),
+        ("dismiss", "[EN] first "),
+        ("close window", "[EN] first "),
+    ],
+)
+def test_chunk_failure_actions(
     qtbot: QtBot,
     translation_window: Callable[[TranslationJob], MainWindow],
     fake_dlx: FakeDLXFactory,
+    action: str,
+    expected: str,
 ) -> None:
+    failures = ["503", "503"] if action == "continue" else ["503"]
     with (
-        fake_dlx(["ok", "503", "reverse"]) as server,
+        fake_dlx(["ok", *failures, "reverse"]) as server,
         DeeplxTranslator(server.url, server.token) as translator,
     ):
         job = TranslationJob(
             translator=translator, max_units=5, request_delay=0, retry_policy=RetryPolicy(1)
         )
         window = translation_window(job)
-        window.source_editor.setPlainText("first next")
+        window.source_editor.setPlainText(" first next last")
         window.translate_button.click()
-        qtbot.waitUntil(window.translate_button.isEnabled)
-        assert window.statusBar().currentMessage() == "Translation failed. Check DLX and try again."
-        assert window.result_editor.toPlainText() == "[EN] first "
+        dialog = _wait_for_failure_dialog(qtbot, window)
+        assert dialog.text() == "Could not translate chunk 2 of 3."
+        assert "provider is unavailable" in dialog.informativeText()
+        assert window.result_editor.toPlainText() == " [EN] first "
+        assert window.progress_bar.value() == 1
+        assert not window.translate_button.isEnabled()
 
+        if action == "continue":
+            dialog.continue_button.click()
+            again = _wait_for_failure_dialog(qtbot, window)
+            assert again is not dialog
+            assert again.text() == "Could not translate chunk 2 of 3."
+            again.continue_button.click()
+        elif action == "skip":
+            dialog.skip_button.click()
+        elif action == "cancel":
+            dialog.cancel_button.click()
+        elif action == "escape":
+            qtbot.keyClick(dialog, Qt.Key.Key_Escape)
+        elif action == "dismiss":
+            assert dialog.close()
+        else:
+            assert not window.close()
+
+        qtbot.waitUntil(window.translate_button.isEnabled)
+        assert QApplication.activeModalWidget() is None
+        assert window.result_editor.toPlainText() == f" {expected}"
+        status = (
+            "Translation complete." if action in {"continue", "skip"} else "Translation cancelled."
+        )
+        assert window.statusBar().currentMessage() == status
+        if action == "close window":
+            assert not window.isVisible()
+            return
         window.source_editor.setPlainText("next")
         window.translate_button.click()
         qtbot.waitUntil(window.translate_button.isEnabled)
-        assert window.result_editor.toPlainText() == "[EN] txen"
+        assert window.statusBar().currentMessage() == "Translation complete."
 
 
 def test_close_waits_for_in_flight_request_without_blocking_gui(
