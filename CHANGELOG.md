@@ -6,6 +6,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- Translator layout with side-by-side editors, language pickers and swap, a character and chunk
+  counter, a Translate control with Ctrl+Enter, and result copying.
+
 ## [0.2.0] - 2026-11-18
 
 ### Added

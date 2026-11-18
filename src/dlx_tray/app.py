@@ -46,6 +46,10 @@ def run(argv: list[str]) -> int:
                 QCoreApplication.translate("Startup", "Could not open the application log."),
             )
         log.info("Starting DLX Tray %s", __version__)
-        window = MainWindow()
+        window = MainWindow(
+            source=settings.source_lang,
+            target=settings.target_lang,
+            chunk_size=settings.chunk_size,
+        )
         window.show()
         return app.exec()
