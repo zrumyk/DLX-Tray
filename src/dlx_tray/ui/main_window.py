@@ -285,12 +285,15 @@ class MainWindow(QMainWindow):
             self.source_editor.setPlainText(_editor_text(self.result_editor))
             self.result_editor.setPlainText(source_text)
 
-    def _request_translation(self) -> None:
-        self.translation_requested.emit(
-            _editor_text(self.source_editor),
+    @property
+    def selected_languages(self) -> tuple[Language, Language]:
+        return (
             Language(self.source_languages.currentData()),
             Language(self.target_languages.currentData()),
         )
+
+    def _request_translation(self) -> None:
+        self.translation_requested.emit(_editor_text(self.source_editor), *self.selected_languages)
 
     @Slot(str, object, object)
     def _start_translation(self, text: str, source: Language, target: Language) -> None:

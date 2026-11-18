@@ -7,7 +7,7 @@ from contextlib import ExitStack
 
 from keyring.errors import KeyringError
 from pydantic_settings import SettingsError
-from PySide6.QtCore import QCoreApplication, Qt, QThread
+from PySide6.QtCore import QByteArray, QCoreApplication, Qt, QThread
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from dlx_tray import APP_NAME, __version__
@@ -60,6 +60,17 @@ def _run_window(app: QApplication, settings: Settings, stack: ExitStack) -> int:
         chunk_size=settings.chunk_size,
         formality=settings.formality,
     )
+    geometry_restored = False
+    if settings.window_geometry:
+        try:
+            geometry_restored = window.restoreGeometry(
+                QByteArray(bytes.fromhex(settings.window_geometry))
+            )
+        except ValueError:
+            log.warning("Invalid saved window geometry encoding")
+        else:
+            if not geometry_restored:
+                log.warning("Qt could not restore the saved window geometry")
 
     override = settings.deepl_api_key
     override_key = (override.get_secret_value().strip() or None) if override else None
@@ -181,14 +192,27 @@ def _run_window(app: QApplication, settings: Settings, stack: ExitStack) -> int:
     refresh_job()
     try:
         window.show()
+        initial_geometry = window.saveGeometry()
         if startup is not None:
             startup.start()
-        return app.exec()
+        result = app.exec()
     finally:
         # The translator and process remain alive until both workers have stopped.
         window.stop_translation()
         if startup is not None:
             startup.wait()
+
+    updated = settings.model_copy()
+    updated.source_lang, updated.target_lang = window.selected_languages
+    geometry = window.saveGeometry()
+    if not geometry_restored or geometry != initial_geometry:
+        updated.window_geometry = geometry.data().hex()
+    if updated != settings:
+        try:
+            updated.save(changes_from=settings)
+        except (OSError, ValueError) as exc:
+            log.warning("Could not save window preferences (%s)", type(exc).__name__)
+    return result
 
 
 def run(argv: list[str]) -> int:

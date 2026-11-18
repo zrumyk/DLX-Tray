@@ -11,6 +11,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Save, remove, or test a masked DeepL API key from Settings. Changes apply to the next translation.
 - Choose Light, Dark, or Follow Windows in Settings. Themes change without restarting.
 - Save preferences for the upcoming interface language and translation history features.
+- Restore the main window's size, position, maximized state, and last selected languages at startup.
 
 ## [0.4.0] - 2026-11-18
 

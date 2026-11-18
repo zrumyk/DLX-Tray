@@ -63,6 +63,7 @@ class Settings(BaseSettings):
 
     source_lang: Language = Language.AUTO
     target_lang: Language = Language.UK
+    window_geometry: str | None = None
     chunk_size: int = Field(default=1400, ge=200, le=1500)
     request_delay: float = Field(default=1.5, ge=0, le=10)
     retries: int = Field(default=3, ge=0)
@@ -120,6 +121,11 @@ class Settings(BaseSettings):
     def max_attempts(self) -> int:
         """Convert retries into the total attempt budget expected by RetryPolicy."""
         return 1 + self.retries
+
+    @field_validator("window_geometry", mode="before")
+    @classmethod
+    def _optional_geometry(cls, value: object) -> str | None:
+        return value if isinstance(value, str) else None
 
     def is_overridden(self, name: str) -> bool:
         return name in self._overridden_preferences
