@@ -6,6 +6,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- Save completed text and file translations locally, search history case-insensitively, reopen
+  translations in the editors, and delete individual entries or clear the history.
+- Turn off history recording or set how many recent translations to keep in Settings.
+
 ## [0.6.0] - 2026-11-19
 
 ### Added

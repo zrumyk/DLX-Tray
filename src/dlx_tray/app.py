@@ -10,7 +10,7 @@ from pydantic_settings import SettingsError
 from PySide6.QtCore import QByteArray, QCoreApplication, QRect, Qt, QThread
 from PySide6.QtWidgets import QApplication, QMessageBox
 
-from dlx_tray import APP_NAME, __version__
+from dlx_tray import APP_NAME, __version__, config
 from dlx_tray.config import Settings
 from dlx_tray.core.models import ProviderUnavailableError
 from dlx_tray.core.pipeline import TranslationJob
@@ -67,6 +67,8 @@ def _run_window(app: QApplication, settings: Settings, stack: ExitStack) -> int:
         chunk_size=settings.chunk_size,
         formality=settings.formality,
     )
+    history_path = config.app_data_dir() / "history.sqlite3"
+    window.set_history(history_path, enabled=settings.history_enabled, limit=settings.history_limit)
     geometry_restored = False
     if settings.window_geometry:
         try:
@@ -129,6 +131,9 @@ def _run_window(app: QApplication, settings: Settings, stack: ExitStack) -> int:
         if updated.theme != settings.theme:
             apply_theme(app, updated.theme)
         settings = updated
+        window.set_history(
+            history_path, enabled=settings.history_enabled, limit=settings.history_limit
+        )
         error = None
         if override_key is None and key != api_key:
             try:

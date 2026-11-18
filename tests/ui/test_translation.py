@@ -1,6 +1,7 @@
 """Verify streaming, cancellation and shutdown through the window controls."""
 
 from collections.abc import Callable, Iterator, Sequence
+from pathlib import Path
 from threading import Event
 
 import pytest
@@ -42,6 +43,25 @@ def test_unconfigured_server_disables_translation(qtbot: QtBot) -> None:
     assert window.statusBar().currentMessage() == reason
     assert not window.translate_button.isEnabled()
     assert not window._translate_shortcut.isEnabled()
+
+
+def test_history_write_failure_preserves_the_translation(
+    qtbot: QtBot,
+    translation_window: Callable[[TranslationJob], MainWindow],
+    fake_dlx: FakeDLXFactory,
+    tmp_path: Path,
+) -> None:
+    with fake_dlx([]) as server, DeeplxTranslator(server.url, server.token) as translator:
+        window = translation_window(TranslationJob(translator=translator, request_delay=0))
+        window.set_history(tmp_path, enabled=True, limit=2)
+        window.source_editor.setPlainText("Hello")
+        window.translate_button.click()
+        qtbot.waitUntil(window.translate_button.isEnabled)
+        assert window.result_editor.toPlainText() == "[EN] Hello"
+        assert (
+            window.statusBar().currentMessage()
+            == "Translation complete. Could not save to history."
+        )
 
 
 @pytest.mark.parametrize("action", ["swap", "edit", "source", "target", "failed retry"])
@@ -127,6 +147,7 @@ def test_cancel_interrupts_retry_and_keeps_streamed_text(
     qtbot: QtBot,
     translation_window: Callable[[TranslationJob], MainWindow],
     fake_dlx: FakeDLXFactory,
+    tmp_path: Path,
 ) -> None:
     waiting = Event()
 
@@ -141,6 +162,8 @@ def test_cancel_interrupts_retry_and_keeps_streamed_text(
     ):
         job = TranslationJob(translator=translator, max_units=6, request_delay=0, sleep=sleep)
         window = translation_window(job)
+        path = tmp_path / "history.sqlite3"
+        window.set_history(path, enabled=True, limit=2)
         window.source_editor.setPlainText(" first\u00a0\n\nsecond third")
         provider = window.findChild(QLabel, "provider_status")
         warning = window.findChild(QLabel, "rate_limit_status")
@@ -163,6 +186,7 @@ def test_cancel_interrupts_retry_and_keeps_streamed_text(
         assert window.progress_label.text() == "Cancelling…"
         qtbot.waitUntil(window.translate_button.isEnabled)
         assert window.statusBar().currentMessage() == "Translation cancelled."
+        assert not path.exists()
         assert warning.isVisible() and warning.text() == "DLX rate limit reached."
         window.copy_button.click()
         assert QApplication.clipboard().text() == " [EN] first\u00a0\n\n"

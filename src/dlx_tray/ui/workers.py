@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass
 from threading import Event
@@ -14,6 +15,7 @@ from dlx_tray.core.models import Chunk, Formality, Language, RateLimitedError, T
 from dlx_tray.core.pipeline import FailureAction, JobResult, ProgressCallback, TranslationJob
 from dlx_tray.fileio.translation import SourceFile
 from dlx_tray.providers.deeplx import PROVIDER_NAME as DLX_NAME
+from dlx_tray.services.history import HistoryStore
 
 log = logging.getLogger(__name__)
 
@@ -50,6 +52,7 @@ class TranslationWorker(QObject):
     chunk_failed = Signal(object)
     finished = Signal(object)
     failed = Signal()
+    history_save_failed = Signal()
 
     def __init__(
         self,
@@ -58,6 +61,7 @@ class TranslationWorker(QObject):
         source: Language,
         target: Language,
         formality: Formality,
+        open_history: Callable[[], HistoryStore] | None = None,
     ) -> None:
         super().__init__()
         self._job = job
@@ -65,6 +69,7 @@ class TranslationWorker(QObject):
         self._source = source
         self._target = target
         self._formality = formality
+        self._open_history = open_history
         self._cancel = Event()
         self._failure_answered = Event()
         self._failure_action = FailureAction.CANCEL
@@ -109,9 +114,35 @@ class TranslationWorker(QObject):
         else:
             preview = result.preview if isinstance(result, FileJobResult) else result
             if preview.error is None:
+                history_saved = self._save_history(preview)
                 self.finished.emit(result)
+                if not history_saved:
+                    self.history_save_failed.emit()
             else:
                 self.failed.emit()
+
+    def _save_history(self, result: JobResult) -> bool:
+        if self._open_history is None or result.cancelled or self._cancel.is_set():
+            return True
+        providers = dict.fromkeys(name for name in result.chunk_providers if name is not None)
+        if not providers:
+            return True
+        content = self._content
+        try:
+            self._open_history().add(
+                source_lang=self._source,
+                target_lang=self._target,
+                source_text="\n\n".join(content.segments)
+                if isinstance(content, SourceFile)
+                else content,
+                target_text=result.text,
+                provider=", ".join(providers),
+                file_name=content.path.name if isinstance(content, SourceFile) else None,
+            )
+        except (sqlite3.Error, OSError, ValueError) as exc:
+            log.warning("Could not save translation history (%s)", type(exc).__name__)
+            return False
+        return True
 
     def _translate_text(self, text: str, on_progress: ProgressCallback) -> JobResult:
         return self._job.run(
@@ -136,6 +167,7 @@ class TranslationWorker(QObject):
         offset = 0
         self.progress.emit(0, total, "")
         translations: list[str] = []
+        providers: list[str | None] = []
         detected: Language | None = None
         error: TranslationError | None = None
 
@@ -154,6 +186,7 @@ class TranslationWorker(QObject):
                 self._cancel.set()
                 break
             result = self._translate_text(text, report)
+            providers.extend(result.chunk_providers)
             if result.text or not result.cancelled:
                 translations.append(result.text)
             detected = detected or result.detected_source
@@ -162,5 +195,5 @@ class TranslationWorker(QObject):
                 break
             offset += count
         cancelled = error is None and (self._cancel.is_set() or offset < total)
-        preview = JobResult("\n\n".join(translations), detected, cancelled, error)
+        preview = JobResult("\n\n".join(translations), detected, cancelled, error, tuple(providers))
         return FileJobResult(preview, None if cancelled or error else tuple(translations))
