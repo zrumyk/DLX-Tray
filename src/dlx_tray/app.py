@@ -19,6 +19,7 @@ from dlx_tray.providers.base import Translator
 from dlx_tray.providers.deepl_official import DeepLOfficialTranslator
 from dlx_tray.providers.deeplx import DeeplxTranslator
 from dlx_tray.providers.fallback import FallbackTranslator
+from dlx_tray.secrets import get_deepl_api_key
 from dlx_tray.services.deeplx_process import DLXProcess
 from dlx_tray.ui.main_window import MainWindow
 
@@ -48,7 +49,8 @@ def _run_window(app: QApplication, settings: Settings, stack: ExitStack) -> int:
         formality=settings.formality,
     )
 
-    api_key = settings.deepl_api_key.get_secret_value().strip() if settings.deepl_api_key else ""
+    override = settings.deepl_api_key
+    api_key = get_deepl_api_key(override.get_secret_value() if override is not None else None)
     official = DeepLOfficialTranslator(api_key) if api_key else None
     if official is not None:
         stack.callback(official.close)
