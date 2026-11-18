@@ -37,6 +37,8 @@ def run_window(
     qapp: QApplication, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, vault: Mock, tmp_path: Path
 ) -> Callable[[Settings, Callable[[MainWindow, QLabel], None]], None]:
     monkeypatch.setattr(config, "app_data_dir", lambda: tmp_path)
+    for name in ("DLX_SOURCE_LANG", "DLX_TARGET_LANG", "DLX_WINDOW_GEOMETRY"):
+        monkeypatch.delenv(name, raising=False)
 
     def run(settings: Settings, check: Callable[[MainWindow, QLabel], None]) -> None:
         windows: list[MainWindow] = []
@@ -133,7 +135,38 @@ def test_window_save_preserves_overrides_and_concurrent_settings(
     assert restored.theme == "dark"
 
 
-@pytest.mark.parametrize("geometry", ["not hex", "00", 42])
+def test_untouched_restored_window_keeps_concurrent_geometry(
+    run_window: Callable[[Settings, Callable[[MainWindow, QLabel], None]], None],
+    qtbot: QtBot,
+    monkeypatch: pytest.MonkeyPatch,
+    fake_dlx: FakeDLXFactory,
+) -> None:
+    other_window = MainWindow()
+    qtbot.addWidget(other_window)
+    other_window.setGeometry(100_000, 100_000, 700, 400)
+    other_window.setWindowState(Qt.WindowState.WindowMaximized)
+    initial = Settings(window_geometry=other_window.saveGeometry().data().hex())
+    initial.save()
+    other_window.setWindowState(Qt.WindowState.WindowNoState)
+    other_window.setGeometry(40, 50, 710, 420)
+    concurrent_geometry = other_window.saveGeometry().data().hex()
+
+    def change_languages(window: MainWindow, _status: QLabel) -> None:
+        assert window.isMaximized()
+        assert window.screen().availableGeometry().intersects(window.frameGeometry())
+        Settings(window_geometry=concurrent_geometry).save(changes_from=initial)
+        window.target_languages.setCurrentIndex(window.target_languages.findData(Language.DE.value))
+
+    with fake_dlx([]) as server:
+        monkeypatch.setenv("DLX_DEEPLX_URL", server.url)
+        run_window(Settings.load(env_file=None), change_languages)
+
+    restored = Settings.load(env_file=None)
+    assert restored.window_geometry == concurrent_geometry
+    assert restored.target_lang is Language.DE
+
+
+@pytest.mark.parametrize("geometry", ["not hex", "01d9d0cb", "00" * 66, 42])
 def test_invalid_window_geometry_is_replaced(
     run_window: Callable[[Settings, Callable[[MainWindow, QLabel], None]], None],
     monkeypatch: pytest.MonkeyPatch,

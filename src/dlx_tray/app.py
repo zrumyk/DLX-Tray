@@ -7,7 +7,7 @@ from contextlib import ExitStack
 
 from keyring.errors import KeyringError
 from pydantic_settings import SettingsError
-from PySide6.QtCore import QByteArray, QCoreApplication, Qt, QThread
+from PySide6.QtCore import QByteArray, QCoreApplication, QRect, Qt, QThread
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from dlx_tray import APP_NAME, __version__
@@ -27,6 +27,13 @@ from dlx_tray.ui.settings_dialog import SettingsDialog
 from dlx_tray.ui.theme import apply_theme
 
 log = logging.getLogger(__name__)
+
+# Qt's geometry format v3 has used at least 66 bytes since Qt 5.12.
+_MIN_WINDOW_GEOMETRY_BYTES = 66
+
+
+def _window_placement(window: MainWindow) -> tuple[QRect, bool, bool]:
+    return window.normalGeometry(), window.isMaximized(), window.isFullScreen()
 
 
 class _DLXStartup(QThread):
@@ -63,12 +70,12 @@ def _run_window(app: QApplication, settings: Settings, stack: ExitStack) -> int:
     geometry_restored = False
     if settings.window_geometry:
         try:
-            geometry_restored = window.restoreGeometry(
-                QByteArray(bytes.fromhex(settings.window_geometry))
-            )
+            geometry = bytes.fromhex(settings.window_geometry)
         except ValueError:
             log.warning("Invalid saved window geometry encoding")
         else:
+            if len(geometry) >= _MIN_WINDOW_GEOMETRY_BYTES:
+                geometry_restored = window.restoreGeometry(QByteArray(geometry))
             if not geometry_restored:
                 log.warning("Qt could not restore the saved window geometry")
 
@@ -192,7 +199,7 @@ def _run_window(app: QApplication, settings: Settings, stack: ExitStack) -> int:
     refresh_job()
     try:
         window.show()
-        initial_geometry = window.saveGeometry()
+        initial_placement = _window_placement(window)
         if startup is not None:
             startup.start()
         result = app.exec()
@@ -204,9 +211,8 @@ def _run_window(app: QApplication, settings: Settings, stack: ExitStack) -> int:
 
     updated = settings.model_copy()
     updated.source_lang, updated.target_lang = window.selected_languages
-    geometry = window.saveGeometry()
-    if not geometry_restored or geometry != initial_geometry:
-        updated.window_geometry = geometry.data().hex()
+    if not geometry_restored or _window_placement(window) != initial_placement:
+        updated.window_geometry = window.saveGeometry().data().hex()
     if updated != settings:
         try:
             updated.save(changes_from=settings)
