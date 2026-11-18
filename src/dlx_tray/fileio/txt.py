@@ -6,6 +6,8 @@ from tempfile import NamedTemporaryFile
 
 from charset_normalizer import from_bytes
 
+_UNMARKED_UNICODE = {"utf_16_le", "utf_16_be", "utf_32_le", "utf_32_be"}
+
 
 def read_txt(path: Path) -> str:
     """Read Unicode text or infer its encoding, raising ValueError if decoding fails."""
@@ -19,11 +21,19 @@ def read_txt(path: Path) -> str:
         return data.decode("utf-8-sig")
 
     try:
-        return data.decode("utf-8")
+        text = data.decode("utf-8")
     except UnicodeDecodeError:
-        match = from_bytes(data, enable_fallback=False).best()
-        if match is not None:
-            return data.decode(match.encoding)
+        text = None
+
+    # ASCII in unmarked UTF-16 or UTF-32 can also decode as UTF-8 with NULs.
+    if text is not None and "\x00" not in text:
+        return text
+
+    match = from_bytes(data, enable_fallback=False).best()
+    if match is not None and (text is None or match.encoding in _UNMARKED_UNICODE):
+        return data.decode(match.encoding)
+    if text is not None:
+        return text
 
     raise ValueError("Could not determine the text file encoding.")
 

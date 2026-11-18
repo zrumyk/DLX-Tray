@@ -39,6 +39,22 @@ def test_read_empty_text(tmp_path: Path, contents: bytes) -> None:
     assert read_txt(source) == ""
 
 
+@pytest.mark.parametrize("encoding", ["utf-16-le", "utf-16-be", "utf-32-le", "utf-32-be"])
+def test_read_unmarked_unicode_with_utf8_compatible_bytes(tmp_path: Path, encoding: str) -> None:
+    source = tmp_path / "unmarked.txt"
+    original = "Hello world!\r\nSecond line.\r\n"
+    source.write_bytes(original.encode(encoding))
+
+    assert read_txt(source) == original
+
+
+def test_read_preserves_utf8_containing_a_nul(tmp_path: Path) -> None:
+    source = tmp_path / "nul.txt"
+    source.write_bytes(b"Hello\x00world")
+
+    assert read_txt(source) == "Hello\x00world"
+
+
 def test_only_the_initial_utf8_bom_is_removed(tmp_path: Path) -> None:
     source = tmp_path / "source.txt"
     source.write_bytes(BOM_UTF8 + b"first" + BOM_UTF8 + b"second")
