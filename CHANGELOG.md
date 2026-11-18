@@ -6,6 +6,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- With `DLX_DEEPL_API_KEY` configured, use the official DeepL API for a chunk when DLX is
+  rate-limited or unavailable. Translation can also start when bundled DLX fails to launch.
+- After DLX returns HTTP 429, use the configured official API during a cooldown that carries
+  over to the next translation job.
+
 ## [0.3.0] - 2026-11-18
 
 ### Added

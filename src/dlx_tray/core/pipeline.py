@@ -19,6 +19,7 @@ from dlx_tray.core.models import (
     TranslationResult,
 )
 from dlx_tray.core.retry import RetryCallback, RetryPolicy, Sleeper, call_with_retry, event_sleep
+from dlx_tray.providers.fallback import FallbackTranslator
 
 if TYPE_CHECKING:
     from dlx_tray.providers.base import Translator
@@ -44,6 +45,8 @@ class JobResult:
     detected_source: Language | None
     cancelled: bool = False
     error: TranslationError | None = None
+    # One entry per processed translatable chunk, with None for a skipped chunk.
+    chunk_providers: tuple[str | None, ...] = ()
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -80,6 +83,7 @@ class TranslationJob:
             cancel = Event()
         chunks = chunker.split(text, self.max_units)
         translations: list[str] = []
+        chunk_providers: list[str | None] = []
         if chunks and not chunks[0].translatable:
             translations.append("")
         first = len(translations)
@@ -94,7 +98,12 @@ class TranslationJob:
                 break
 
             def translate(chunk_text: str = chunk.text) -> TranslationResult:
-                (result,) = self.translator.translate([chunk_text], source, target, formality)
+                if isinstance(self.translator, FallbackTranslator):
+                    (result,) = self.translator.translate(
+                        [chunk_text], source, target, formality, cancel=cancel
+                    )
+                else:
+                    (result,) = self.translator.translate([chunk_text], source, target, formality)
                 return result
 
             try:
@@ -108,8 +117,10 @@ class TranslationJob:
 
             if result is None:
                 translations.append(chunk.text)
+                chunk_providers.append(None)
             else:
                 translations.append(result.text)
+                chunk_providers.append(result.provider)
                 if detected_source is None:
                     detected_source = result.detected_source
             if on_progress is not None:
@@ -121,6 +132,7 @@ class TranslationJob:
             detected_source,
             cancelled=cancelled,
             error=failure,
+            chunk_providers=tuple(chunk_providers),
         )
 
     def _translate_chunk(

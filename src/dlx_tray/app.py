@@ -15,7 +15,10 @@ from dlx_tray.core.models import ProviderUnavailableError
 from dlx_tray.core.pipeline import TranslationJob
 from dlx_tray.core.retry import RetryPolicy
 from dlx_tray.logging_setup import file_logging
+from dlx_tray.providers.base import Translator
+from dlx_tray.providers.deepl_official import DeepLOfficialTranslator
 from dlx_tray.providers.deeplx import DeeplxTranslator
+from dlx_tray.providers.fallback import FallbackTranslator
 from dlx_tray.services.deeplx_process import DLXProcess
 from dlx_tray.ui.main_window import MainWindow
 
@@ -45,8 +48,15 @@ def _run_window(app: QApplication, settings: Settings, stack: ExitStack) -> int:
         formality=settings.formality,
     )
 
-    def connect_dlx(url: str, token: str, status: str) -> None:
-        translator = stack.enter_context(DeeplxTranslator(url, token))
+    api_key = settings.deepl_api_key.get_secret_value().strip() if settings.deepl_api_key else ""
+    official = DeepLOfficialTranslator(api_key) if api_key else None
+    if official is not None:
+        stack.callback(official.close)
+
+    def connect_translator(status: str, translator: Translator | None) -> None:
+        if translator is None:
+            window.set_dlx_connection(status)
+            return
         job = TranslationJob(
             translator=translator,
             max_units=settings.chunk_size,
@@ -54,6 +64,10 @@ def _run_window(app: QApplication, settings: Settings, stack: ExitStack) -> int:
             retry_policy=RetryPolicy(max_attempts=settings.max_attempts),
         )
         window.set_dlx_connection(status, job)
+
+    def connect_dlx(url: str, token: str, status: str) -> None:
+        dlx = stack.enter_context(DeeplxTranslator(url, token))
+        connect_translator(status, FallbackTranslator(dlx, official) if official else dlx)
 
     startup = None
     if settings.deeplx_url is not None:
@@ -79,7 +93,9 @@ def _run_window(app: QApplication, settings: Settings, stack: ExitStack) -> int:
                     QCoreApplication.translate("Startup", "DLX ready"),
                 )
             else:
-                window.set_dlx_connection(QCoreApplication.translate("Startup", "DLX unavailable"))
+                connect_translator(
+                    QCoreApplication.translate("Startup", "DLX unavailable"), official
+                )
 
         connection = startup.finished.connect(startup_finished, Qt.ConnectionType.QueuedConnection)
         stack.callback(startup.disconnect, connection)
