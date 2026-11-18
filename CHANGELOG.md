@@ -6,14 +6,22 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-18
+
 ### Added
 - Load preferences from `%APPDATA%\DLX Tray\settings.json` with `DLX_*` development overrides,
   and keep a rotating startup and diagnostics log in `%APPDATA%\DLX Tray\logs`.
 - Language, formality, chunk and translation result models with a translation error hierarchy.
 - Text chunker that splits any text into pieces of at most 1500 UTF-16 units (1400 by default),
   cutting at paragraph, line, sentence and word boundaries and restoring the layout exactly.
+- DLX HTTP client and local process manager with authenticated requests, startup health checks,
+  and automatic cleanup on Windows.
+- Cancellable translation jobs with progress, partial results, and retry backoff that respects
+  `Retry-After` when DLX rate-limits requests.
+- Weekly CI watch for new DLX releases, with an issue linking the release notes and asset checksum.
 - Property-based tests (hypothesis) and realistic test texts in `tests/fixtures/`.
-- Test coverage gate (85% of the non-UI code), runtime dependency license check, Dependabot.
+- 85% coverage gate for `core`, `providers`, `services`, and `fileio`, plus a runtime dependency
+  license check and Dependabot.
 
 ### Changed
 - Depend on `pyside6-essentials` instead of the full `pyside6`: Qt takes ~210 MB instead of
@@ -26,5 +34,6 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   pre-commit hooks and CI on Windows.
 - Script to download the pinned DLX v1.3.1 binary with SHA-256 verification.
 
-[Unreleased]: https://github.com/zrumyk/DLX-Tray/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/zrumyk/DLX-Tray/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/zrumyk/DLX-Tray/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/zrumyk/DLX-Tray/releases/tag/v0.1.0
