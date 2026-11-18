@@ -6,6 +6,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- DOCX translation preserves paragraph styles, headings, lists, tables, headers and footers.
+
 ## [0.5.0] - 2026-11-18
 
 ### Added
