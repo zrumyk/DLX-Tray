@@ -8,14 +8,14 @@ from unittest.mock import Mock, call
 
 import pytest
 from keyring.errors import KeyringError
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QShortcut
 from PySide6.QtWidgets import QApplication, QDialogButtonBox, QLabel
 from pytestqt.qtbot import QtBot
 from tests.fakes.fake_dlx import FakeDLXFactory
 
 from dlx_tray import app, config, secrets
-from dlx_tray.config import Settings
+from dlx_tray.config import Settings, Theme
 from dlx_tray.core.models import Formality, Language, ProviderUnavailableError, TranslationResult
 from dlx_tray.providers import fallback
 from dlx_tray.services.deeplx_process import DLXProcess
@@ -254,6 +254,46 @@ def _edit_settings(
 
     QTimer.singleShot(0, interact)
     window.settings_action.trigger()
+
+
+def test_theme_applies_on_startup_and_after_saving(
+    run_window: Callable[[Settings, Callable[[MainWindow, QLabel], None]], None],
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    fake_dlx: FakeDLXFactory,
+) -> None:
+    monkeypatch.setattr(config, "app_data_dir", lambda: tmp_path)
+    hints = qapp.styleHints()
+    set_scheme = Mock()
+    monkeypatch.setattr(hints, "setColorScheme", set_scheme)
+    path = tmp_path / "settings.json"
+
+    def select_theme(dialog: SettingsDialog, theme: Theme) -> None:
+        dialog.theme.setCurrentIndex(dialog.theme.findData(theme))
+
+    def check(window: MainWindow, _status: QLabel) -> None:
+        set_scheme.assert_called_once_with(Qt.ColorScheme.Light)
+        _edit_settings(window, lambda dialog: select_theme(dialog, "dark"), save=False)
+        set_scheme.assert_called_once_with(Qt.ColorScheme.Light)
+
+        _edit_settings(window, lambda dialog: select_theme(dialog, "dark"))
+        set_scheme.assert_called_with(Qt.ColorScheme.Dark)
+        assert Settings.load(path, env_file=None).theme == "dark"
+
+        _edit_settings(window, lambda dialog: select_theme(dialog, "system"))
+        assert set_scheme.call_args_list == [
+            call(Qt.ColorScheme.Light),
+            call(Qt.ColorScheme.Dark),
+            call(Qt.ColorScheme.Unknown),
+        ]
+        assert Settings.load(path, env_file=None).theme == "system"
+
+    with fake_dlx([]) as server:
+        initial = Settings.model_validate(
+            {"theme": "light", "deeplx_url": server.url, "deeplx_token": server.token}
+        )
+        run_window(initial, check)
 
 
 def test_settings_save_applies_to_next_job_and_reloads(
