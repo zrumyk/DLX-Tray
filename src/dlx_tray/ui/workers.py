@@ -5,8 +5,8 @@ from __future__ import annotations
 import logging
 import sqlite3
 from collections.abc import Callable
-from dataclasses import dataclass
-from threading import Event
+from dataclasses import dataclass, replace
+from threading import Event, Lock
 
 from PySide6.QtCore import QObject, Signal, Slot
 
@@ -52,6 +52,7 @@ class TranslationWorker(QObject):
     chunk_failed = Signal(object)
     finished = Signal(object)
     failed = Signal()
+    history_saving = Signal()
     history_save_failed = Signal()
 
     def __init__(
@@ -71,12 +72,18 @@ class TranslationWorker(QObject):
         self._formality = formality
         self._open_history = open_history
         self._cancel = Event()
+        self._completion_lock = Lock()
+        self._finalizing = False
         self._failure_answered = Event()
         self._failure_action = FailureAction.CANCEL
 
-    def cancel(self) -> None:
-        self._cancel.set()
-        self._failure_answered.set()
+    def cancel(self) -> bool:
+        with self._completion_lock:
+            if self._finalizing:
+                return False
+            self._cancel.set()
+            self._failure_answered.set()
+            return True
 
     def answer_failure(self, action: FailureAction) -> None:
         # The GUI calls this directly because run() occupies the worker thread.
@@ -114,6 +121,16 @@ class TranslationWorker(QObject):
         else:
             preview = result.preview if isinstance(result, FileJobResult) else result
             if preview.error is None:
+                with self._completion_lock:
+                    self._finalizing = True
+                    cancelled = self._cancel.is_set()
+                if cancelled and not preview.cancelled:
+                    preview = replace(preview, cancelled=True)
+                    result = (
+                        FileJobResult(preview, None)
+                        if isinstance(result, FileJobResult)
+                        else preview
+                    )
                 history_saved = self._save_history(preview)
                 self.finished.emit(result)
                 if not history_saved:
@@ -122,11 +139,12 @@ class TranslationWorker(QObject):
                 self.failed.emit()
 
     def _save_history(self, result: JobResult) -> bool:
-        if self._open_history is None or result.cancelled or self._cancel.is_set():
+        if self._open_history is None or result.cancelled:
             return True
         providers = dict.fromkeys(name for name in result.chunk_providers if name is not None)
         if not providers:
             return True
+        self.history_saving.emit()
         content = self._content
         try:
             self._open_history().add(

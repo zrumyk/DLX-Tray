@@ -621,6 +621,7 @@ class MainWindow(QMainWindow):
         worker.chunk_failed.connect(self._show_chunk_failure)
         worker.finished.connect(self._show_finished)
         worker.failed.connect(self._show_failure)
+        worker.history_saving.connect(self._show_history_saving)
         worker.history_save_failed.connect(self._show_history_save_failure)
         self._file_translations = None
         self._file_unsaved = False
@@ -739,6 +740,11 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(self.tr("Translation failed. Check DLX and try again."))
 
     @Slot()
+    def _show_history_saving(self) -> None:
+        self.cancel_button.setEnabled(False)
+        self.progress_label.setText(self.tr("Saving translation to history…"))
+
+    @Slot()
     def _show_history_save_failure(self) -> None:
         self.statusBar().showMessage(self.tr("Translation complete. Could not save to history."))
 
@@ -763,8 +769,7 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def _cancel_translation(self) -> None:
-        if isinstance(self._worker, TranslationWorker):
-            self._worker.cancel()
+        if isinstance(self._worker, TranslationWorker) and self._worker.cancel():
             self.cancel_button.setEnabled(False)
             self.progress_label.setText(self.tr("Cancelling…"))
             if self._error_dialog is not None:

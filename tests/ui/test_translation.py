@@ -15,6 +15,8 @@ from dlx_tray.core.models import Formality, Language, TranslationResult
 from dlx_tray.core.pipeline import TranslationJob
 from dlx_tray.core.retry import RetryPolicy
 from dlx_tray.providers.deeplx import DeeplxTranslator
+from dlx_tray.services.history import HistoryStore
+from dlx_tray.ui import main_window
 from dlx_tray.ui.error_dialog import ErrorDialog
 from dlx_tray.ui.main_window import MainWindow
 
@@ -62,6 +64,42 @@ def test_history_write_failure_preserves_the_translation(
             window.statusBar().currentMessage()
             == "Translation complete. Could not save to history."
         )
+
+
+def test_cancel_is_unavailable_once_history_is_being_written(
+    qtbot: QtBot,
+    translation_window: Callable[[TranslationJob], MainWindow],
+    fake_dlx: FakeDLXFactory,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    saving = Event()
+    release = Event()
+
+    def open_store(path: Path, limit: int) -> HistoryStore:
+        saving.set()
+        if not release.wait(5):
+            raise TimeoutError("Test did not release the history writer")
+        return HistoryStore(path, limit)
+
+    monkeypatch.setattr(main_window, "HistoryStore", open_store)
+    path = tmp_path / "history.sqlite3"
+    with fake_dlx([]) as server, DeeplxTranslator(server.url, server.token) as translator:
+        window = translation_window(TranslationJob(translator=translator, request_delay=0))
+        window.set_history(path, enabled=True, limit=2)
+        window.source_editor.setPlainText("Hello")
+        window.translate_button.click()
+        try:
+            qtbot.waitUntil(saving.is_set)
+            qtbot.waitUntil(lambda: not window.cancel_button.isEnabled())
+            assert window.progress_label.text() == "Saving translation to history…"
+            window._cancel_translation()
+            assert window.progress_label.text() == "Saving translation to history…"
+        finally:
+            release.set()
+        qtbot.waitUntil(window.translate_button.isEnabled)
+        assert window.statusBar().currentMessage() == "Translation complete."
+        assert [entry.source_text for entry in HistoryStore(path, 2).list()] == ["Hello"]
 
 
 @pytest.mark.parametrize("action", ["swap", "edit", "source", "target", "failed retry"])
