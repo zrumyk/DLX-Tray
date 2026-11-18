@@ -9,6 +9,8 @@ from typing import Any
 
 UPSTREAM = "OwO-Network/DLX"
 LOCK_PATH = Path(__file__).with_name("deeplx.lock.json")
+DETAILS_START = "<!-- dlx-release-watch:start -->"
+DETAILS_END = "<!-- dlx-release-watch:end -->"
 
 
 def github_api(endpoint: str, *options: str) -> Any:
@@ -44,10 +46,12 @@ def watch_release(repo: str, pinned_version: str, asset_name: str) -> None:
         raise ValueError(f"DLX {latest_version} has no valid SHA-256 digest for {asset_name}")
 
     title = f"DLX {latest_version} available"
-    body = (
+    details = (
+        f"{DETAILS_START}\n"
         f"[DLX {latest_version} release notes]({release['html_url']})\n\n"
         f"- Asset: `{asset_name}`\n"
         f"- SHA-256: `{digest.removeprefix('sha256:').lower()}`\n"
+        f"{DETAILS_END}"
     )
     issues_endpoint = f"repos/{repo}/issues"
     # Look through closed issues too so dismissing a release does not trigger another issue.
@@ -56,7 +60,14 @@ def watch_release(repo: str, pinned_version: str, asset_name: str) -> None:
         for issue in page:
             if "pull_request" in issue or issue["title"] != title:
                 continue
-            if (issue["body"] or "").rstrip() != body.rstrip():
+            original = issue["body"] or ""
+            before, start, remaining = original.rpartition(DETAILS_START)
+            _, end, after = remaining.partition(DETAILS_END)
+            if start and end:
+                body = before + details + after
+            else:
+                body = f"{original}\n\n{details}" if original else details
+            if body != original:
                 updated = github_api(
                     f"{issues_endpoint}/{issue['number']}", "-X", "PATCH", "-f", f"body={body}"
                 )
@@ -66,7 +77,7 @@ def watch_release(repo: str, pinned_version: str, asset_name: str) -> None:
             return
 
     created = github_api(
-        issues_endpoint, "-X", "POST", "-f", f"title={title}", "-f", f"body={body}"
+        issues_endpoint, "-X", "POST", "-f", f"title={title}", "-f", f"body={details}"
     )
     print(f"Opened {created['html_url']}")
 

@@ -17,6 +17,13 @@ RELEASE = {
     "html_url": RELEASE_URL,
     "assets": [{"name": ASSET, "digest": f"sha256:{DIGEST}"}],
 }
+DETAILS = (
+    "<!-- dlx-release-watch:start -->\n"
+    f"[DLX v1.10.0 release notes]({RELEASE_URL})\n\n"
+    f"- Asset: `{ASSET}`\n"
+    f"- SHA-256: `{DIGEST}`\n"
+    "<!-- dlx-release-watch:end -->"
+)
 
 
 @pytest.fixture
@@ -31,14 +38,16 @@ def test_creates_one_issue_across_repeated_checks(api: Mock) -> None:
 
     watch_deeplx.watch_release(REPO, "v1.9.0", ASSET)
 
-    body = (
-        f"[DLX v1.10.0 release notes]({RELEASE_URL})\n\n- Asset: `{ASSET}`\n- SHA-256: `{DIGEST}`\n"
-    )
     assert api.call_args == call(
-        ISSUES, "-X", "POST", "-f", "title=DLX v1.10.0 available", "-f", f"body={body}"
+        ISSUES, "-X", "POST", "-f", "title=DLX v1.10.0 available", "-f", f"body={DETAILS}"
     )
 
-    issue = {"number": 42, "title": "DLX v1.10.0 available", "body": body, "html_url": ISSUE_URL}
+    issue = {
+        "number": 42,
+        "title": "DLX v1.10.0 available",
+        "body": f"{DETAILS}\n\nMaintainer notes.",
+        "html_url": ISSUE_URL,
+    }
     same_title_pr = {**issue, "pull_request": {}}
     api.reset_mock()
     api.side_effect = [RELEASE, [[same_title_pr], [{**issue, "state": "closed"}]]]
@@ -51,16 +60,25 @@ def test_creates_one_issue_across_repeated_checks(api: Mock) -> None:
     ]
 
 
-def test_updates_the_existing_issue_body(api: Mock) -> None:
-    issue = {"number": 42, "title": "DLX v1.10.0 available", "body": "Old details"}
+@pytest.mark.parametrize(
+    ("original", "expected"),
+    [
+        ("Maintainer notes.", f"Maintainer notes.\n\n{DETAILS}"),
+        (
+            f"Before.\n\n{DETAILS.replace(DIGEST, 'ff' * 32)}\n\nAfter.\n",
+            f"Before.\n\n{DETAILS}\n\nAfter.\n",
+        ),
+    ],
+)
+def test_updates_release_details_without_losing_notes(
+    api: Mock, original: str, expected: str
+) -> None:
+    issue = {"number": 42, "title": "DLX v1.10.0 available", "body": original}
     api.side_effect = [RELEASE, [[issue]], {"html_url": ISSUE_URL}]
 
     watch_deeplx.watch_release(REPO, "v1.9.0", ASSET)
 
-    endpoint, method_flag, method, field_flag, field = api.call_args.args
-    assert (endpoint, method_flag, method, field_flag) == (f"{ISSUES}/42", "-X", "PATCH", "-f")
-    assert field.startswith("body=")
-    assert RELEASE_URL in field and DIGEST in field
+    assert api.call_args == call(f"{ISSUES}/42", "-X", "PATCH", "-f", f"body={expected}")
 
 
 @pytest.mark.parametrize("pinned_version", ["v1.10.0", "v2.0.0"])
