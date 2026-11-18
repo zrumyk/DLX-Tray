@@ -8,6 +8,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 - DOCX translation preserves paragraph styles, headings, lists, tables, headers and footers.
+- PDF translation reconstructs paragraphs from the text layer and exports to DOCX or UTF-8 TXT.
 
 ## [0.5.0] - 2026-11-18
 

@@ -46,6 +46,10 @@ def translate_docx(source: Path, destination: Path, translate: Callable[[str], s
     for blocks in _header_footer_blocks(document):
         _translate_story(blocks, translate)
 
+    _save_docx(document, destination)
+
+
+def _save_docx(document: WordDocument, destination: Path) -> None:
     temporary: Path | None = None
     try:
         with NamedTemporaryFile(dir=destination.parent, delete=False) as stream:
