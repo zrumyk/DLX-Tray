@@ -1,0 +1,110 @@
+name: Windows release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: windows-2025
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Check the tag format
+        run: |
+          if ($env:GITHUB_REF_NAME -cnotmatch '^v[0-9]+\.[0-9]+\.[0-9]+$') {
+              throw "Expected a vX.Y.Z tag, got $env:GITHUB_REF_NAME."
+          }
+
+      - uses: astral-sh/setup-uv@v7
+
+      - name: Build the Windows app
+        run: .\scripts\build.ps1
+
+      - name: Compile and verify the installer
+        run: |
+          $appVersion = (Get-Item -LiteralPath 'dist/DLX Tray/DLX Tray.exe').VersionInfo.ProductVersion
+          if ("v$appVersion" -cne $env:GITHUB_REF_NAME) {
+              throw "Tag $env:GITHUB_REF_NAME does not match the bundled app version $appVersion."
+          }
+
+          $setup = Join-Path $env:RUNNER_TEMP 'innosetup-6.7.4.exe'
+          $compilerDir = Join-Path $env:RUNNER_TEMP 'Inno Setup 6'
+          Invoke-WebRequest -Uri 'https://github.com/jrsoftware/issrc/releases/download/is-6_7_4/innosetup-6.7.4.exe' -OutFile $setup
+          $expectedHash = 'a549929319f9120716677c685535ca4671e4b937b5fdc87e2585f32d8eb30e8c'
+          if ((Get-FileHash -LiteralPath $setup -Algorithm SHA256).Hash -ne $expectedHash) {
+              throw 'Inno Setup download failed SHA-256 verification.'
+          }
+
+          $setupArgs = "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- /PORTABLE=1 /DIR=`"$compilerDir`""
+          $installation = Start-Process -FilePath $setup -ArgumentList $setupArgs -WindowStyle Hidden -Wait -PassThru
+          if ($installation.ExitCode -ne 0) {
+              throw "Inno Setup installation failed (exit $($installation.ExitCode))."
+          }
+
+          & (Join-Path $compilerDir 'ISCC.exe') 'installer/dlx-tray.iss'
+          if ($LASTEXITCODE -ne 0) {
+              throw "Installer compilation failed (exit $LASTEXITCODE)."
+          }
+
+          $installer = Get-Item -LiteralPath "installer/Output/DLX-Tray-Setup-$appVersion.exe"
+          if ($installer.Length -eq 0) {
+              throw 'The compiled installer is empty.'
+          }
+          "path=installer/Output/$($installer.Name)" >> $env:GITHUB_OUTPUT
+        id: installer
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: windows-installer
+          path: ${{ steps.installer.outputs.path }}
+          if-no-files-found: error
+          compression-level: 0
+          overwrite: true
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: windows-installer
+          path: release
+
+      - name: Publish the GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          tag="$GITHUB_REF_NAME"
+          name="DLX-Tray-Setup-${tag#v}.exe"
+          asset="release/$name"
+          if [[ ! -s "$asset" ]]; then
+            echo "Expected a non-empty installer at $asset." >&2
+            exit 1
+          fi
+
+          if release=$(gh release view "$tag" --json assets,isDraft); then
+            if ! jq -e --arg name "$name" '.assets | any(.name == $name and .state == "uploaded" and .size > 0)' <<< "$release" > /dev/null; then
+              gh release upload "$tag" "$asset"
+            fi
+            if jq -e '.isDraft' <<< "$release" > /dev/null; then
+              gh release edit "$tag" --draft=false
+            fi
+          else
+            gh release create "$tag" "$asset" --verify-tag --generate-notes
+          fi
