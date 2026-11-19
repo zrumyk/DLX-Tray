@@ -13,7 +13,7 @@ AppName={#AppName}
 AppVersion={#AppVersion}
 DefaultDirName={localappdata}\Programs\{#AppName}
 PrivilegesRequired=lowest
-MinVersion=10.0
+MinVersion=10.0.17763
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 DisableProgramGroupPage=yes
@@ -38,7 +38,9 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; Flags: unchecked
 Source: "{#BundleDir}\{#AppExe}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#BundleDir}\deeplx.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#BundleDir}\DLX-LICENSE.txt"; DestDir: "{app}"; Flags: ignoreversion
-Source: "{#BundleDir}\_internal\*"; DestDir: "{app}\_internal"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#BundleDir}\_internal\*"; DestDir: "{app}\_internal"; Excludes: "\dlx_tray-*.dist-info"; Flags: ignoreversion recursesubdirs createallsubdirs
+; Use one metadata directory so importlib reads the installed version after an upgrade.
+Source: "{#BundleDir}\_internal\dlx_tray-{#AppVersion}.dist-info\*"; DestDir: "{app}\_internal\dlx_tray.dist-info"; Flags: ignoreversion recursesubdirs
 
 [Icons]
 Name: "{userprograms}\{#AppName}"; Filename: "{app}\{#AppExe}"; WorkingDir: "{app}"
@@ -74,18 +76,21 @@ begin
   end;
 end;
 
-function InitializeUninstall: Boolean;
-begin
-  Result := CanRemoveExecutable(ExpandConstant('{app}\{#AppExe}')) and
-    CanRemoveExecutable(ExpandConstant('{app}\deeplx.exe'));
-  if not Result then
-    SuppressibleMsgBox(CustomMessage('CloseApp'), mbError, MB_OK, IDOK);
-end;
-
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
   DataDir: String;
 begin
+  if CurUninstallStep = usUninstall then
+  begin
+    if not (CanRemoveExecutable(ExpandConstant('{app}\{#AppExe}')) and
+      CanRemoveExecutable(ExpandConstant('{app}\deeplx.exe'))) then
+    begin
+      SuppressibleMsgBox(CustomMessage('CloseApp'), mbError, MB_OK, IDOK);
+      Abort;
+    end;
+    Exit;
+  end;
+
   if (CurUninstallStep <> usPostUninstall) or UninstallSilent then
     Exit;
 

@@ -41,7 +41,8 @@ starting with v0.9.0.
 
 ## Build from source
 
-Requirements: Windows 10/11 x64, Python 3.12, [uv](https://docs.astral.sh/uv/).
+Requirements: Windows 10 version 1809 or later or Windows 11 x64, Python 3.12,
+[uv](https://docs.astral.sh/uv/).
 
 ```powershell
 git clone https://github.com/zrumyk/DLX-Tray.git
