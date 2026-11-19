@@ -39,6 +39,9 @@ Later (v2): system tray icon, global hotkey to translate selected text.
 Installers will be published on the [Releases](https://github.com/zrumyk/DLX-Tray/releases) page
 starting with v0.9.0.
 
+Microsoft Defender SmartScreen may warn about a downloaded installer with an unfamiliar
+reputation. Verify that the download came from the DLX Tray Releases page before opening it.
+
 ## Build from source
 
 Requirements: Windows 10 version 1809 or later or Windows 11 x64, Python 3.12,
