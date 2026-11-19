@@ -47,7 +47,7 @@ Requirements: Windows 10/11 x64, Python 3.12, [uv](https://docs.astral.sh/uv/).
 git clone https://github.com/zrumyk/DLX-Tray.git
 cd DLX-Tray
 uv sync --all-groups
-uv run python scripts/fetch_deeplx.py   # downloads the pinned DLX binary into vendor/
+uv run python scripts/fetch_deeplx.py   # builds the pinned DLX binary into vendor/ on first run
 uv run dlx-tray
 ```
 

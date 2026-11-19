@@ -15,6 +15,8 @@ from dlx_tray.core.models import (
     TranslationError,
 )
 
+DEFAULT_REQUEST_DELAY = 2.5
+
 RETRYABLE_ERRORS: tuple[type[TranslationError], ...] = (RateLimitedError, ProviderUnavailableError)
 """Rate limiting (429) and an unreachable or failing upstream (connection error, 503)."""
 
@@ -36,7 +38,8 @@ class RetryPolicy:
 
     The n-th retry waits ``initial_delay * multiplier ** (n - 1)`` seconds, capped at
     ``max_delay``, scaled by a random factor in ``[1 - jitter, 1 + jitter]`` and capped again.
-    A server-sent ``Retry-After`` raises the wait to that value, up to ``max_retry_after``.
+    A server-sent ``Retry-After`` raises the wait to that value. When it exceeds
+    ``max_retry_after``, the error is returned immediately.
     """
 
     max_attempts: int = 5
@@ -74,7 +77,7 @@ class RetryPolicy:
         """The wait before retry ``retry_number`` after ``error``, honouring Retry-After."""
         delay = self.backoff(retry_number, rng)
         if isinstance(error, RateLimitedError) and error.retry_after is not None:
-            delay = max(delay, min(max(error.retry_after, 0.0), self.max_retry_after))
+            delay = max(delay, error.retry_after)
         return delay
 
 
@@ -112,6 +115,12 @@ def call_with_retry[T](
             if cancel.is_set():
                 raise TranslationCancelledError("cancelled during the request") from error
             if attempt >= policy.max_attempts:
+                raise
+            if (
+                isinstance(error, RateLimitedError)
+                and error.retry_after is not None
+                and error.retry_after > policy.max_retry_after
+            ):
                 raise
             delay = policy.delay_for(error, attempt, rng)
             if on_retry is not None:

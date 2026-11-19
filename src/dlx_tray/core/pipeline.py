@@ -19,7 +19,14 @@ from dlx_tray.core.models import (
     TranslationError,
     TranslationResult,
 )
-from dlx_tray.core.retry import RetryCallback, RetryPolicy, Sleeper, call_with_retry, event_sleep
+from dlx_tray.core.retry import (
+    DEFAULT_REQUEST_DELAY,
+    RetryCallback,
+    RetryPolicy,
+    Sleeper,
+    call_with_retry,
+    event_sleep,
+)
 from dlx_tray.providers.fallback import FallbackTranslator
 
 if TYPE_CHECKING:
@@ -54,7 +61,7 @@ class JobResult:
 class TranslationJob:
     translator: Translator
     max_units: int = chunker.DEFAULT_MAX_UNITS
-    request_delay: float = 1.5
+    request_delay: float = DEFAULT_REQUEST_DELAY
     retry_policy: RetryPolicy = field(default_factory=RetryPolicy)
     sleep: Sleeper = event_sleep
 

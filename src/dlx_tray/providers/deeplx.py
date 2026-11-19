@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Sequence
+from threading import Lock
+from time import monotonic
 from types import TracebackType
 from typing import Any, Self
 
@@ -26,6 +28,8 @@ log = logging.getLogger(__name__)
 
 DEFAULT_TIMEOUT = 30.0
 PROVIDER_NAME = "dlx"
+_INITIAL_COOLDOWN = 15.0
+_MAX_COOLDOWN = 120.0
 
 
 class DeeplxTranslator:
@@ -55,6 +59,9 @@ class DeeplxTranslator:
         self._headers = {"Authorization": f"Bearer {token}"} if token else {}
         self._timeout = timeout
         self._owns_client = client is None
+        self._request_lock = Lock()
+        self._blocked_until = 0.0
+        self._next_cooldown = _INITIAL_COOLDOWN
         # trust_env=False: on Windows httpx would pick up the system proxy from the registry and
         # send loopback requests (and the token) through it.
         self._client = client if client is not None else httpx.Client(trust_env=False)
@@ -107,6 +114,13 @@ class DeeplxTranslator:
             "target_lang": target.value,
         }
         log.debug("DLX request: %d texts, %d units, %s -> %s", len(texts), units, source, target)
+        with self._request_lock:
+            remaining = self._blocked_until - monotonic()
+            if remaining > 0:
+                raise RateLimitedError("DLX is in rate-limit cooldown", retry_after=remaining)
+            return self._request(payload, len(texts))
+
+    def _request(self, payload: dict[str, list[str] | str], count: int) -> list[TranslationResult]:
         try:
             response = self._client.post(
                 self._url, json=payload, headers=self._headers, timeout=self._timeout
@@ -120,8 +134,16 @@ class DeeplxTranslator:
 
         body = _json_or_none(response)
         if response.status_code != httpx.codes.OK:
-            raise _status_error(response, body)
-        return _parse_success(body, len(texts))
+            error = _status_error(response, body)
+            if isinstance(error, RateLimitedError):
+                delay = error.retry_after or self._next_cooldown
+                self._blocked_until = monotonic() + delay
+                self._next_cooldown = min(self._next_cooldown * 2, _MAX_COOLDOWN)
+                raise RateLimitedError(str(error), retry_after=delay)
+            raise error
+        results = _parse_success(body, count)
+        self._next_cooldown = _INITIAL_COOLDOWN
+        return results
 
 
 def _json_or_none(response: httpx.Response) -> Any:

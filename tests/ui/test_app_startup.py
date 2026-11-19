@@ -533,6 +533,9 @@ def test_settings_save_applies_to_next_job_and_reloads(
     rotated_official.translate.side_effect = official.translate.side_effect
     official_factory = Mock(side_effect=[official, rotated_official])
     monkeypatch.setattr(app, "DeepLOfficialTranslator", official_factory)
+    now = 100.0
+    monkeypatch.setattr("dlx_tray.providers.deeplx.monotonic", lambda: now)
+    monkeypatch.setattr("dlx_tray.providers.fallback.monotonic", lambda: now)
     job_factory = Mock(wraps=app.TranslationJob)
     monkeypatch.setattr(app, "TranslationJob", job_factory)
     source = fixture_text("en_article.txt")[:240]
@@ -551,6 +554,7 @@ def test_settings_save_applies_to_next_job_and_reloads(
         dialog.history_enabled.setChecked(False)
 
     def check(window: MainWindow, status: QLabel) -> None:
+        nonlocal now
         window.source_editor.setPlainText(source)
         assert "1 chunks" in window.counter.text()
         _edit_settings(window, edit)
@@ -596,6 +600,7 @@ def test_settings_save_applies_to_next_job_and_reloads(
 
         _edit_settings(window, clear)
         rotated_official.close.assert_called_once_with()
+        now += 15.0
         window.translate_button.click()
         qtbot.waitUntil(window.settings_action.isEnabled)
         assert window.result_editor.toPlainText().startswith("[UK]")

@@ -14,7 +14,7 @@ from dlx_tray.core.models import (
 )
 from dlx_tray.core.pipeline import JobResult, TranslationJob
 from dlx_tray.core.retry import RetryPolicy
-from dlx_tray.providers import fallback
+from dlx_tray.providers import deeplx, fallback
 from dlx_tray.providers.base import Translator
 from dlx_tray.providers.deeplx import DeeplxTranslator
 from dlx_tray.providers.fallback import FallbackTranslator
@@ -55,12 +55,13 @@ def test_connection_loss_falls_back_for_the_failed_chunk(fake_dlx: FakeDLXFactor
     )
 
 
-@pytest.mark.parametrize(("status", "pause"), [("429", 5.0), ("429-retry-after", 9.0)])
+@pytest.mark.parametrize(("status", "pause"), [("429", 15.0), ("429-retry-after", 9.0)])
 def test_rate_limit_cooldown_across_jobs(
     fake_dlx: FakeDLXFactory, monkeypatch: pytest.MonkeyPatch, status: str, pause: float
 ) -> None:
     time = 100.0
     monkeypatch.setattr(fallback, "monotonic", lambda: time)
+    monkeypatch.setattr(deeplx, "monotonic", lambda: time)
     secondary = Mock(spec=Translator)
     secondary.name = "deepl"
     secondary.translate.return_value = [TranslationResult("Світ", Language.EN, "deepl")]

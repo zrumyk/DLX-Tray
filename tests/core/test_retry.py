@@ -128,15 +128,22 @@ def test_retry_after_shorter_than_backoff_keeps_backoff() -> None:
     assert clock.sleeps == [5.0]
 
 
-def test_retry_after_is_capped_and_negative_is_ignored() -> None:
+def test_long_retry_after_stops_automatic_retry_instead_of_retrying_early() -> None:
     clock = FakeClock()
-    fn = Scripted(
-        RateLimitedError("429", retry_after=10_000.0),
-        RateLimitedError("429", retry_after=-5.0),
-        "ok",
-    )
+    error = RateLimitedError("429", retry_after=10_000.0)
+    fn = Scripted(error, "ok")
+    with pytest.raises(RateLimitedError) as info:
+        call_with_retry(fn, NO_JITTER, sleep=clock)
+    assert info.value is error
+    assert fn.calls == 1
+    assert clock.sleeps == []
+
+
+def test_negative_retry_after_is_ignored() -> None:
+    clock = FakeClock()
+    fn = Scripted(RateLimitedError("429", retry_after=-5.0), "ok")
     call_with_retry(fn, NO_JITTER, sleep=clock)
-    assert clock.sleeps == [300.0, 10.0]
+    assert clock.sleeps == [5.0]
 
 
 def test_cancel_during_wait_raises_cancelled() -> None:
