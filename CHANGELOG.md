@@ -14,6 +14,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Build a standalone Windows app folder with bundled DLX and Ukrainian translations using
   `scripts/build.ps1`.
 - Show the DLX Tray icon in Windows and the app version in the executable properties.
+- Install DLX Tray for the current Windows user without administrator rights. Setup adds a Start
+  menu shortcut and offers a desktop shortcut. Uninstall offers to remove settings, history, and logs.
 
 ### Fixed
 - Build the bundled DLX with the updated DeepL endpoint for anonymous translation.
