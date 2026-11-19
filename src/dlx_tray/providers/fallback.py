@@ -60,7 +60,7 @@ class FallbackTranslator:
             except RETRYABLE_ERRORS as exc:
                 if isinstance(exc, RateLimitedError):
                     delay = max(_RETRY_DEFAULTS.initial_delay, exc.retry_after or 0.0)
-                    deadline = monotonic() + min(delay, _RETRY_DEFAULTS.max_retry_after)
+                    deadline = monotonic() + delay
                     with self._lock:
                         self._primary_blocked_until = max(self._primary_blocked_until, deadline)
                     if on_rate_limit is not None:

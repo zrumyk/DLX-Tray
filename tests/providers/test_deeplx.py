@@ -162,7 +162,7 @@ def test_413_is_text_too_long(mock: respx.MockRouter, dlx: DeeplxTranslator) -> 
         translate(dlx, "Hello")
 
 
-@pytest.mark.parametrize(("headers", "retry_after"), [({}, None), ({"Retry-After": "12"}, 12.0)])
+@pytest.mark.parametrize(("headers", "retry_after"), [({}, 15.0), ({"Retry-After": "12"}, 12.0)])
 def test_429_is_rate_limited(
     mock: respx.MockRouter,
     dlx: DeeplxTranslator,

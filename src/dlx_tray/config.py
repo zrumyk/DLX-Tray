@@ -22,6 +22,7 @@ from pydantic_settings import (
 from dlx_tray import APP_NAME
 from dlx_tray._file_lock import file_lock
 from dlx_tray.core.models import Formality, Language
+from dlx_tray.core.retry import DEFAULT_REQUEST_DELAY
 
 type UiLanguage = Literal["en", "uk"]
 type Theme = Literal["system", "light", "dark"]
@@ -65,7 +66,7 @@ class Settings(BaseSettings):
     target_lang: Language = Language.UK
     window_geometry: str | None = None
     chunk_size: int = Field(default=1400, ge=200, le=1500)
-    request_delay: float = Field(default=1.5, ge=0, le=10)
+    request_delay: float = Field(default=DEFAULT_REQUEST_DELAY, ge=0, le=10)
     retries: int = Field(default=3, ge=0)
     formality: Formality = Formality.DEFAULT
     history_enabled: bool = True

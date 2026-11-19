@@ -6,9 +6,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- Pause 2.5 seconds between translation chunks by default. Keep the DLX cooldown across jobs
+  after a rate limit and avoid retrying before the server's requested time.
+
 ### Added
 - Build a standalone Windows app folder with bundled DLX and Ukrainian translations using
   `scripts/build.ps1`.
+
+### Fixed
+- Build the bundled DLX with the updated DeepL endpoint for anonymous translation.
 
 ## [0.8.0] - 2026-11-19
 

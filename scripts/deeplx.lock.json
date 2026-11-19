@@ -4,5 +4,14 @@
   "asset": "deeplx_windows_amd64.exe",
   "url": "https://github.com/OwO-Network/DLX/releases/download/v1.3.1/deeplx_windows_amd64.exe",
   "sha256": "fa1107779606222578568053381989a2e921db270a10dd8128bd9dd2b7857f4b",
-  "target": "vendor/deeplx.exe"
+  "target": "vendor/deeplx.exe",
+  "patched_build": {
+    "revision": "83f97d336d145c56b06fb0316f7187f41954c664",
+    "source_url": "https://codeload.github.com/OwO-Network/DLX/zip/83f97d336d145c56b06fb0316f7187f41954c664",
+    "source_sha256": "9fa6c2e1910f1a6145c0ca0295e0b255a12883f3c0f7795d7718531d908ae673",
+    "go_url": "https://go.dev/dl/go1.27.4.windows-amd64.zip",
+    "go_sha256": "178ab98950ac69ab25069307dc6ade79f3816e414cce95b4da166a115cde1e7e",
+    "free_endpoint": "https://ita-free.www.deepl.com/v1/translate",
+    "sha256": "d89c77f1d95d95916f43a6178aa6a21103b51c359f1c424c24bfca3192aa1212"
+  }
 }

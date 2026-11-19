@@ -73,7 +73,7 @@ def test_streams_chunks_with_original_layout_and_pauses_between_requests() -> No
         (["one"], Language.AUTO, Language.UK, Formality.MORE),
         (["two"], Language.AUTO, Language.UK, Formality.MORE),
     ]
-    assert waits == [(1.5, 1)]
+    assert waits == [(2.5, 1)]
     assert progress == [(1, 2, "\t ONE\r\n\r\n"), (2, 2, "\t ONE\r\n\r\nTWO  ")]
     assert result == JobResult("\t ONE\r\n\r\nTWO  ", Language.EN, chunk_providers=("fake", "fake"))
 
@@ -110,7 +110,7 @@ def test_cancel_during_inter_request_wait_keeps_completed_chunk() -> None:
     translator = FakeTranslator()
 
     def sleep(seconds: float, cancel: Event) -> bool:
-        assert seconds == 1.5
+        assert seconds == 2.5
         assert len(translator.calls) == 1
         cancel.set()
         return False

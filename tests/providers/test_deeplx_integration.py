@@ -19,6 +19,7 @@ from dlx_tray.core.models import (
 )
 from dlx_tray.core.pipeline import FailureAction, JobResult, TranslationJob
 from dlx_tray.core.retry import RetryPolicy, call_with_retry
+from dlx_tray.providers import deeplx
 from dlx_tray.providers.deeplx import DeeplxTranslator
 from tests.fakes.fake_dlx import FakeDLXFactory
 
@@ -26,20 +27,28 @@ from tests.fakes.fake_dlx import FakeDLXFactory
 @pytest.mark.parametrize(
     ("step", "error", "backoff"),
     [
-        ("429", RateLimitedError, 5.0),
+        ("429", RateLimitedError, 15.0),
         ("429-retry-after", RateLimitedError, 9.0),
         ("503", ProviderUnavailableError, 5.0),
         ("drop", ProviderUnavailableError, 5.0),
     ],
 )
 def test_job_retries_only_the_failed_chunk(
-    fake_dlx: FakeDLXFactory, step: str, error: type[TranslationError], backoff: float
+    fake_dlx: FakeDLXFactory,
+    monkeypatch: pytest.MonkeyPatch,
+    step: str,
+    error: type[TranslationError],
+    backoff: float,
 ) -> None:
+    now = 100.0
+    monkeypatch.setattr(deeplx, "monotonic", lambda: now)
     waits: list[float] = []
     retries: list[tuple[int, float, type[TranslationError]]] = []
     progress: list[tuple[int, int, str]] = []
 
     def sleep(seconds: float, cancel: Event) -> bool:
+        nonlocal now
+        now += seconds
         waits.append(seconds)
         return not cancel.is_set()
 
@@ -71,7 +80,7 @@ def test_job_retries_only_the_failed_chunk(
             on_progress=on_progress,
         )
 
-    assert waits == [1.5, backoff]
+    assert waits == [2.5, backoff]
     assert retries == [(1, backoff, error)]
     assert progress == [(1, 2, "[UK] Hello\r\n"), (2, 2, "[UK] Hello\r\n[UK] dlroW")]
     assert result == JobResult(
@@ -82,19 +91,27 @@ def test_job_retries_only_the_failed_chunk(
 @pytest.mark.parametrize(
     ("step", "error", "delay"),
     [
-        ("429", RateLimitedError, 5.0),
+        ("429", RateLimitedError, 15.0),
         ("429-retry-after", RateLimitedError, 9.0),
         ("503", ProviderUnavailableError, 5.0),
         ("drop", ProviderUnavailableError, 5.0),
     ],
 )
 def test_retries_scripted_failure(
-    fake_dlx: FakeDLXFactory, step: str, error: type[TranslationError], delay: float
+    fake_dlx: FakeDLXFactory,
+    monkeypatch: pytest.MonkeyPatch,
+    step: str,
+    error: type[TranslationError],
+    delay: float,
 ) -> None:
+    now = 100.0
+    monkeypatch.setattr(deeplx, "monotonic", lambda: now)
     waits: list[float] = []
     failures: list[tuple[int, float, type[TranslationError]]] = []
 
     def sleep(seconds: float, cancel: Event) -> bool:
+        nonlocal now
+        now += seconds
         waits.append(seconds)
         return not cancel.is_set()
 
@@ -128,6 +145,35 @@ def test_scripted_client_errors(
         pytest.raises(error),
     ):
         translator.translate(["Hello"], Language.EN, Language.UK)
+
+
+def test_cooldown_doubles_across_jobs_and_resets_on_success(
+    fake_dlx: FakeDLXFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    now = 100.0
+    monkeypatch.setattr(deeplx, "monotonic", lambda: now)
+    with (
+        fake_dlx(["429", "429", "ok", "429"]) as server,
+        DeeplxTranslator(server.url, server.token) as translator,
+    ):
+        job = TranslationJob(translator=translator, retry_policy=RetryPolicy(max_attempts=1))
+
+        def run() -> JobResult:
+            return job.run("Hello", Language.EN, Language.UK)
+
+        def expect_cooldown(seconds: float) -> None:
+            error = run().error
+            assert isinstance(error, RateLimitedError)
+            assert error.retry_after == seconds
+
+        expect_cooldown(15.0)
+        now += 5.0
+        expect_cooldown(10.0)
+        now += 10.0
+        expect_cooldown(30.0)
+        now += 30.0
+        assert run().text == "[UK] Hello"
+        expect_cooldown(15.0)
 
 
 def test_slow_step_times_out_without_blocking_next_request(fake_dlx: FakeDLXFactory) -> None:

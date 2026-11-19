@@ -46,6 +46,7 @@ try {
 
     $distDir = Join-Path 'dist' $appName
     Copy-Item -LiteralPath $dlxLock.target -Destination (Join-Path $distDir 'deeplx.exe')
+    Copy-Item -LiteralPath 'scripts/licenses/dlx.txt' -Destination (Join-Path $distDir 'DLX-LICENSE.txt')
     Write-Host "Built $(Join-Path $distDir "$appName.exe")"
 }
 finally {

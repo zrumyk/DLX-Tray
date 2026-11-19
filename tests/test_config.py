@@ -34,7 +34,7 @@ def test_missing_file_uses_defaults(
     assert settings.source_lang is Language.AUTO
     assert settings.target_lang is Language.UK
     assert settings.chunk_size == 1400
-    assert settings.request_delay == 1.5
+    assert settings.request_delay == 2.5
     assert settings.retries == 3
     assert RetryPolicy(max_attempts=settings.max_attempts).max_attempts == 4
     assert settings.history_enabled and settings.history_limit == 500
@@ -86,7 +86,7 @@ def test_save_preserves_preferences_shadowed_by_overrides(
     monkeypatch.delenv("DLX_CHUNK_SIZE")
     loaded = Settings.load(path, env_file=None)
     assert loaded.chunk_size == 900
-    assert loaded.request_delay == 1.5
+    assert loaded.request_delay == 2.5
     assert not loaded.history_enabled
     assert "request_delay" not in json.loads(path.read_text(encoding="utf-8"))
 

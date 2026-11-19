@@ -186,7 +186,10 @@ def test_cancel_interrupts_retry_and_keeps_streamed_text(
     translation_window: Callable[[TranslationJob], MainWindow],
     fake_dlx: FakeDLXFactory,
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    now = 100.0
+    monkeypatch.setattr("dlx_tray.providers.deeplx.monotonic", lambda: now)
     waiting = Event()
 
     def sleep(seconds: float, cancel: Event) -> bool:
@@ -231,6 +234,7 @@ def test_cancel_interrupts_retry_and_keeps_streamed_text(
         assert window.swap_button.isEnabled()
         assert not window.source_editor.isReadOnly()
 
+        now += 9.0
         window.source_editor.setPlainText("fresh")
         window.translate_button.click()
         qtbot.waitUntil(window.translate_button.isEnabled)
