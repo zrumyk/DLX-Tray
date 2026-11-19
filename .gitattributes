@@ -6,6 +6,9 @@
 *.ico binary
 *.exe binary
 
+# Unified diffs use leading spaces for context, including blank Go lines.
+scripts/dlx-handoff-*.patch -whitespace
+
 # Test fixtures are byte-exact (CRLF, trailing spaces, BOM-free UTF-8): never normalise them.
 tests/fixtures/** -text
 tests/fixtures/*.pdf binary
