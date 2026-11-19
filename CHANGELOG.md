@@ -6,6 +6,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- Choose English or Ukrainian for the interface in Settings. The choice applies on restart.
+
 ## [0.7.0] - 2026-11-19
 
 ### Added
