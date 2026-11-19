@@ -16,6 +16,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Show the DLX Tray icon in Windows and the app version in the executable properties.
 - Install DLX Tray for the current Windows user without administrator rights. Setup adds a Start
   menu shortcut and offers a desktop shortcut. Uninstall offers to remove settings, history, and logs.
+- Download the versioned Windows installer from GitHub Releases starting with v0.9.0.
 
 ### Fixed
 - Build the bundled DLX with the updated DeepL endpoint for anonymous translation.
