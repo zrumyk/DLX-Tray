@@ -99,7 +99,10 @@ jobs:
           fi
 
           if release=$(gh release view "$tag" --json assets,isDraft); then
-            if ! jq -e --arg name "$name" '.assets | any(.name == $name and .state == "uploaded" and .size > 0)' <<< "$release" > /dev/null; then
+            # GitHub can leave an empty starter asset after an interrupted upload.
+            if jq -e --arg name "$name" '.assets | any(.name == $name and .state == "starter" and .size == 0)' <<< "$release" > /dev/null; then
+              gh release upload "$tag" "$asset" --clobber
+            elif ! jq -e --arg name "$name" '.assets | any(.name == $name and .state == "uploaded" and .size > 0)' <<< "$release" > /dev/null; then
               gh release upload "$tag" "$asset"
             fi
             if jq -e '.isDraft' <<< "$release" > /dev/null; then
