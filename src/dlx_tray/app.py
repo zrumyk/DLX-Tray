@@ -247,10 +247,13 @@ def run(argv: list[str]) -> int:
         return 1
 
     with ExitStack() as stack:
-        stack.enter_context(interface_language(app, settings.ui_language))
+        log_opened = True
         try:
             stack.enter_context(file_logging(settings.log_level))
         except OSError:
+            log_opened = False
+        stack.enter_context(interface_language(app, settings.ui_language))
+        if not log_opened:
             QMessageBox.warning(
                 None,
                 APP_NAME,

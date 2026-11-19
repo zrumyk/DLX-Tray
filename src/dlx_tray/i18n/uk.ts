@@ -76,7 +76,7 @@
     </message>
     <message>
         <source>Clear &amp;all</source>
-        <translation>Очистити &amp;все</translation>
+        <translation>&amp;Очистити все</translation>
     </message>
     <message>
         <source>&amp;Close</source>

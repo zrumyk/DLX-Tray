@@ -33,7 +33,14 @@ def _ukrainian_catalog() -> bytes:
     with TemporaryDirectory() as directory:
         output = Path(directory) / _CATALOG.name
         subprocess.run(
-            [compiler, "-silent", _CATALOG.with_suffix(".ts"), "-qm", output],
+            [
+                compiler,
+                "-silent",
+                _CATALOG.with_suffix(".ts"),
+                _CATALOG.with_name("qt_uk.ts"),
+                "-qm",
+                output,
+            ],
             check=True,
             capture_output=True,
             timeout=10,

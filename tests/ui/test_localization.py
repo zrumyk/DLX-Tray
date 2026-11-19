@@ -68,11 +68,13 @@ def test_saved_interface_language_applies_on_next_start(
     qapp: QApplication, qtbot: QtBot, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     profile = tmp_path / "profile"
+    monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(config, "app_data_dir", lambda: profile)
     monkeypatch.delenv("DLX_UI_LANGUAGE", raising=False)
     monkeypatch.setattr(app, "QApplication", lambda _: qapp)
     compiled = tmp_path / "uk.qm"
     shutil.copyfile(CATALOG, compiled.with_suffix(".ts"))
+    shutil.copyfile(CATALOG.with_name("qt_uk.ts"), tmp_path / "qt_uk.ts")
     monkeypatch.setattr(localization, "_CATALOG", compiled)
     Settings(ui_language="en").save()
 
@@ -86,9 +88,11 @@ def test_saved_interface_language_applies_on_next_start(
             assert QCoreApplication.translate("Startup", "DLX ready") == "DLX готовий"
             assert qapp.testAttribute(Qt.ApplicationAttribute.AA_DontUseNativeDialogs)
             picker = QFileDialog(window)
-            label = picker.findChild(QLabel, "fileNameLabel")
-            assert label is not None
-            assert label.text() == "&Ім'я файлу:"
+            labels = {label.objectName(): label.text() for label in picker.findChildren(QLabel)}
+            assert labels["fileNameLabel"] == "&Ім'я файлу:"
+            assert labels["lookInLabel"] == "&Тека:"
+            assert labels["fileTypeLabel"] == "Тип &файлів:"
+            assert QCoreApplication.translate("QFileDialog", "Show ") == "Показати "
 
         def save(updated: Settings, _api_key: str | None) -> str | None:
             updated.save(changes_from=settings)
