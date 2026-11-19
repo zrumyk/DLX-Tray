@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-11-19
+
 ### Changed
 - Pause 2.5 seconds between translation chunks by default. Keep the DLX cooldown across jobs
   after a rate limit and avoid retrying before the server's requested time.
@@ -16,10 +18,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Show the DLX Tray icon in Windows and the app version in the executable properties.
 - Install DLX Tray for the current Windows user without administrator rights. Setup adds a Start
   menu shortcut and offers a desktop shortcut. Uninstall offers to remove settings, history, and logs.
-- Download the versioned Windows installer from GitHub Releases starting with v0.9.0.
+- Download `DLX-Tray-Setup-0.9.0.exe` from GitHub Releases.
 
 ### Fixed
 - Build the bundled DLX with the updated DeepL endpoint for anonymous translation.
+- Keep user data during an in-place upgrade and require DLX Tray to close before uninstalling.
+
+### Known issues
+- Long file translations through the live DLX endpoint remain unverified. File translation was
+  tested with a scripted local server.
 
 ## [0.8.0] - 2026-11-19
 
@@ -149,7 +156,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   pre-commit hooks and CI on Windows.
 - Script to download the pinned DLX v1.3.1 binary with SHA-256 verification.
 
-[Unreleased]: https://github.com/zrumyk/DLX-Tray/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/zrumyk/DLX-Tray/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/zrumyk/DLX-Tray/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/zrumyk/DLX-Tray/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/zrumyk/DLX-Tray/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/zrumyk/DLX-Tray/compare/v0.5.0...v0.6.0

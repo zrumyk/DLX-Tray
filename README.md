@@ -3,10 +3,12 @@
 A free desktop translator for Windows, in development. It is designed to translate long texts
 in chunks using a bundled [DLX](https://github.com/OwO-Network/DLX) (formerly DeepLX) server.
 
-> **Status:** v0.8.0 adds a Ukrainian interface and localized language pickers.
+> **Status:** v0.9.0 packages DLX Tray as a per-user Windows installer.
 
-## Available in v0.8.0
+## Available in v0.9.0
 
+- Install for the current Windows user without administrator rights, with a Start menu shortcut
+  and an optional desktop shortcut.
 - Choose English or Ukrainian in Settings and restart the app to apply the change. Language
   pickers and the detected language label use the chosen interface language.
 - Search saved text and file translations, reopen them in the editors, and delete individual
@@ -28,16 +30,10 @@ in chunks using a bundled [DLX](https://github.com/OwO-Network/DLX) (formerly De
 - Restore the window's size, position, maximized state, and last languages when the app starts.
 - Apply development overrides and write rotating diagnostic logs.
 
-## Planned features
-
-- Windows installer.
-
-Later (v2): system tray icon, global hotkey to translate selected text.
-
 ## Install
 
-Installers will be published on the [Releases](https://github.com/zrumyk/DLX-Tray/releases) page
-starting with v0.9.0.
+Download `DLX-Tray-Setup-0.9.0.exe` from the
+[Releases](https://github.com/zrumyk/DLX-Tray/releases) page, run Setup, and open DLX Tray from Start.
 
 Microsoft Defender SmartScreen may warn about a downloaded installer with an unfamiliar
 reputation. Verify that the download came from the DLX Tray Releases page before opening it.
@@ -92,10 +88,10 @@ precedence over `.env`. If the effective override is missing or blank, the app u
 | 0.5.0 | Settings, themes, saved window geometry and language selections (completed) |
 | 0.6.0 | `.txt` / `.docx` / `.pdf` files (completed) |
 | 0.7.0 | Translation history (completed) |
-| 0.8.0 | Ukrainian and English UI (current) |
-| 0.9.0 | Installer and GitHub Releases |
+| 0.8.0 | Ukrainian and English UI (completed) |
+| 0.9.0 | Installer and GitHub Releases (current) |
 | 1.0.0 | First stable release |
-| 2.0.0 | Tray icon and global hotkey |
+| 2.0.0 | System tray icon and global hotkey to translate selected text |
 
 See [CHANGELOG.md](CHANGELOG.md) for what changed in each version.
 
