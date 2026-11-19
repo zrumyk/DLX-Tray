@@ -22,6 +22,7 @@ from dlx_tray.providers.deeplx import DeeplxTranslator
 from dlx_tray.providers.fallback import FallbackTranslator
 from dlx_tray.secrets import delete_deepl_api_key, get_deepl_api_key, set_deepl_api_key
 from dlx_tray.services.deeplx_process import DLXProcess
+from dlx_tray.ui.localization import interface_language
 from dlx_tray.ui.main_window import MainWindow
 from dlx_tray.ui.settings_dialog import SettingsDialog
 from dlx_tray.ui.theme import apply_theme
@@ -246,6 +247,7 @@ def run(argv: list[str]) -> int:
         return 1
 
     with ExitStack() as stack:
+        stack.enter_context(interface_language(app, settings.ui_language))
         try:
             stack.enter_context(file_logging(settings.log_level))
         except OSError:

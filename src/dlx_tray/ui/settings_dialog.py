@@ -109,7 +109,7 @@ class SettingsDialog(QDialog):
         self.ui_language.addItem(self.tr("Ukrainian"), "uk")
         self.ui_language.setCurrentIndex(self.ui_language.findData(settings.ui_language))
         self._add(form, self.tr("Interface &language"), self.ui_language, "ui_language")
-        form.addRow("", QLabel(self.tr("Interface language is saved for a future update.")))
+        form.addRow("", QLabel(self.tr("Restart DLX Tray to apply the interface language.")))
 
         self.history_enabled = QCheckBox(self.tr("&Enable translation history"))
         self.history_enabled.setChecked(settings.history_enabled)
@@ -118,7 +118,6 @@ class SettingsDialog(QDialog):
         self._add(form, self.tr("&History entry limit"), self.history_limit, "history_limit")
         self.history_enabled.toggled.connect(self._update_history)
         self._update_history(self.history_enabled.isChecked())
-        form.addRow("", QLabel(self.tr("History storage will be available in a future update.")))
 
         self.api_key = QLineEdit()
         self.api_key.setEchoMode(QLineEdit.EchoMode.Password)
