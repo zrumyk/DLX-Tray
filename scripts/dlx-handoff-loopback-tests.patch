@@ -1,9 +1,9 @@
 diff --git a/service/handoff_regression_test.go b/service/handoff_regression_test.go
 new file mode 100644
-index 0000000..3070cfb
+index 0000000..1f10224
 --- /dev/null
 +++ b/service/handoff_regression_test.go
-@@ -0,0 +1,215 @@
+@@ -0,0 +1,229 @@
 +package service
 +
 +import (
@@ -122,6 +122,20 @@ index 0000000..3070cfb
 +	first, second := make(chan *httptest.ResponseRecorder, 1), make(chan *httptest.ResponseRecorder, 1)
 +	go func() { first <- regressionRequest(router, context.Background(), "/translate", "first", "") }()
 +	regressionAwait(t, entered)
++
++	// Cancel a caller while the first upstream request still holds the turn.
++	cancelCtx, cancelWaiting := context.WithCancel(context.Background())
++	defer cancelWaiting()
++	waiting := &regressionWaitContext{Context: cancelCtx, reached: make(chan struct{})}
++	cancelled := make(chan *httptest.ResponseRecorder, 1)
++	go func() { cancelled <- regressionRequest(router, waiting, "/translate", "cancel me", "") }()
++	regressionAwait(t, waiting.reached)
++	cancelWaiting()
++	regressionAwait(t, cancelled)
++	if calls.Load() != 1 {
++		t.Fatal("cancelled caller reached upstream")
++	}
++
 +	ctx, cancel := context.WithCancel(context.Background())
 +	defer cancel()
 +	queued := &regressionWaitContext{Context: ctx, reached: make(chan struct{})}
