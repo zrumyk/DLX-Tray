@@ -6,10 +6,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-19
+
 ### Added
 - Save completed text and file translations locally, search history case-insensitively, reopen
   translations in the editors, and delete individual entries or clear the history.
 - Turn off history recording or set how many recent translations to keep in Settings.
+- Canceled translations are excluded from history.
+
+### Known issues
+- Bundled DLX v1.3.1 can return HTTP 429. History was verified with a local scripted server.
+  Live file translation remains unverified. See
+  [DLX issue #248](https://github.com/OwO-Network/DLX/issues/248).
 
 ## [0.6.0] - 2026-11-19
 
@@ -108,7 +116,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   pre-commit hooks and CI on Windows.
 - Script to download the pinned DLX v1.3.1 binary with SHA-256 verification.
 
-[Unreleased]: https://github.com/zrumyk/DLX-Tray/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/zrumyk/DLX-Tray/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/zrumyk/DLX-Tray/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/zrumyk/DLX-Tray/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/zrumyk/DLX-Tray/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/zrumyk/DLX-Tray/compare/v0.3.0...v0.4.0
