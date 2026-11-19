@@ -67,6 +67,7 @@ def _run_window(app: QApplication, settings: Settings, stack: ExitStack) -> int:
         target=settings.target_lang,
         chunk_size=settings.chunk_size,
         formality=settings.formality,
+        ui_language=settings.ui_language,
     )
     history_path = config.app_data_dir() / "history.sqlite3"
     window.set_history(history_path, enabled=settings.history_enabled, limit=settings.history_limit)
