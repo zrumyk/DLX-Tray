@@ -1,6 +1,6 @@
 [project]
 name = "dlx-tray"
-version = "0.8.0"
+version = "0.9.0"
 description = "Free desktop translator for Windows powered by a bundled DLX (DeepLX) server, with chunking for large texts."
 readme = "README.md"
 license = "MIT"
