@@ -51,6 +51,9 @@ uv run python scripts/fetch_deeplx.py   # downloads the pinned DLX binary into v
 uv run dlx-tray
 ```
 
+To package the app from source, run `.\scripts\build.ps1` in PowerShell. Open
+`dist/DLX Tray/DLX Tray.exe` and keep the entire `dist/DLX Tray` folder together when moving it.
+
 Development commands:
 
 ```powershell
