@@ -6,6 +6,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- Build a standalone Windows app folder with bundled DLX and Ukrainian translations using
+  `scripts/build.ps1`.
+
 ## [0.8.0] - 2026-11-19
 
 ### Added
