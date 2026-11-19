@@ -17,6 +17,8 @@ from pytestqt.qtbot import QtBot
 
 from dlx_tray import app, config
 from dlx_tray.config import Settings
+from dlx_tray.core.models import Language
+from dlx_tray.core.pipeline import JobResult
 from dlx_tray.ui import localization
 from dlx_tray.ui.main_window import MainWindow
 from dlx_tray.ui.settings_dialog import SettingsDialog
@@ -64,6 +66,36 @@ def test_ukrainian_catalog_covers_extracted_strings(tmp_path: Path) -> None:
         ), (context, source)
 
 
+def _check_language_lists(window: MainWindow, ukrainian: bool) -> None:
+    source, target = window.source_languages, window.target_languages
+    assert source.itemData(0) == source.currentData() == Language.AUTO
+    assert target.currentData() == Language.PT_BR
+    assert {source.itemData(i) for i in range(source.count())} == {
+        language.value for language in Language if language.can_be_source
+    }
+    assert {target.itemData(i) for i in range(target.count())} == {
+        language.value for language in Language if language.can_be_target
+    }
+    assert source.itemText(0) == ("Визначити автоматично" if ukrainian else "Auto-detect")
+    assert target.currentText() == (
+        "Португальська (бразильська)" if ukrainian else "Portuguese (Brazilian)"
+    )
+    for combo in (source, target):
+        czech = combo.findData(Language.CS)
+        indonesian = combo.findData(Language.ID)
+        korean = combo.findData(Language.KO)
+        assert combo.itemText(czech) == ("Чеська" if ukrainian else "Czech")
+        if ukrainian:
+            assert indonesian < korean < czech
+        else:
+            assert czech < indonesian < korean
+
+    window._show_finished(JobResult("Translated", Language.EN))
+    assert window.detected_language.text() == (
+        "Визначено мову: Англійська" if ukrainian else "Detected: English"
+    )
+
+
 def test_saved_interface_language_applies_on_next_start(
     qapp: QApplication, qtbot: QtBot, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -76,14 +108,15 @@ def test_saved_interface_language_applies_on_next_start(
     shutil.copyfile(CATALOG, compiled.with_suffix(".ts"))
     shutil.copyfile(CATALOG.with_name("qt_uk.ts"), tmp_path / "qt_uk.ts")
     monkeypatch.setattr(localization, "_CATALOG", compiled)
-    Settings(ui_language="en").save()
+    Settings(ui_language="en", target_lang=Language.PT_BR).save()
 
     def check_window(_app: QApplication, settings: Settings, _stack: ExitStack) -> int:
-        window = MainWindow()
+        window = MainWindow(target=settings.target_lang, ui_language=settings.ui_language)
         qtbot.addWidget(window)
         change_to = "uk" if settings.ui_language == "en" else "en"
         button_text = "Translate" if change_to == "uk" else "Перекласти"
         assert window.translate_button.text() == button_text
+        _check_language_lists(window, ukrainian=settings.ui_language == "uk")
         if settings.ui_language == "uk":
             assert QCoreApplication.translate("Startup", "DLX ready") == "DLX готовий"
             assert qapp.testAttribute(Qt.ApplicationAttribute.AA_DontUseNativeDialogs)

@@ -9,6 +9,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added
 - Choose English or Ukrainian for the interface in Settings. The choice applies on restart.
 
+### Changed
+- The source and target lists show language names in the interface language and follow its
+  alphabetical order.
+
 ## [0.7.0] - 2026-11-19
 
 ### Added

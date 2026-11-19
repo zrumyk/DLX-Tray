@@ -5,8 +5,9 @@ from __future__ import annotations
 from functools import partial
 from math import ceil
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from PySide6.QtCore import Qt, QThread, Signal, Slot
+from PySide6.QtCore import QCollator, QLocale, Qt, QThread, Signal, Slot
 from PySide6.QtGui import (
     QCloseEvent,
     QDragEnterEvent,
@@ -50,6 +51,9 @@ from dlx_tray.services.history import HistoryStore
 from dlx_tray.ui.error_dialog import ErrorDialog
 from dlx_tray.ui.history_dialog import HistoryDialog
 from dlx_tray.ui.workers import FileIOWorker, FileJobResult, TranslationWorker
+
+if TYPE_CHECKING:
+    from dlx_tray.config import UiLanguage
 
 
 def _editor_text(editor: QPlainTextEdit) -> str:
@@ -99,6 +103,7 @@ class MainWindow(QMainWindow):
         translation_job: TranslationJob | None = None,
         formality: Formality = Formality.DEFAULT,
         translation_unavailable_reason: str | None = None,
+        ui_language: UiLanguage = "en",
     ) -> None:
         super().__init__(parent)
         file_menu = self.menuBar().addMenu(self.tr("&File"))
@@ -145,7 +150,7 @@ class MainWindow(QMainWindow):
         self.source_languages.setAccessibleName(self.tr("Source language"))
         self.target_languages = QComboBox()
         self.target_languages.setAccessibleName(self.tr("Target language"))
-        self._populate_languages(source, target)
+        self._populate_languages(source, target, ui_language)
         self.detected_language = QLabel()
         self.detected_language.hide()
 
@@ -474,7 +479,9 @@ class MainWindow(QMainWindow):
             self._formality = formality
         self._update_counter()
 
-    def _populate_languages(self, source: Language, target: Language) -> None:
+    def _populate_languages(
+        self, source: Language, target: Language, ui_language: UiLanguage
+    ) -> None:
         names = {
             Language.AR: self.tr("Arabic"),
             Language.BG: self.tr("Bulgarian"),
@@ -513,8 +520,9 @@ class MainWindow(QMainWindow):
             Language.ZH_HANS: self.tr("Chinese (Simplified)"),
             Language.ZH_HANT: self.tr("Chinese (Traditional)"),
         }
+        collator = QCollator(QLocale(ui_language))
         self.source_languages.addItem(self.tr("Auto-detect"), Language.AUTO.value)
-        for language, name in sorted(names.items(), key=lambda item: item[1].casefold()):
+        for language, name in sorted(names.items(), key=lambda item: collator.sortKey(item[1])):
             if language.can_be_source:
                 self.source_languages.addItem(name, language.value)
             self.target_languages.addItem(name, language.value)
