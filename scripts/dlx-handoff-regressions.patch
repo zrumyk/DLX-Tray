@@ -1,0 +1,272 @@
+diff --git a/service/guard.go b/service/guard.go
+index 1ea7b00..cbd12e4 100644
+--- a/service/guard.go
++++ b/service/guard.go
+@@ -10,5 +10,6 @@ import (
+ 	"crypto/sha256"
++	"encoding/binary"
+ 	"encoding/hex"
++	"errors"
+ 	"fmt"
+-	"math"
+ 	"math/rand/v2"
+@@ -31,5 +32,4 @@ import (
+ //
+-//   - spaces upstream request starts by MinInterval plus a random Jitter, so a
+-//     burst of chunks leaves as a human-paced trickle instead of a machine gun
+-//     on a fixed metronome;
++//   - spaces upstream request starts by MinInterval plus a random Jitter, to limit
++//     the rate of calls during a burst;
+ //   - holds a cooldown after an upstream 429 and answers with Retry-After
+@@ -44,5 +44,4 @@ type Guard struct {
+ 
+-	// turnMu serializes the start-time gate: only one goroutine computes and
+-	// claims the next slot at a time, and it holds the lock while it waits.
+-	turnMu sync.Mutex
++	// Keep one upstream call in flight until its cooldown state is recorded.
++	turn chan struct{}
+ 
+@@ -77,2 +76,3 @@ func NewGuard(cfg *Config) *Guard {
+ 		jitter:      cfg.Jitter,
++		turn:        make(chan struct{}, 1),
+ 		cacheTTL:    cfg.CacheTTL,
+@@ -100,12 +100,16 @@ func (g *Guard) Translate(
+ 	if wait, cooling := g.cooldownRemaining(); cooling {
+-		setRetryAfter(c, wait)
+-		return translate.DLXTranslationResult{
+-			Code:    http.StatusTooManyRequests,
+-			Message: fmt.Sprintf("Upstream is cooling down after a rate limit; retry in %ds", int(math.Ceil(wait.Seconds()))),
+-		}, nil
++		return cooldownResponse(c, wait), nil
+ 	}
+ 
+-	if err := g.waitTurn(c.Request.Context()); err != nil {
+-		// The caller went away while we were waiting for our slot. Report it as
+-		// a cancelled request rather than spending an upstream call.
++	ctx := c.Request.Context()
++	select {
++	case g.turn <- struct{}{}:
++		defer func() { <-g.turn }()
++	case <-ctx.Done():
++		return translate.DLXTranslationResult{}, ctx.Err()
++	}
++	if wait, cooling := g.cooldownRemaining(); cooling {
++		return cooldownResponse(c, wait), nil
++	}
++	if err := g.waitTurn(ctx); err != nil {
+ 		return translate.DLXTranslationResult{}, err
+@@ -120,3 +124,3 @@ func (g *Guard) Translate(
+ 	case http.StatusTooManyRequests:
+-		setRetryAfter(c, g.penalize())
++		setRetryAfter(c, g.penalize(res.RetryAfter))
+ 	case http.StatusOK:
+@@ -131,20 +135,13 @@ func (g *Guard) Translate(
+ // when there is a previous request to space away from: an isolated request
+-// after a quiet period leaves immediately.
++// after a quiet period leaves immediately. The caller must hold the turn.
+ func (g *Guard) waitTurn(ctx context.Context) error {
+-	g.turnMu.Lock()
+-	defer g.turnMu.Unlock()
+-
+-	var wait time.Duration
+-	g.mu.Lock()
+-	lastStart := g.lastStart
+-	g.mu.Unlock()
+-	wait = g.slotDelay(time.Now(), lastStart)
++	wait := g.slotDelay(time.Now(), g.lastStart)
+ 
+ 	if wait > 0 {
+-		t := time.NewTimer(wait)
++		timer := time.NewTimer(wait)
++		defer timer.Stop()
+ 		select {
+ 		case <-ctx.Done():
+-			t.Stop()
+ 			return ctx.Err()
+-		case <-t.C:
++		case <-timer.C:
+ 		}
+@@ -152,5 +149,6 @@ func (g *Guard) waitTurn(ctx context.Context) error {
+ 
+-	g.mu.Lock()
++	if err := ctx.Err(); err != nil {
++		return err
++	}
+ 	g.lastStart = time.Now()
+-	g.mu.Unlock()
+ 	return nil
+@@ -189,3 +187,3 @@ func (g *Guard) cooldownRemaining() (time.Duration, bool) {
+ // penalize records an upstream 429 and returns the cooldown that now applies.
+-func (g *Guard) penalize() time.Duration {
++func (g *Guard) penalize(retryAfter string) time.Duration {
+ 	g.mu.Lock()
+@@ -201,4 +199,6 @@ func (g *Guard) penalize() time.Duration {
+ 	}
+-	g.cooldownUntil = time.Now().Add(g.cooldown)
+-	return g.cooldown
++	now := time.Now()
++	wait := max(g.cooldown, retryAfterDelay(retryAfter, now))
++	g.cooldownUntil = now.Add(wait)
++	return wait
+ }
+@@ -277,9 +277,14 @@ func cacheKey(sourceLang, targetLang, tagHandling, dlSession string, texts []str
+ 	h := sha256.New()
+-	for _, part := range []string{sourceLang, targetLang, tagHandling, dlSession} {
++	// Length prefixes preserve field boundaries even when a text contains NUL.
++	var length [8]byte
++	writePart := func(part string) {
++		binary.BigEndian.PutUint64(length[:], uint64(len(part)))
++		h.Write(length[:])
+ 		h.Write([]byte(part))
+-		h.Write([]byte{0})
++	}
++	for _, part := range []string{sourceLang, targetLang, tagHandling, dlSession} {
++		writePart(part)
+ 	}
+ 	for _, text := range texts {
+-		h.Write([]byte(text))
+-		h.Write([]byte{0})
++		writePart(text)
+ 	}
+@@ -288,8 +293,33 @@ func cacheKey(sourceLang, targetLang, tagHandling, dlSession string, texts []str
+ 
+-func setRetryAfter(c *gin.Context, d time.Duration) {
+-	secs := int(math.Ceil(d.Seconds()))
+-	if secs < 1 {
+-		secs = 1
++func retryAfterDelay(value string, now time.Time) time.Duration {
++	if deadline, err := http.ParseTime(value); err == nil {
++		return max(0, deadline.Sub(now))
++	}
++	seconds, err := strconv.ParseUint(value, 10, 64)
++	if err != nil && !errors.Is(err, strconv.ErrRange) {
++		return 0
++	}
++	const maxDuration time.Duration = 1<<63 - 1
++	if seconds > uint64(maxDuration/time.Second) {
++		return maxDuration
++	}
++	return time.Duration(seconds) * time.Second
++}
++
++func cooldownResponse(c *gin.Context, wait time.Duration) translate.DLXTranslationResult {
++	seconds := setRetryAfter(c, wait)
++	return translate.DLXTranslationResult{
++		Code:    http.StatusTooManyRequests,
++		Message: fmt.Sprintf("Upstream is cooling down after a rate limit; retry in %ds", seconds),
++	}
++}
++
++func setRetryAfter(c *gin.Context, wait time.Duration) int64 {
++	seconds := int64(wait / time.Second)
++	if wait%time.Second > 0 {
++		seconds++
+ 	}
+-	c.Header("Retry-After", strconv.Itoa(secs))
++	seconds = max(1, seconds)
++	c.Header("Retry-After", strconv.FormatInt(seconds, 10))
++	return seconds
+ }
+diff --git a/service/guard_test.go b/service/guard_test.go
+index 9062cbd..561d4cd 100644
+--- a/service/guard_test.go
++++ b/service/guard_test.go
+@@ -3,2 +3,3 @@ package service
+ import (
++	"net/http"
+ 	"testing"
+@@ -72,6 +73,6 @@ func TestGuardCooldownBackoff(t *testing.T) {
+ 
+-	if d := g.penalize(); d != cooldownBase {
++	if d := g.penalize(""); d != cooldownBase {
+ 		t.Fatalf("first penalty = %s, want %s", d, cooldownBase)
+ 	}
+-	if d := g.penalize(); d != 2*cooldownBase {
++	if d := g.penalize(""); d != 2*cooldownBase {
+ 		t.Fatalf("second penalty = %s, want %s", d, 2*cooldownBase)
+@@ -137 +138,21 @@ func TestGuardCacheDisabled(t *testing.T) {
+ }
++
++func TestRetryAfterDelay(t *testing.T) {
++	now := time.Date(2026, time.November, 20, 0, 0, 0, 0, time.UTC)
++	for _, tc := range []struct {
++		value string
++		want  time.Duration
++	}{
++		{"180", 180 * time.Second},
++		{now.Add(180 * time.Second).Format(http.TimeFormat), 180 * time.Second},
++		{now.Add(-time.Second).Format(http.TimeFormat), 0},
++		{"0", 0},
++		{"-3", 0},
++		{"invalid", 0},
++		{"18446744073709551616", time.Duration(1<<63 - 1)},
++	} {
++		if got := retryAfterDelay(tc.value, now); got != tc.want {
++			t.Errorf("retryAfterDelay(%q) = %s, want %s", tc.value, got, tc.want)
++		}
++	}
++}
+diff --git a/translate/translate.go b/translate/translate.go
+index acbe078..a3daca2 100644
+--- a/translate/translate.go
++++ b/translate/translate.go
+@@ -424,6 +424,6 @@ const chromeSecCHUA = `"Chromium";v="131", "Not_A Brand";v="24", "Google Chrome"
+ // echoed in the User-Agent so TLS, UA and app_information stay consistent.
+-func callOneshot(endpoint string, body []byte, bearerToken, proxyURL, appVersion string) (gjson.Result, int, error) {
++func callOneshot(endpoint string, body []byte, bearerToken, proxyURL, appVersion string) (gjson.Result, int, string, error) {
+ 	client, err := getOneshotClient(proxyURL)
+ 	if err != nil {
+-		return gjson.Result{}, 0, err
++		return gjson.Result{}, 0, "", err
+ 	}
+@@ -452,5 +452,8 @@ func callOneshot(endpoint string, body []byte, bearerToken, proxyURL, appVersion
+ 	if err != nil {
+-		return gjson.Result{}, 0, err
++		return gjson.Result{}, 0, "", err
+ 	}
+ 	defer resp.Body.Close()
++	if resp.StatusCode == http.StatusTooManyRequests {
++		return gjson.Result{}, resp.StatusCode, resp.Header.Get("Retry-After"), nil
++	}
+ 
+@@ -463,3 +466,3 @@ func callOneshot(endpoint string, body []byte, bearerToken, proxyURL, appVersion
+ 		if err != nil {
+-			return gjson.Result{}, resp.StatusCode, fmt.Errorf("gzip reader: %w", err)
++			return gjson.Result{}, resp.StatusCode, "", fmt.Errorf("gzip reader: %w", err)
+ 		}
+@@ -474,3 +477,3 @@ func callOneshot(endpoint string, body []byte, bearerToken, proxyURL, appVersion
+ 		if err != nil {
+-			return gjson.Result{}, resp.StatusCode, fmt.Errorf("zstd reader: %w", err)
++			return gjson.Result{}, resp.StatusCode, "", fmt.Errorf("zstd reader: %w", err)
+ 		}
+@@ -481,5 +484,5 @@ func callOneshot(endpoint string, body []byte, bearerToken, proxyURL, appVersion
+ 	if err != nil {
+-		return gjson.Result{}, resp.StatusCode, fmt.Errorf("read response body: %w", err)
++		return gjson.Result{}, resp.StatusCode, "", fmt.Errorf("read response body: %w", err)
+ 	}
+-	return gjson.ParseBytes(raw), resp.StatusCode, nil
++	return gjson.ParseBytes(raw), resp.StatusCode, "", nil
+ }
+@@ -622,3 +625,3 @@ func TranslateByDLX(sourceLang, targetLang string, texts []string, tagHandling s
+ 	id := time.Now().UnixMilli()
+-	result, status, err := callOneshot(endpoint, bodyBytes, dlSession, proxyURL, appVersion)
++	result, status, retryAfter, err := callOneshot(endpoint, bodyBytes, dlSession, proxyURL, appVersion)
+ 	if err != nil {
+@@ -646,5 +649,6 @@ func TranslateByDLX(sourceLang, targetLang string, texts []string, tagHandling s
+ 		return DLXTranslationResult{
+-			ID:      id,
+-			Code:    http.StatusTooManyRequests,
+-			Message: "too many requests, your IP has been blocked by DeepL temporarily, please don't request it frequently in a short time",
++			ID:         id,
++			Code:       http.StatusTooManyRequests,
++			RetryAfter: retryAfter,
++			Message:    "too many requests, your IP has been blocked by DeepL temporarily, please don't request it frequently in a short time",
+ 		}, nil
+diff --git a/translate/types.go b/translate/types.go
+index 13bfa3a..4ab3500 100644
+--- a/translate/types.go
++++ b/translate/types.go
+@@ -23,2 +23,3 @@ package translate
+ type DLXTranslationResult struct {
++	RetryAfter   string   `json:"-"`
+ 	Code         int      `json:"code"`

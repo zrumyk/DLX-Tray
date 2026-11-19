@@ -1,0 +1,250 @@
+diff --git a/service/handoff_regression_test.go b/service/handoff_regression_test.go
+new file mode 100644
+index 0000000..3070cfb
+--- /dev/null
++++ b/service/handoff_regression_test.go
+@@ -0,0 +1,215 @@
++package service
++
++import (
++	"bytes"
++	"context"
++	"encoding/json"
++	"net/http"
++	"net/http/httptest"
++	"strconv"
++	"sync"
++	"sync/atomic"
++	"testing"
++	"time"
++)
++
++func regressionFake(t *testing.T, post func(http.ResponseWriter, *http.Request)) {
++	t.Helper()
++	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		w.Header().Set("Content-Type", "application/json")
++		if r.Method == http.MethodGet {
++			w.Write([]byte("{}"))
++			return
++		}
++		post(w, r)
++	}))
++	t.Cleanup(server.Close)
++	t.Setenv("DLX_TEST_UPSTREAM", server.URL)
++	t.Setenv("PROXY", "")
++}
++
++func regressionOK(w http.ResponseWriter, r *http.Request) {
++	var body struct{ Text []string }
++	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
++		http.Error(w, "bad fixture request", 400)
++		return
++	}
++	translations := make([]map[string]string, len(body.Text))
++	for i, text := range body.Text {
++		translations[i] = map[string]string{"text": r.Header.Get("Authorization") + ":" + text}
++	}
++	json.NewEncoder(w).Encode(map[string]any{"translations": translations, "detected_source_language": "EN"})
++}
++
++func regressionRequest(router http.Handler, ctx context.Context, route string, input any, session string) *httptest.ResponseRecorder {
++	body, err := json.Marshal(map[string]any{"text": input, "source_lang": "EN", "target_lang": "UK"})
++	if err != nil {
++		panic(err)
++	}
++	req := httptest.NewRequest(http.MethodPost, route, bytes.NewReader(body)).WithContext(ctx)
++	req.Header.Set("Content-Type", "application/json")
++	if session != "" {
++		req.Header.Set("Cookie", "dl_session="+session)
++	}
++	result := httptest.NewRecorder()
++	router.ServeHTTP(result, req)
++	return result
++}
++
++func TestHandoffUpstreamRetryAfter(t *testing.T) {
++	var calls atomic.Int32
++	regressionFake(t, func(w http.ResponseWriter, r *http.Request) {
++		calls.Add(1)
++		w.Header().Set("Retry-After", "180")
++		w.WriteHeader(429)
++		w.Write([]byte("{}"))
++	})
++	router := Router(&Config{})
++	first := regressionRequest(router, context.Background(), "/translate", "one", "")
++	second := regressionRequest(router, context.Background(), "/translate", "two", "")
++	firstWait, _ := strconv.Atoi(first.Header().Get("Retry-After"))
++	secondWait, _ := strconv.Atoi(second.Header().Get("Retry-After"))
++	if first.Code != 429 || second.Code != 429 || firstWait != 180 || secondWait < 179 || calls.Load() != 1 {
++		t.Fatalf("first=%d/%ds second=%d/%ds upstream calls=%d", first.Code, firstWait, second.Code, secondWait, calls.Load())
++	}
++}
++
++type regressionWaitContext struct {
++	context.Context
++	reached chan struct{}
++	once    sync.Once
++}
++
++func (c *regressionWaitContext) Done() <-chan struct{} {
++	c.once.Do(func() { close(c.reached) })
++	return c.Context.Done()
++}
++
++func regressionAwait[T any](t *testing.T, c <-chan T) T {
++	t.Helper()
++	select {
++	case result := <-c:
++		return result
++	case <-time.After(6 * time.Second):
++		t.Fatal("timed out waiting for synchronized loopback step")
++		var zero T
++		return zero
++	}
++}
++
++func TestHandoffQueuedAfter429(t *testing.T) {
++	entered, release := make(chan struct{}), make(chan struct{})
++	var releaseOnce sync.Once
++	var calls atomic.Int32
++	regressionFake(t, func(w http.ResponseWriter, r *http.Request) {
++		if calls.Add(1) == 1 {
++			close(entered)
++			<-release
++			w.WriteHeader(429)
++			w.Write([]byte("{}"))
++			return
++		}
++		regressionOK(w, r)
++	})
++	t.Cleanup(func() { releaseOnce.Do(func() { close(release) }) })
++	router := Router(&Config{MinInterval: 1500 * time.Millisecond})
++	first, second := make(chan *httptest.ResponseRecorder, 1), make(chan *httptest.ResponseRecorder, 1)
++	go func() { first <- regressionRequest(router, context.Background(), "/translate", "first", "") }()
++	regressionAwait(t, entered)
++	ctx, cancel := context.WithCancel(context.Background())
++	defer cancel()
++	queued := &regressionWaitContext{Context: ctx, reached: make(chan struct{})}
++	go func() { second <- regressionRequest(router, queued, "/translate", "second", "") }()
++	regressionAwait(t, queued.reached)
++	releaseOnce.Do(func() { close(release) })
++	one := regressionAwait(t, first)
++	two := regressionAwait(t, second)
++	t.Logf("first=%d/%s queued=%d upstream calls=%d", one.Code, one.Header().Get("Retry-After"), two.Code, calls.Load())
++	if one.Code != 429 || two.Code != 429 || calls.Load() != 1 {
++		t.Error("the queued request reached upstream during cooldown")
++	}
++}
++
++func TestHandoffQueueCancellation(t *testing.T) {
++	var calls atomic.Int32
++	regressionFake(t, func(w http.ResponseWriter, r *http.Request) {
++		calls.Add(1)
++		regressionOK(w, r)
++	})
++	router := Router(&Config{MinInterval: 1500 * time.Millisecond})
++	if first := regressionRequest(router, context.Background(), "/translate", "first", ""); first.Code != 200 {
++		t.Fatal(first.Body)
++	}
++	ctx, cancel := context.WithCancel(context.Background())
++	defer cancel()
++	waiting := &regressionWaitContext{Context: ctx, reached: make(chan struct{})}
++	done := make(chan *httptest.ResponseRecorder, 1)
++	go func() { done <- regressionRequest(router, waiting, "/translate", "cancel me", "") }()
++	regressionAwait(t, waiting.reached)
++	cancel()
++	response := regressionAwait(t, done)
++	t.Logf("cancellation HTTP=%d upstream calls=%d", response.Code, calls.Load())
++	if calls.Load() != 1 {
++		t.Error("canceled request reached upstream")
++	}
++}
++
++func TestHandoffCacheShape(t *testing.T) {
++	var calls atomic.Int32
++	regressionFake(t, func(w http.ResponseWriter, r *http.Request) {
++		calls.Add(1)
++		regressionOK(w, r)
++	})
++	for _, batchFirst := range []bool{false, true} {
++		t.Run(strconv.FormatBool(batchFirst), func(t *testing.T) {
++			calls.Store(0)
++			router := Router(&Config{CacheTTL: time.Minute, CacheMax: 8})
++			order := []any{"a\x00b", []string{"a", "b"}}
++			if batchFirst {
++				order[0], order[1] = order[1], order[0]
++			}
++			for i, input := range append(order, order...) {
++				resp := regressionRequest(router, context.Background(), "/translate", input, "")
++				var payload struct{ Data json.RawMessage }
++				if err := json.Unmarshal(resp.Body.Bytes(), &payload); err != nil || resp.Code != 200 {
++					t.Fatalf("route failed: %d %s %v", resp.Code, resp.Body, err)
++				}
++				var expected any
++				if _, batch := input.([]string); batch {
++					expected = []string{"None:a", "None:b"}
++				} else {
++					expected = "None:a\x00b"
++				}
++				want, _ := json.Marshal(expected)
++				t.Logf("input type=%T HTTP=%d cache=%q data=%s upstream calls=%d", input, resp.Code, resp.Header().Get("X-DLX-Cache"), payload.Data, calls.Load())
++				if !bytes.Equal(payload.Data, want) || (resp.Header().Get("X-DLX-Cache") == "hit") != (i >= len(order)) {
++					t.Errorf("wrong result or cache status; expected %s", want)
++				}
++			}
++			if calls.Load() != 2 {
++				t.Error("single text and batch shared one cache entry")
++			}
++		})
++	}
++}
++
++func TestHandoffCacheSessionControl(t *testing.T) {
++	var calls atomic.Int32
++	regressionFake(t, func(w http.ResponseWriter, r *http.Request) {
++		calls.Add(1)
++		regressionOK(w, r)
++	})
++	router := Router(&Config{CacheTTL: time.Minute, CacheMax: 8})
++	for i, session := range []string{"local-synthetic-a", "local-synthetic-b", "local-synthetic-a"} {
++		resp := regressionRequest(router, context.Background(), "/v1/translate", "one", session)
++		var reply struct{ Data string }
++		err := json.Unmarshal(resp.Body.Bytes(), &reply)
++		t.Logf("session fixture %d status=%d cache=%q upstream calls=%d", i+1, resp.Code, resp.Header().Get("X-DLX-Cache"), calls.Load())
++		if err != nil || resp.Code != 200 || reply.Data != "Bearer "+session+":one" || (resp.Header().Get("X-DLX-Cache") == "hit") != (i == 2) {
++			t.Errorf("incorrect session result on fixture %d: %s", i+1, resp.Body)
++		}
++	}
++	if calls.Load() != 2 {
++		t.Error("expected two independent upstream calls")
++	}
++}
+diff --git a/translate/translate.go b/translate/translate.go
+index a3daca2..e2dc378 100644
+--- a/translate/translate.go
++++ b/translate/translate.go
+@@ -27,2 +27,3 @@ import (
+ 	"net/url"
++	"os"
+ 	"sort"
+@@ -189,3 +190,3 @@ func warmCookies(client *req.Client) {
+ 		defer cancel()
+-		_, _ = client.R().SetContext(ctx).Get("https://www.deepl.com/translator")
++		_, _ = client.R().SetContext(ctx).Get(os.Getenv("DLX_TEST_UPSTREAM") + "/warm")
+ 	})
+@@ -596,3 +597,3 @@ func TranslateByDLX(sourceLang, targetLang string, texts []string, tagHandling s
+ 	// app_information always agree; the lookup itself is cached (appversion.go).
+-	appVersion := currentIOSAppVersion()
++	appVersion := "26.8"
+ 
+@@ -619,6 +620,7 @@ func TranslateByDLX(sourceLang, targetLang string, texts []string, tagHandling s
+ 
+-	endpoint := oneshotFreeEndpoint
+-	if dlSession != "" {
+-		endpoint = oneshotProEndpoint
++	base := os.Getenv("DLX_TEST_UPSTREAM")
++	if !strings.HasPrefix(base, "http://127.0.0.1:") {
++		return DLXTranslationResult{}, errors.New("regression tests require a loopback upstream")
+ 	}
++	endpoint := base + "/translate"
+ 
