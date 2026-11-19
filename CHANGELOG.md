@@ -6,12 +6,23 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-11-19
+
 ### Added
 - Choose English or Ukrainian for the interface in Settings. The choice applies on restart.
 
 ### Changed
 - The source and target lists show language names in the interface language and follow its
-  alphabetical order.
+  alphabetical order. The detected source language uses the same localized name.
+
+### Fixed
+- File pickers in Ukrainian mode show Ukrainian labels and standard buttons.
+- Remove an outdated Settings message that said translation history would arrive in a future update.
+
+### Known issues
+- Bundled DLX v1.3.1 can return HTTP 429. Localization was verified with a local scripted server.
+  Live file translation remains unverified. See
+  [DLX issue #248](https://github.com/OwO-Network/DLX/issues/248).
 
 ## [0.7.0] - 2026-11-19
 
@@ -123,7 +134,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   pre-commit hooks and CI on Windows.
 - Script to download the pinned DLX v1.3.1 binary with SHA-256 verification.
 
-[Unreleased]: https://github.com/zrumyk/DLX-Tray/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/zrumyk/DLX-Tray/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/zrumyk/DLX-Tray/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/zrumyk/DLX-Tray/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/zrumyk/DLX-Tray/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/zrumyk/DLX-Tray/compare/v0.4.0...v0.5.0
