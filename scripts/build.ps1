@@ -30,14 +30,21 @@ try {
     Invoke-BuildTool pyside6-lrelease src/dlx_tray/i18n/uk.ts src/dlx_tray/i18n/qt_uk.ts -qm $catalog
 
     $appName = 'DLX Tray'
+    $appIcon = (Get-Item -LiteralPath 'src/dlx_tray/resources/dlx-tray.ico').FullName
+    $versionFile = Join-Path $workDir 'version-info.txt'
+    Invoke-BuildTool python scripts/write_windows_version.py $versionFile
+
     $pyInstallerArgs = @(
         '--onedir', '--windowed', '--noupx', '--noconfirm'
         '--name', $appName
+        '--icon', $appIcon
+        '--version-file', $versionFile
         '--specpath', $workDir
         '--workpath', (Join-Path $workDir 'analysis')
         '--distpath', 'dist'
         '--copy-metadata', 'dlx-tray'
         '--add-data', "${catalog}:dlx_tray/i18n"
+        '--add-data', "${appIcon}:dlx_tray/resources"
         'src/dlx_tray/__main__.py'
     )
     # Qt uses the system ICU. Keep unrelated DLLs on the caller's PATH out of the bundle.

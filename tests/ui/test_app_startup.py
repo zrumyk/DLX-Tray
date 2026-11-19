@@ -9,7 +9,7 @@ from unittest.mock import Mock, call
 
 import pytest
 from keyring.errors import KeyringError
-from PySide6.QtCore import QRect, Qt, QTimer
+from PySide6.QtCore import QRect, QSize, Qt, QTimer
 from PySide6.QtGui import QShortcut
 from PySide6.QtWidgets import QApplication, QDialogButtonBox, QLabel
 from pytestqt.qtbot import QtBot
@@ -69,6 +69,26 @@ def run_window(
             assert app._run_window(qapp, settings, stack) == 0
 
     return run
+
+
+def test_startup_loads_the_window_icon(qapp: QApplication, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(app, "QApplication", lambda _argv: qapp)
+    monkeypatch.setattr(Settings, "load", lambda: Settings())
+    monkeypatch.setattr(app, "file_logging", lambda _level: nullcontext())
+
+    def check_icon(application: QApplication, _settings: Settings, _stack: ExitStack) -> int:
+        icon = application.windowIcon()
+        assert QSize(16, 16) in icon.availableSizes()
+        assert QSize(256, 256) in icon.availableSizes()
+        assert not icon.pixmap(16, 16).isNull()
+        return 0
+
+    monkeypatch.setattr(app, "_run_window", check_icon)
+    previous_icon = qapp.windowIcon()
+    try:
+        assert app.run([]) == 0
+    finally:
+        qapp.setWindowIcon(previous_icon)
 
 
 @pytest.mark.parametrize("maximized", [False, True], ids=["normal", "maximized"])
