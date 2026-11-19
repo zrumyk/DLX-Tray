@@ -13,6 +13,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added
 - Build a standalone Windows app folder with bundled DLX and Ukrainian translations using
   `scripts/build.ps1`.
+- Show the DLX Tray icon in Windows and the app version in the executable properties.
 
 ### Fixed
 - Build the bundled DLX with the updated DeepL endpoint for anonymous translation.

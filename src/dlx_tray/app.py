@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import logging
 from contextlib import ExitStack
+from pathlib import Path
 
 from keyring.errors import KeyringError
 from pydantic_settings import SettingsError
 from PySide6.QtCore import QByteArray, QCoreApplication, QRect, Qt, QThread
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from dlx_tray import APP_NAME, __version__, config
@@ -233,6 +235,7 @@ def run(argv: list[str]) -> int:
     app.setApplicationName(APP_NAME)
     app.setApplicationVersion(__version__)
     app.setOrganizationName(APP_NAME)
+    app.setWindowIcon(QIcon(str(Path(__file__).with_name("resources") / "dlx-tray.ico")))
 
     try:
         settings = Settings.load()
