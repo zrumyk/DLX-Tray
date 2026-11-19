@@ -3,10 +3,12 @@
 A free desktop translator for Windows, in development. It is designed to translate long texts
 in chunks using a bundled [DLX](https://github.com/OwO-Network/DLX) (formerly DeepLX) server.
 
-> **Status:** v0.7.0 adds local translation history with search.
+> **Status:** v0.8.0 adds a Ukrainian interface and localized language pickers.
 
-## Available in v0.7.0
+## Available in v0.8.0
 
+- Choose English or Ukrainian in Settings and restart the app to apply the change. Language
+  pickers and the detected language label use the chosen interface language.
 - Search saved text and file translations, reopen them in the editors, and delete individual
   entries or clear the history. Set how many recent translations to keep or turn off recording.
 - Open or drop a TXT, DOCX or text-based PDF file and follow translation progress across the document.
@@ -28,7 +30,6 @@ in chunks using a bundled [DLX](https://github.com/OwO-Network/DLX) (formerly De
 
 ## Planned features
 
-- Ukrainian and English interface.
 - Windows installer.
 
 Later (v2): system tray icon, global hotkey to translate selected text.
@@ -83,8 +84,8 @@ precedence over `.env`. If the effective override is missing or blank, the app u
 | 0.4.0 | Official DeepL API fallback, error recovery, API key storage (completed) |
 | 0.5.0 | Settings, themes, saved window geometry and language selections (completed) |
 | 0.6.0 | `.txt` / `.docx` / `.pdf` files (completed) |
-| 0.7.0 | Translation history (current) |
-| 0.8.0 | Ukrainian and English UI |
+| 0.7.0 | Translation history (completed) |
+| 0.8.0 | Ukrainian and English UI (current) |
 | 0.9.0 | Installer and GitHub Releases |
 | 1.0.0 | First stable release |
 | 2.0.0 | Tray icon and global hotkey |
