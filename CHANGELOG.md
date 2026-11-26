@@ -6,6 +6,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- Update bundled DLX for anonymous DeepL translation.
+
 ### Fixed
 - Bundled DLX passes through the upstream retry delay after a rate limit.
 

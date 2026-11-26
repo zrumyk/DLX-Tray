@@ -6,11 +6,11 @@
   "sha256": "fa1107779606222578568053381989a2e921db270a10dd8128bd9dd2b7857f4b",
   "target": "vendor/deeplx.exe",
   "source_build": {
-    "revision": "c19c4f22c77939a6f1d698c3f705f242dfac7195",
-    "source_url": "https://codeload.github.com/zrumyk/DLX/zip/c19c4f22c77939a6f1d698c3f705f242dfac7195",
-    "source_sha256": "03be824f713017db37e19777986d43499073bca24bae9a4fc7b5846f702ed534",
+    "revision": "177f2355274295a6bee35feaccc27fe06fbd1fa1",
+    "source_url": "https://codeload.github.com/zrumyk/DLX/zip/177f2355274295a6bee35feaccc27fe06fbd1fa1",
+    "source_sha256": "42098b3870a832517703bc8113e95120104de79d6b1acc75f6281dcd21554c78",
     "go_url": "https://go.dev/dl/go1.27.4.windows-amd64.zip",
     "go_sha256": "178ab98950ac69ab25069307dc6ade79f3816e414cce95b4da166a115cde1e7e",
-    "sha256": "e8d1d1f70d8e36a86326ae169add47d4af6b159083c4183adf20b08c770fbf3a"
+    "sha256": "0a270c3d306cb54b6c3ebe0a5920c649fafd3a4f7f37c74d37c0a565a1ba4c24"
   }
 }

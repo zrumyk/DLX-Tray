@@ -20,7 +20,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-Notices for the Windows amd64 DLX build from zrumyk/DLX c19c4f22c77939a6f1d698c3f705f242dfac7195.
+Notices for the Windows amd64 DLX build from zrumyk/DLX 177f2355274295a6bee35feaccc27fe06fbd1fa1.
 
 ========================================================================
 github.com/andybalholm/brotli v1.2.7
