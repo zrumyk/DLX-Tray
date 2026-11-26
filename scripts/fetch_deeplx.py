@@ -53,7 +53,9 @@ def patch_free_endpoint(path: Path, endpoint: str) -> None:
     path.write_bytes(source.replace(original, patched))
 
 
-def build_patched_dlx(build: dict[str, str], work: Path, binary: Path) -> None:
+def build_dlx_from_source(
+    build: dict[str, str], work: Path, binary: Path, *, free_endpoint: str | None = None
+) -> None:
     source_zip = work / "source.zip"
     go_zip = work / "go.zip"
     download(build["source_url"], source_zip, build["source_sha256"])
@@ -63,7 +65,8 @@ def build_patched_dlx(build: dict[str, str], work: Path, binary: Path) -> None:
             verified_zip.extractall(work)
 
     source = work / f"DLX-{build['revision']}"
-    patch_free_endpoint(source / "translate" / "translate.go", build["free_endpoint"])
+    if free_endpoint is not None:
+        patch_free_endpoint(source / "translate" / "translate.go", free_endpoint)
     go_root = work / "go"
     env = {
         **os.environ,
@@ -101,10 +104,13 @@ def main() -> int:
 
     lock = json.loads(LOCK_FILE.read_text(encoding="utf-8"))
     target = ROOT / lock["target"]
-    patched = lock.get("patched_build")
-    expected = (patched if patched is not None else lock)["sha256"]
-
     try:
+        patched = lock.get("patched_build")
+        source = lock.get("source_build")
+        if patched is not None and source is not None:
+            raise ValueError("Choose either source_build or patched_build in the DLX lock")
+        build = source if patched is None else patched
+        expected = (build if build is not None else lock)["sha256"]
         if target.is_file() and not args.force and sha256_of(target) == expected.lower():
             print(f"DLX {lock['version']} already present: {target}")
             return 0
@@ -112,12 +118,13 @@ def main() -> int:
         with tempfile.TemporaryDirectory(dir=target.parent, prefix="dlx-build-") as tmp:
             work = Path(tmp)
             binary = work / target.name
-            if patched is None:
+            if build is None:
                 print(f"Downloading DLX {lock['version']} from {lock['url']}", flush=True)
                 download(lock["url"], binary, expected)
             else:
-                print(f"Building patched DLX {lock['version']}", flush=True)
-                build_patched_dlx(patched, work, binary)
+                print(f"Building DLX {lock['version']} from {build['revision']}", flush=True)
+                free_endpoint = None if patched is None else patched["free_endpoint"]
+                build_dlx_from_source(build, work, binary, free_endpoint=free_endpoint)
                 verify_sha256(binary, expected)
             binary.replace(target)
     except (OSError, ValueError, BadZipFile, httpx.HTTPError, subprocess.SubprocessError) as exc:
