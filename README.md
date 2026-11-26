@@ -3,7 +3,8 @@
 A free desktop translator for Windows, in development. It is designed to translate long texts
 in chunks using a bundled [DLX](https://github.com/OwO-Network/DLX) (formerly DeepLX) server.
 
-> **Status:** v0.9.0 packages DLX Tray as a per-user Windows installer.
+> **Windows installer:** v0.9.0 is available on the Releases page. The updated bundled DLX is
+> available when you [build from source](#build-from-source) on `main`.
 
 ## Available in v0.9.0
 
@@ -53,6 +54,12 @@ uv run dlx-tray
 
 To package the app from source, run `.\scripts\build.ps1` in PowerShell. Open
 `dist/DLX Tray/DLX Tray.exe` and keep the entire `dist/DLX Tray` folder together when moving it.
+
+The build on `main` uses the [DLX fork at `177f235`](https://github.com/zrumyk/DLX/commit/177f2355274295a6bee35feaccc27fe06fbd1fa1).
+On 27 November 2026, a locally built installer translated **Hello** to **Привіт** in a clean
+Windows Sandbox. Tray showed **Provider: DLX** and completed the translation in one request
+with no API key or external server configured. Long-file translation and export were tested
+separately with a local test server.
 
 Development commands:
 
