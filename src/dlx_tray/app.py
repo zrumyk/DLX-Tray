@@ -8,7 +8,6 @@ from collections.abc import Callable
 from contextlib import ExitStack
 from functools import partial
 from pathlib import Path
-from threading import Event
 
 from keyring.errors import KeyringError
 from pydantic_settings import SettingsError
@@ -18,7 +17,7 @@ from PySide6.QtWidgets import QApplication, QMessageBox
 
 from dlx_tray import APP_NAME, __version__, config
 from dlx_tray.config import Settings
-from dlx_tray.core.diagnostics import DiagnosticTimeline, DLXConnection, TrayWait
+from dlx_tray.core.diagnostics import DiagnosticTimeline, DLXConnection
 from dlx_tray.core.models import ProviderUnavailableError
 from dlx_tray.core.pipeline import TranslationJob
 from dlx_tray.core.retry import RetryPolicy, event_sleep
@@ -116,6 +115,7 @@ def _run_window(app: QApplication, settings: Settings, stack: ExitStack) -> int:
     official = DeepLOfficialTranslator(api_key, diagnostics=diagnostics) if api_key else None
     dlx: DeeplxTranslator | None = None
     translator: Translator | None = None
+    job: TranslationJob | None = None
     status = QCoreApplication.translate("Startup", "Starting DLX…")
     dlx_connection: DLXConnection = "starting"
     starting = settings.deeplx_url is None
@@ -139,8 +139,9 @@ def _run_window(app: QApplication, settings: Settings, stack: ExitStack) -> int:
             has_key=bool(api_key),
             chunk_size=settings.chunk_size,
             request_delay=settings.request_delay,
+            concurrency=job.effective_concurrency if job is not None else None,
             retries=settings.retries,
-            events=diagnostics.snapshot(),
+            timeline=diagnostics.snapshot(),
         )
 
         def finish_export() -> None:
@@ -161,10 +162,6 @@ def _run_window(app: QApplication, settings: Settings, stack: ExitStack) -> int:
 
     window.diagnostics_requested.connect(copy_diagnostics)
 
-    def wait_for_request(seconds: float, cancel: Event) -> bool:
-        diagnostics.append(TrayWait(seconds))
-        return event_sleep(seconds, cancel)
-
     def close_official() -> None:
         if official is not None:
             official.close()
@@ -172,6 +169,7 @@ def _run_window(app: QApplication, settings: Settings, stack: ExitStack) -> int:
     stack.callback(close_official)
 
     def refresh_job() -> None:
+        nonlocal job
         job = (
             TranslationJob(
                 translator=translator,
@@ -179,9 +177,10 @@ def _run_window(app: QApplication, settings: Settings, stack: ExitStack) -> int:
                 request_delay=settings.request_delay,
                 concurrency=settings.dlx_concurrency,
                 retry_policy=RetryPolicy(max_attempts=settings.max_attempts),
-                sleep=wait_for_request,
+                sleep=event_sleep,
                 cache=cache if settings.cache_enabled else None,
                 flights=flights,
+                diagnostics=diagnostics,
             )
             if translator is not None
             else None

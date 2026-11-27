@@ -4,6 +4,7 @@ import hashlib
 import json
 from pathlib import Path
 
+from dlx_tray.core.diagnostics import DiagnosticSnapshot
 from dlx_tray.services.diagnostics import markdown_report
 
 
@@ -43,8 +44,9 @@ def test_report_keeps_safe_rotated_logs_and_only_attributes_matching_dlx(tmp_pat
             has_key=False,
             chunk_size=1400,
             request_delay=0,
+            concurrency=None,
             retries=3,
-            events=(),
+            timeline=DiagnosticSnapshot(),
         )
 
     result = report()

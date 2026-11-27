@@ -89,7 +89,7 @@ def test_attempt_records_only_known_cache_values(
     with DeeplxTranslator(BASE, TOKEN, diagnostics=diagnostics) as translator:
         assert translate(translator, "sample") == ["result"]
 
-    (attempt,) = diagnostics.snapshot()
+    (attempt,) = diagnostics.snapshot().events
     assert isinstance(attempt, ProviderAttempt)
     assert attempt.provider == "dlx"
     assert attempt.status == 200

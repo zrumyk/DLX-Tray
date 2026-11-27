@@ -25,7 +25,7 @@ ERRORS = {
     "503": (503, "Translation failed"),
 }
 RETRY_AFTER = {"429-retry-after": "9", "429-retry-after-15": "15"}
-STEPS = ("ok", "reverse", "slow", "drop", *ERRORS)
+STEPS = ("ok", "ok-cache-hit", "reverse", "slow", "drop", *ERRORS)
 
 type FakeDLXFactory = Callable[[Sequence[str]], AbstractContextManager[FakeDLX]]
 
@@ -64,7 +64,12 @@ class _Handler(BaseHTTPRequestHandler):
         pass
 
     def _json(
-        self, status: int, body: dict[str, object], *, retry_after: str | None = None
+        self,
+        status: int,
+        body: dict[str, object],
+        *,
+        retry_after: str | None = None,
+        cache_hit: bool = False,
     ) -> None:
         data = json.dumps(body).encode("utf-8")
         self.send_response(status)
@@ -72,6 +77,8 @@ class _Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(data)))
         if retry_after is not None:
             self.send_header("Retry-After", retry_after)
+        if cache_hit:
+            self.send_header("X-DLX-Cache", "hit")
         try:
             self.end_headers()
             self.wfile.write(data)
@@ -162,6 +169,7 @@ class _Handler(BaseHTTPRequestHandler):
                 "id": 123,
                 "method": "Free",
             },
+            cache_hit=step == "ok-cache-hit",
         )
 
 

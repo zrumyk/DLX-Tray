@@ -11,6 +11,7 @@ import httpx
 import pytest
 
 from dlx_tray.core.chunker import HARD_MAX_UNITS
+from dlx_tray.core.diagnostics import DiagnosticTimeline, LocalCache, SharedResult
 from dlx_tray.core.models import (
     AuthError,
     Chunk,
@@ -50,6 +51,7 @@ def test_parallel_cache_hits_and_followers_leave_room_for_distinct_misses(
             last_started.set()
         return step
 
+    diagnostics = DiagnosticTimeline()
     cache = TranslationCache(tmp_path / "cache.db")
     cache.store(
         translation_key("dlx", Language.EN, Language.UK, Formality.DEFAULT, "Cached"),
@@ -62,7 +64,11 @@ def test_parallel_cache_hits_and_followers_leave_room_for_distinct_misses(
     ):
         server.on_request = receive
         job = TranslationJob(
-            translator=translator, concurrency=2, cache=cache, flights=SingleFlight()
+            translator=translator,
+            concurrency=2,
+            cache=cache,
+            flights=SingleFlight(),
+            diagnostics=diagnostics,
         )
         result = executor.submit(
             job.run, "First\n\nCached\n\nFirst\n\nLast", Language.EN, Language.UK
@@ -74,6 +80,10 @@ def test_parallel_cache_hits_and_followers_leave_room_for_distinct_misses(
             release.set()
         assert result.result(5).text == "[UK] First\n\nFrom cache\n\n[UK] First\n\n[UK] Last"
     assert sorted(starts) == ["First", "Last"]
+    report = diagnostics.snapshot()
+    assert (report.cache_hits, report.cache_misses) == (1, 3)
+    assert report.events.count(LocalCache(hit=True)) == 1
+    assert report.events.count(SharedResult()) == 1
 
 
 def test_later_failure_stops_dispatch_and_preserves_only_the_prefix(

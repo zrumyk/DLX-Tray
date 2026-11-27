@@ -9,6 +9,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added
 - Reuse completed paragraph and file-segment translations for up to 30 days. Settings can
   clear the translation cache or turn it off.
+- Copied diagnostics show the translation worker limit, local cache hits and misses,
+  shared results, request pacing, and retry waits alongside provider attempt timings.
 
 ### Changed
 - Translate with up to two DLX requests at a time while keeping the preview in input order.
