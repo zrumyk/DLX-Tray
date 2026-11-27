@@ -27,7 +27,7 @@ from dlx_tray.core.chunker import paragraphs
 from dlx_tray.core.models import Formality, Language, ProviderUnavailableError, TranslationResult
 from dlx_tray.core.retry import RequestDispatch
 from dlx_tray.providers import deeplx, fallback
-from dlx_tray.services.cache import translation_key
+from dlx_tray.services.cache import TranslationCache, translation_key
 from dlx_tray.services.deeplx_process import DLXProcess
 from dlx_tray.services.history import HistoryStore
 from dlx_tray.ui.about_dialog import AboutDialog
@@ -614,6 +614,152 @@ def _edit_settings(
 
     QTimer.singleShot(0, interact)
     window.settings_action.trigger()
+
+
+@pytest.mark.parametrize("external", [False, True], ids=["bundled", "external"])
+def test_official_only_cold_start_and_switch_to_automatic(
+    run_window: Callable[[Settings, Callable[[MainWindow, QLabel], None]], None],
+    qtbot: QtBot,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    fake_dlx: FakeDLXFactory,
+    vault: Mock,
+    external: bool,
+) -> None:
+    vault.get_password.return_value = "test-key:fx"
+    monkeypatch.delenv("DLX_PROVIDER_MODE", raising=False)
+    source = tmp_path / "notes.txt"
+    source.write_text("File paragraph", encoding="utf-8")
+    settings_path = tmp_path / "settings.json"
+    settings_path.write_text('{"provider_mode":"official_only"}', encoding="utf-8")
+    official_response = requests.Response()
+    official_response.status_code = 200
+    official_response._content = (
+        b'{"translations":[{"text":"Official result","detected_source_language":"en"}]}'
+    )
+    official_send = Mock(return_value=official_response)
+    monkeypatch.setattr(requests.Session, "send", official_send)
+    dlx_send = Mock()
+    send = httpx.Client.send
+
+    def record_dlx(client: httpx.Client, request: httpx.Request, **kwargs: Any) -> httpx.Response:
+        dlx_send(request.method, request.url.path)
+        return send(client, request, **kwargs)
+
+    monkeypatch.setattr(httpx.Client, "send", record_dlx)
+    with fake_dlx([]) as server:
+        process = Mock(spec=DLXProcess, base_url=server.url, token=server.token)
+        process_factory = Mock(return_value=process)
+        monkeypatch.setattr(app, "DLXProcess", process_factory)
+        monkeypatch.delenv("DLX_DEEPL_API_KEY", raising=False)
+        monkeypatch.delenv("DLX_DEEPLX_URL", raising=False)
+        if external:
+            monkeypatch.setenv("DLX_DEEPLX_URL", server.url)
+            monkeypatch.setenv("DLX_DEEPLX_TOKEN", server.token)
+        settings = Settings.load(settings_path, env_file=None)
+        editor_text = "Editor paragraph"
+        dlx_key = translation_key(
+            "dlx", settings.source_lang, settings.target_lang, settings.formality, editor_text
+        )
+        TranslationCache(tmp_path / "cache.db").store(
+            dlx_key, TranslationResult("Cached DLX result", Language.EN, "dlx")
+        )
+
+        def check(window: MainWindow, status: QLabel) -> None:
+            def translate(expected: str) -> None:
+                assert window.translate_button.isEnabled()
+                window.translate_button.click()
+                assert not window.settings_action.isEnabled()
+                qtbot.waitUntil(window.settings_action.isEnabled)
+                assert window.result_editor.toPlainText() == expected
+
+            assert status.text() == "Using the official DeepL API"
+            window.source_editor.setPlainText(editor_text)
+            translate("Official result")
+            monkeypatch.setattr(
+                "PySide6.QtWidgets.QFileDialog.getOpenFileName", lambda *_: (str(source), "")
+            )
+            window.open_file_action.trigger()
+            qtbot.waitUntil(window.translate_button.isEnabled)
+            translate("Official result")
+            process_factory.assert_not_called()
+            dlx_send.assert_not_called()
+            assert official_send.call_count == 2
+            assert all(
+                request.args[0].url == "https://api-free.deepl.com/v2/translate"
+                for request in official_send.call_args_list
+            )
+
+            def select_automatic(dialog: SettingsDialog) -> None:
+                assert dialog.provider_mode.currentData() == "official_only"
+                dialog.provider_mode.setCurrentIndex(dialog.provider_mode.findData("automatic"))
+
+            monkeypatch.setattr(QMessageBox, "question", lambda *_: QMessageBox.StandardButton.Yes)
+            window.close_file_action.trigger()
+            _edit_settings(window, select_automatic)
+            qtbot.waitUntil(window.translate_button.isEnabled)
+            assert status.text() == ("Using external DLX server" if external else "DLX ready")
+            window.source_editor.setPlainText("New paragraph")
+            translate("[UK] New paragraph")
+            assert Settings.load(settings_path, env_file=None).provider_mode == "automatic"
+            dlx_send.assert_called_once_with("POST", "/translate")
+            assert official_send.call_count == 2
+
+        run_window(settings, check)
+        if external:
+            process_factory.assert_not_called()
+        else:
+            process.start.assert_called_once_with()
+            process.stop.assert_called_once_with()
+
+
+def test_official_only_missing_key_opens_settings_before_translation(
+    run_window: Callable[[Settings, Callable[[MainWindow, QLabel], None]], None],
+    qtbot: QtBot,
+    monkeypatch: pytest.MonkeyPatch,
+    vault: Mock,
+) -> None:
+    process = Mock()
+    monkeypatch.setattr(app, "DLXProcess", process)
+    official_response = requests.Response()
+    official_response.status_code = 200
+    official_response._content = (
+        b'{"translations":[{"text":"Official result","detected_source_language":"en"}]}'
+    )
+    official_send = Mock(return_value=official_response)
+    monkeypatch.setattr(requests.Session, "send", official_send)
+    vault._read_credential.return_value = None
+
+    def check(window: MainWindow, status: QLabel) -> None:
+        assert status.text() == "Add a DeepL API key in Settings"
+        window.source_editor.setPlainText("Editor paragraph")
+        assert window.translate_button.isEnabled()
+
+        def enter_key() -> None:
+            dialog = QApplication.activeModalWidget()
+            assert isinstance(dialog, SettingsDialog)
+            try:
+                assert dialog.focusWidget() is dialog.api_key
+                official_send.assert_not_called()
+                dialog.api_key.setText("test-key:fx")
+                dialog.buttons.button(QDialogButtonBox.StandardButton.Save).click()
+                assert not dialog.isVisible()
+            finally:
+                if dialog.isVisible():
+                    dialog.reject()
+
+        QTimer.singleShot(0, enter_key)
+        window.translate_button.click()
+        assert status.text() == "Using the official DeepL API"
+        official_send.assert_not_called()
+        window.translate_button.click()
+        qtbot.waitUntil(window.translate_button.isEnabled)
+        assert window.result_editor.toPlainText() == "Official result"
+
+    run_window(Settings(provider_mode="official_only"), check)
+    vault._set_password.assert_called_once_with("DLX Tray", "deepl_api_key", "test-key:fx")
+    official_send.assert_called_once()
+    process.assert_not_called()
 
 
 def test_history_records_prunes_searches_and_reopens_translations(

@@ -133,6 +133,7 @@ class MainWindow(QMainWindow):
         self._history_enabled = False
         self._history_limit = 1
         self._translation_unavailable_reason = translation_unavailable_reason
+        self._translation_requires_settings = False
         self._thread: QThread | None = None
         self._worker: TranslationWorker | FileIOWorker | None = None
         self._file: SourceFile | None = None
@@ -488,9 +489,11 @@ class MainWindow(QMainWindow):
         *,
         chunk_size: int | None = None,
         formality: Formality | None = None,
+        requires_settings: bool = False,
     ) -> None:
         """Show the startup outcome and enable translation when a job is available."""
         self._job = job
+        self._translation_requires_settings = requires_settings
         self._translation_unavailable_reason = status if job is None else None
         self._dlx_status.setText(status)
         self._dlx_status.show()
@@ -580,7 +583,7 @@ class MainWindow(QMainWindow):
 
     def _update_translate(self) -> None:
         enabled = (
-            self._translation_unavailable_reason is None
+            (self._translation_unavailable_reason is None or self._translation_requires_settings)
             and self._thread is None
             and (self._file is not None or self._progress_total > 0)
         )
@@ -631,6 +634,9 @@ class MainWindow(QMainWindow):
         )
 
     def _request_translation(self) -> None:
+        if self._translation_requires_settings:
+            self.settings_requested.emit()
+            return
         if self._file is not None:
             if self._confirm_discard_file_translation():
                 self._translate(self._file, *self.selected_languages)

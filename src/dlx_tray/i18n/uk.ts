@@ -571,6 +571,18 @@
 <context>
     <name>SettingsDialog</name>
     <message>
+        <source>Translation &amp;provider</source>
+        <translation>Пров&amp;айдер перекладу</translation>
+    </message>
+    <message>
+        <source>Automatic (DLX with official API fallback)</source>
+        <translation>Автоматично (DLX із переходом на офіційний API)</translation>
+    </message>
+    <message>
+        <source>Official DeepL API only</source>
+        <translation>Лише офіційний API DeepL</translation>
+    </message>
+    <message>
         <source>Could not save settings.</source>
         <translation>Не вдалося зберегти налаштування.</translation>
     </message>
@@ -737,6 +749,14 @@
 </context>
 <context>
     <name>Startup</name>
+    <message>
+        <source>Add a DeepL API key in Settings</source>
+        <translation>Додайте ключ API DeepL у налаштуваннях</translation>
+    </message>
+    <message>
+        <source>Using the official DeepL API</source>
+        <translation>Використовується офіційний API DeepL</translation>
+    </message>
     <message>
         <source>Starting DLX…</source>
         <translation>Запуск DLX…</translation>

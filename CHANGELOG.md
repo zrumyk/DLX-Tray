@@ -7,6 +7,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- Choose **Official DeepL API only** in Settings to use your DeepL API key for text and files.
+  Automatic mode uses DLX with official API fallback when a key is available.
 - Reuse completed paragraph and file-segment translations for up to 30 days. Settings can
   clear the translation cache or turn it off.
 - Copied diagnostics show the translation worker limit, local cache hits and misses,

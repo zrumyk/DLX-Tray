@@ -69,6 +69,9 @@ A DeepL API Free or Pro key is optional. Open **Settings…**, enter it in **Dee
 choose **Test key**, then **Save**. The test checks the key without sending translation text.
 Tray saves the key in Windows Credential Manager. To remove it, clear the field and save again.
 
+Choose **Official DeepL API only** under **Translation provider** to use the key for all text
+and file translations. Automatic mode is the default and uses DLX with official API fallback.
+
 ![Settings dialog with the DeepL API key field and Test key button](.github/screenshots/settings.png)
 
 ## Build from source

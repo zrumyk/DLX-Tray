@@ -9,7 +9,7 @@ from typing import Literal
 from dlx_tray.core.retry import Sleeper
 
 type DiagnosticProvider = Literal["dlx", "deepl"]
-type DLXConnection = Literal["starting", "ready", "unavailable", "external"]
+type DLXConnection = Literal["starting", "ready", "unavailable", "external", "disabled"]
 type WaitKind = Literal["pacing", "retry"]
 
 
