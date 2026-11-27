@@ -130,6 +130,16 @@ class SettingsDialog(QDialog):
         self._add(form, self.tr("Interface &language"), self.ui_language, "ui_language")
         form.addRow("", QLabel(self.tr("Restart DLX Tray to apply the interface language.")))
 
+        self.selection_hotkey = QLineEdit(settings.selection_hotkey)
+        self._add(form, self.tr("Selection &hotkey"), self.selection_hotkey, "selection_hotkey")
+        shortcut_help = QLabel(
+            self.tr(
+                "Use Ctrl+C,C (copy twice), Ctrl+Shift plus a letter, or leave blank to disable."
+            )
+        )
+        shortcut_help.setWordWrap(True)
+        form.addRow("", shortcut_help)
+
         self.history_enabled = QCheckBox(self.tr("&Enable translation history"))
         self.history_enabled.setChecked(settings.history_enabled)
         self._add(form, "", self.history_enabled, "history_enabled")
@@ -310,6 +320,12 @@ class SettingsDialog(QDialog):
             return
 
         settings = self._settings.model_copy()
+        try:
+            settings.selection_hotkey = self.selection_hotkey.text()
+        except ValueError:
+            self.save_status.setText(self.tr("Enter Ctrl+C,C or Ctrl+Shift plus a letter."))
+            self.selection_hotkey.setFocus()
+            return
         settings.provider_mode = self.provider_mode.currentData()
         settings.chunk_size = self.chunk_size.value()
         if self.delay.value() != self._initial_delay:

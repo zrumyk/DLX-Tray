@@ -605,6 +605,41 @@
     </message>
 </context>
 <context>
+    <name>SelectionPopup</name>
+    <message>
+        <source>Selection translation</source>
+        <translation>Переклад виділеного тексту</translation>
+    </message>
+    <message>
+        <source>Translating…</source>
+        <translation>Переклад…</translation>
+    </message>
+    <message>
+        <source>Translation</source>
+        <translation>Переклад</translation>
+    </message>
+    <message>
+        <source>&amp;Copy</source>
+        <translation>&amp;Копіювати</translation>
+    </message>
+    <message>
+        <source>Translation complete.</source>
+        <translation>Переклад завершено.</translation>
+    </message>
+    <message>
+        <source>Translation failed. Check the provider and try again.</source>
+        <translation>Не вдалося виконати переклад. Перевірте провайдера й повторіть спробу.</translation>
+    </message>
+    <message>
+        <source>Translation complete. Could not save to history.</source>
+        <translation>Переклад завершено. Не вдалося зберегти його в історії.</translation>
+    </message>
+    <message>
+        <source>Cancelling…</source>
+        <translation>Скасування…</translation>
+    </message>
+</context>
+<context>
     <name>SettingsDialog</name>
     <message>
         <source>Translation &amp;provider</source>
@@ -707,6 +742,14 @@
         <translation>Перезапустіть DLX Tray, щоб змінити мову інтерфейсу.</translation>
     </message>
     <message>
+        <source>Selection &amp;hotkey</source>
+        <translation>&amp;Комбінація для перекладу виділення</translation>
+    </message>
+    <message>
+        <source>Use Ctrl+C,C (copy twice), Ctrl+Shift plus a letter, or leave blank to disable.</source>
+        <translation>Введіть Ctrl+C,C (копіювати двічі) або Ctrl+Shift і латинську літеру. Щоб вимкнути комбінацію, залиште поле порожнім.</translation>
+    </message>
+    <message>
         <source>&amp;Enable translation history</source>
         <translation>&amp;Зберігати історію перекладів</translation>
     </message>
@@ -737,6 +780,10 @@
     <message>
         <source>Could not clear the translation cache.</source>
         <translation>Не вдалося очистити кеш перекладів.</translation>
+    </message>
+    <message>
+        <source>Enter Ctrl+C,C or Ctrl+Shift plus a letter.</source>
+        <translation>Введіть Ctrl+C,C або Ctrl+Shift і латинську літеру.</translation>
     </message>
     <message>
         <source>DeepL API key</source>
@@ -800,6 +847,10 @@
     <message>
         <source>Starting DLX…</source>
         <translation>Запуск DLX…</translation>
+    </message>
+    <message>
+        <source>Could not enable the selection hotkey.</source>
+        <translation>Не вдалося ввімкнути комбінацію для перекладу виділення.</translation>
     </message>
     <message>
         <source>Using external DLX server</source>
