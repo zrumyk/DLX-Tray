@@ -6,10 +6,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-11-27
+
 ### Added
 - Open Help → About DLX Tray to see the installed version and the DLX and Qt license notices.
 - Copy a Markdown diagnostics report from About or the translation error dialog to share
   version, provider and recent request details without translation text or credentials.
+- Follow the illustrated Windows install guide and FAQ for rate limits, SmartScreen and DeepL API keys.
 
 ### Changed
 - Update bundled DLX for translation without an API key. A short English-to-Ukrainian
@@ -19,6 +22,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 - Bundled DLX passes through the upstream retry delay after a rate limit.
+- Bundled DLX keeps cached results for single-text and batch requests distinct and prevents
+  queued requests from reaching the upstream service during cooldown.
+
+### Known issues
+- Long-file translation through the live bundled provider remains unverified. A short
+  installed translation passed through bundled DLX, and long-file translation and UTF-8
+  export passed through a scripted loopback server.
 
 ## [0.9.0] - 2026-11-19
 
@@ -170,7 +180,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   pre-commit hooks and CI on Windows.
 - Script to download the pinned DLX v1.3.1 binary with SHA-256 verification.
 
-[Unreleased]: https://github.com/zrumyk/DLX-Tray/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/zrumyk/DLX-Tray/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/zrumyk/DLX-Tray/compare/v0.9.0...v1.0.0
 [0.9.0]: https://github.com/zrumyk/DLX-Tray/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/zrumyk/DLX-Tray/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/zrumyk/DLX-Tray/compare/v0.6.0...v0.7.0
