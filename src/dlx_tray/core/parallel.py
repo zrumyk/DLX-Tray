@@ -10,7 +10,7 @@ from threading import Condition, Event
 from time import monotonic
 
 from dlx_tray.core.models import TranslationCancelledError, TranslationError, TranslationResult
-from dlx_tray.core.retry import RequestDispatch
+from dlx_tray.core.retry import DispatchTicket, RequestDispatch
 from dlx_tray.core.single_flight import SegmentFlights, SingleFlight
 
 type Attempt = Callable[[RequestDispatch], TranslationResult]
@@ -72,6 +72,7 @@ def ordered_attempts[T](
     resolved_failures: dict[Future[TranslationResult], TranslationResult | None] = {}
     changed = Condition()
     stopped = _StopSignal(dispatch.cancel)
+    job = object()
     started = Event()
     started.set()
 
@@ -87,7 +88,27 @@ def ordered_attempts[T](
                 ready.set()
                 changed.notify_all()
 
-        return replace(dispatch, cancel=stopped, may_start=may_start, on_start=on_start)
+        def may_observe_cooldown(origin: DispatchTicket | None) -> bool:
+            if origin is None or origin.job is not job or origin.index >= index:
+                return True
+            # The provider records a 429 before the worker publishes the attempt's outcome.
+            # Let an earlier attempt finish before a speculative request uses its retry budget.
+            with changed:
+                return not any(
+                    entry.index == origin.index
+                    and entry.future is not None
+                    and (not entry.future.done() or entry.failed())
+                    for entry in pending
+                )
+
+        return replace(
+            dispatch,
+            cancel=stopped,
+            may_start=may_start,
+            on_start=on_start,
+            ticket=DispatchTicket(job, index),
+            may_observe_cooldown=may_observe_cooldown,
+        )
 
     def run_leader(
         attempt: Attempt,

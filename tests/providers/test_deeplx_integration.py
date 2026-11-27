@@ -23,7 +23,7 @@ from dlx_tray.core.models import (
     TranslationResult,
 )
 from dlx_tray.core.pipeline import FailureAction, JobResult, TranslationJob
-from dlx_tray.core.retry import RequestDispatch, RetryPolicy, call_with_retry
+from dlx_tray.core.retry import DispatchTicket, RequestDispatch, RetryPolicy, call_with_retry
 from dlx_tray.core.single_flight import SingleFlight
 from dlx_tray.providers import deeplx
 from dlx_tray.providers.deeplx import DeeplxTranslator
@@ -301,22 +301,29 @@ def test_parallel_duplicate_reuses_the_resolved_attempt(
 def test_parallel_skip_releases_a_paced_request_after_cooldown(
     fake_dlx: FakeDLXFactory, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    pacing, deciding, release_pacing, second_checked, first_checked = (Event() for _ in range(5))
+    pacing, deciding, release_pacing, decision_seen, cooldown_seen = (Event() for _ in range(5))
     now = 100.0
     monkeypatch.setattr(deeplx, "monotonic", lambda: now)
     original_start = DeeplxTranslator._start
 
     def observe_start(translator: DeeplxTranslator, dispatch: RequestDispatch) -> int:
-        if first_checked.is_set():
+        if dispatch.ticket is not None and dispatch.ticket.index == 1:
             guard = dispatch.may_start
+            observe = dispatch.may_observe_cooldown
 
             def observe_guard() -> bool:
                 if deciding.is_set():
-                    second_checked.set()
+                    decision_seen.set()
                 return guard()
 
-            dispatch = replace(dispatch, may_start=observe_guard)
-        first_checked.set()
+            def observe_cooldown(origin: DispatchTicket | None) -> bool:
+                observed = observe(origin)
+                cooldown_seen.set()
+                return observed
+
+            dispatch = replace(
+                dispatch, may_start=observe_guard, may_observe_cooldown=observe_cooldown
+            )
         return original_start(translator, dispatch)
 
     monkeypatch.setattr(DeeplxTranslator, "_start", observe_start)
@@ -336,13 +343,16 @@ def test_parallel_skip_releases_a_paced_request_after_cooldown(
 
     failures: list[str] = []
 
+    def on_rate_limit(_provider: str) -> None:
+        release_pacing.set()
+        assert cooldown_seen.wait(5)
+
     def skip(chunk: Chunk, _error: TranslationError) -> FailureAction:
         nonlocal now
         failures.append(chunk.text)
         if chunk.text == "First":
             deciding.set()
-            release_pacing.set()
-            assert second_checked.wait(5)
+            assert decision_seen.wait(5)
             now += 9
         return FailureAction.SKIP
 
@@ -355,7 +365,13 @@ def test_parallel_skip_releases_a_paced_request_after_cooldown(
             request_delay=0.5,
             sleep=wait_for_pacing,
             retry_policy=RetryPolicy(max_attempts=1),
-        ).run("First\n\nSecond", Language.EN, Language.UK, on_failure=skip)
+        ).run(
+            "First\n\nSecond",
+            Language.EN,
+            Language.UK,
+            on_failure=skip,
+            on_rate_limit=on_rate_limit,
+        )
     assert failures == ["First"]
     assert result.text == "First\n\n[UK] Second"
 

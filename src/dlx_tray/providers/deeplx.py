@@ -23,7 +23,7 @@ from dlx_tray.core.models import (
     TranslationError,
     TranslationResult,
 )
-from dlx_tray.core.retry import RequestDispatch, RequestStartClock, event_sleep
+from dlx_tray.core.retry import DispatchTicket, RequestDispatch, RequestStartClock, event_sleep
 from dlx_tray.providers.base import parse_retry_after
 
 log = logging.getLogger(__name__)
@@ -69,6 +69,7 @@ class DeeplxTranslator:
         self._cooldown_generation = 0
         self._recovering = False
         self._blocked_until = 0.0
+        self._cooldown_origin: DispatchTicket | None = None
         self._next_cooldown = _INITIAL_COOLDOWN
         # trust_env=False: on Windows httpx would pick up the system proxy from the registry and
         # send loopback requests (and the token) through it.
@@ -124,6 +125,7 @@ class DeeplxTranslator:
             with self._dispatch:
                 cooldown = max(minimum_cooldown, error.retry_after or self._next_cooldown)
                 self._blocked_until = max(self._blocked_until, monotonic() + cooldown)
+                self._cooldown_origin = dispatch.ticket
                 self._cooldown_generation += 1
                 self._recovering = True
                 self._next_cooldown = min(self._next_cooldown * 2, _MAX_COOLDOWN)
@@ -150,6 +152,9 @@ class DeeplxTranslator:
                 now = monotonic()
                 remaining = self._blocked_until - now
                 if remaining > 0:
+                    if not dispatch.may_observe_cooldown(self._cooldown_origin):
+                        self._dispatch.wait(0.05)
+                        continue
                     raise RateLimitedError("DLX is in rate-limit cooldown", retry_after=remaining)
                 limit = 2 if dispatch.concurrency == 2 and not self._recovering else 1
                 if self._active >= limit:

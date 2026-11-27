@@ -33,6 +33,12 @@ def event_sleep(seconds: float, cancel: threading.Event) -> bool:
 
 
 @dataclass(frozen=True, slots=True)
+class DispatchTicket:
+    job: object
+    index: int
+
+
+@dataclass(frozen=True, slots=True)
 class RequestDispatch:
     cancel: threading.Event
     delay: float
@@ -41,6 +47,8 @@ class RequestDispatch:
     may_start: Callable[[], bool] = lambda: True
     on_start: Callable[[], None] = lambda: None
     clock: RequestStartClock | None = None
+    ticket: DispatchTicket | None = None
+    may_observe_cooldown: Callable[[DispatchTicket | None], bool] = lambda _ticket: True
 
 
 class RequestStartClock:
