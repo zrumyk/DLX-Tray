@@ -35,7 +35,7 @@ _SAFE_MESSAGES = re.compile(
     r"|Translation provider dlx failed \((?:RateLimitedError|ProviderUnavailableError|AuthError)\)"
     r", falling back to deepl"
     r"|Translation failed for chunk \d+ \((?:RateLimitedError|ProviderUnavailableError|"
-    r"AuthError|TextTooLongError|TranslationError)\)"
+    r"AuthError|DlxAuthError|DlxForbiddenError|TextTooLongError|TranslationError)\)"
     r"|DeepL returned a malformed translation response"
     r"|DeepL returned invalid results for \d+ texts"
     r"|Could not read the DeepL API key from Windows Credential Manager",
