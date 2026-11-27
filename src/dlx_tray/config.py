@@ -28,6 +28,7 @@ from dlx_tray.core.retry import DEFAULT_REQUEST_DELAY
 type UiLanguage = Literal["en", "uk"]
 type Theme = Literal["system", "light", "dark"]
 type LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR"]
+type ProviderMode = Literal["automatic", "official_only"]
 
 _SETTINGS_VERSION = 1
 _LEGACY_REQUEST_DELAY = 2.5
@@ -91,6 +92,7 @@ class Settings(BaseSettings):
     source_lang: Language = Language.AUTO
     target_lang: Language = Language.UK
     window_geometry: str | None = None
+    provider_mode: ProviderMode = "automatic"
     chunk_size: int = Field(default=DEFAULT_MAX_UNITS, ge=200, le=HARD_MAX_UNITS)
     request_delay: float = Field(default=DEFAULT_REQUEST_DELAY, ge=0, le=10)
     dlx_concurrency: int = Field(default=2, ge=1, le=2)

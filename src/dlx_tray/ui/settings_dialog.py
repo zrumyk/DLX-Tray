@@ -72,6 +72,14 @@ class SettingsDialog(QDialog):
         layout = QVBoxLayout(self)
         form = QFormLayout()
         layout.addLayout(form)
+        self.provider_mode = QComboBox()
+        self.provider_mode.addItem(
+            self.tr("Automatic (DLX with official API fallback)"), "automatic"
+        )
+        self.provider_mode.addItem(self.tr("Official DeepL API only"), "official_only")
+        self.provider_mode.setCurrentIndex(self.provider_mode.findData(settings.provider_mode))
+        self._add(form, self.tr("Translation &provider"), self.provider_mode, "provider_mode")
+
         self.chunk_size = QSpinBox()
         self.chunk_size.setRange(200, 1500)
         self.chunk_size.setValue(settings.chunk_size)
@@ -302,6 +310,7 @@ class SettingsDialog(QDialog):
             return
 
         settings = self._settings.model_copy()
+        settings.provider_mode = self.provider_mode.currentData()
         settings.chunk_size = self.chunk_size.value()
         if self.delay.value() != self._initial_delay:
             settings.request_delay = self.delay.value()

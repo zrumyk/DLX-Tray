@@ -116,9 +116,9 @@ def _run_window(app: QApplication, settings: Settings, stack: ExitStack) -> int:
     dlx: DeeplxTranslator | None = None
     translator: Translator | None = None
     job: TranslationJob | None = None
-    status = QCoreApplication.translate("Startup", "Starting DLX…")
-    dlx_connection: DLXConnection = "starting"
-    starting = settings.deeplx_url is None
+    dlx_status = QCoreApplication.translate("Startup", "Starting DLX…")
+    dlx_connection: DLXConnection | None = None
+    startup: _DLXStartup | None = None
 
     def copy_diagnostics() -> None:
         nonlocal export
@@ -134,7 +134,9 @@ def _run_window(app: QApplication, settings: Settings, stack: ExitStack) -> int:
             dlx_lock=lock_path,
             log_path=config.app_data_dir() / "logs" / "dlx-tray.log",
             provider=window.diagnostic_provider,
-            dlx_status=dlx_connection,
+            dlx_status=(dlx_connection or "starting")
+            if settings.provider_mode == "automatic"
+            else "disabled",
             rate_limited=window.diagnostic_rate_limited,
             has_key=bool(api_key),
             chunk_size=settings.chunk_size,
@@ -170,6 +172,14 @@ def _run_window(app: QApplication, settings: Settings, stack: ExitStack) -> int:
 
     def refresh_job() -> None:
         nonlocal job
+        refresh_provider()
+        requires_settings = settings.provider_mode == "official_only" and official is None
+        if requires_settings:
+            status = QCoreApplication.translate("Startup", "Add a DeepL API key in Settings")
+        elif settings.provider_mode == "official_only":
+            status = QCoreApplication.translate("Startup", "Using the official DeepL API")
+        else:
+            status = dlx_status
         job = (
             TranslationJob(
                 translator=translator,
@@ -186,15 +196,22 @@ def _run_window(app: QApplication, settings: Settings, stack: ExitStack) -> int:
             else None
         )
         window.set_dlx_connection(
-            status, job, chunk_size=settings.chunk_size, formality=settings.formality
+            status,
+            job,
+            chunk_size=settings.chunk_size,
+            formality=settings.formality,
+            requires_settings=requires_settings,
         )
 
     def refresh_provider() -> None:
         nonlocal translator
-        if starting:
+        if settings.provider_mode == "official_only":
+            translator = official
+        elif dlx_connection == "starting":
             translator = None
         elif dlx is not None and official is not None:
-            translator = FallbackTranslator(dlx, official)
+            if not isinstance(translator, FallbackTranslator):
+                translator = FallbackTranslator(dlx, official)
         else:
             translator = dlx or official
 
@@ -234,8 +251,7 @@ def _run_window(app: QApplication, settings: Settings, stack: ExitStack) -> int:
                 )
                 if isinstance(translator, FallbackTranslator) and official is not None:
                     translator.replace_secondary(official)
-                else:
-                    refresh_provider()
+        start_dlx_if_needed()
         refresh_job()
         return error
 
@@ -249,6 +265,8 @@ def _run_window(app: QApplication, settings: Settings, stack: ExitStack) -> int:
             clear_cache=cache.clear,
             parent=window,
         )
+        if settings.provider_mode == "official_only" and api_key is None:
+            dialog.api_key.setFocus()
         try:
             dialog.exec()
         finally:
@@ -257,46 +275,50 @@ def _run_window(app: QApplication, settings: Settings, stack: ExitStack) -> int:
 
     window.settings_requested.connect(open_settings)
 
-    startup = None
-    if settings.deeplx_url is not None:
-        token = settings.deeplx_token.get_secret_value() if settings.deeplx_token else ""
-        dlx = stack.enter_context(
-            DeeplxTranslator(str(settings.deeplx_url), token, diagnostics=diagnostics)
-        )
-        status = QCoreApplication.translate("Startup", "Using external DLX server")
-        dlx_connection = "external"
-        refresh_provider()
-    else:
+    def start_dlx_if_needed() -> None:
+        nonlocal dlx, dlx_connection, dlx_status, startup
+        if settings.provider_mode == "official_only" or dlx_connection is not None:
+            return
+        if settings.deeplx_url is not None:
+            token = settings.deeplx_token.get_secret_value() if settings.deeplx_token else ""
+            dlx = stack.enter_context(
+                DeeplxTranslator(str(settings.deeplx_url), token, diagnostics=diagnostics)
+            )
+            dlx_status = QCoreApplication.translate("Startup", "Using external DLX server")
+            dlx_connection = "external"
+            return
+
         process = DLXProcess()
         stack.callback(process.stop)
-        startup = _DLXStartup(process)
+        worker = _DLXStartup(process)
+        startup = worker
+        dlx_connection = "starting"
 
         def startup_finished() -> None:
-            nonlocal dlx, dlx_connection, status, starting
+            nonlocal dlx, dlx_connection, dlx_status
             if not window.isVisible():
                 return
-            starting = False
-            if startup.ready:
+            if worker.ready:
                 dlx = stack.enter_context(
                     DeeplxTranslator(process.base_url, process.token, diagnostics=diagnostics)
                 )
-                status = QCoreApplication.translate("Startup", "DLX ready")
+                dlx_status = QCoreApplication.translate("Startup", "DLX ready")
                 dlx_connection = "ready"
             else:
-                status = QCoreApplication.translate("Startup", "DLX unavailable")
+                dlx_status = QCoreApplication.translate("Startup", "DLX unavailable")
                 dlx_connection = "unavailable"
-            refresh_provider()
-            refresh_job()
+            if settings.provider_mode == "automatic":
+                refresh_job()
 
-        connection = startup.finished.connect(startup_finished, Qt.ConnectionType.QueuedConnection)
-        stack.callback(startup.disconnect, connection)
+        connection = worker.finished.connect(startup_finished, Qt.ConnectionType.QueuedConnection)
+        stack.callback(worker.disconnect, connection)
+        worker.start()
 
-    refresh_job()
     try:
+        start_dlx_if_needed()
+        refresh_job()
         window.show()
         initial_placement = _window_placement(window)
-        if startup is not None:
-            startup.start()
         result = app.exec()
     finally:
         # The translator and process remain alive until both workers have stopped.
