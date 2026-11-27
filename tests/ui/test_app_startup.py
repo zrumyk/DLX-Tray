@@ -132,8 +132,14 @@ def test_startup_loads_the_window_icon(
     monkeypatch.setattr(app, "file_logging", lambda _level: nullcontext())
 
     def check_icon(
-        application: QApplication, _settings: Settings, _stack: ExitStack, _server: QLocalServer
+        application: QApplication,
+        _settings: Settings,
+        _stack: ExitStack,
+        _server: QLocalServer,
+        *,
+        start_in_tray: bool,
     ) -> int:
+        assert not start_in_tray
         icon = application.windowIcon()
         assert QSize(16, 16) in icon.availableSizes()
         assert QSize(256, 256) in icon.availableSizes()
@@ -160,8 +166,14 @@ def test_startup_migrates_request_delay_before_opening_the_window(
     observed_delays: list[float] = []
 
     def check_settings(
-        _app: QApplication, settings: Settings, _stack: ExitStack, _server: QLocalServer
+        _app: QApplication,
+        settings: Settings,
+        _stack: ExitStack,
+        _server: QLocalServer,
+        *,
+        start_in_tray: bool,
     ) -> int:
+        assert not start_in_tray
         observed_delays.append(settings.request_delay)
         assert json.loads(path.read_text(encoding="utf-8"))["settings_version"] == 1
         if len(observed_delays) == 1:
