@@ -6,6 +6,10 @@ in chunks using a bundled [DLX](https://github.com/OwO-Network/DLX) (formerly De
 > **Windows installer:** v0.9.0 is available on the Releases page. The updated bundled DLX is
 > available when you [build from source](#build-from-source) on `main`.
 
+![DLX Tray showing English input and Ukrainian output side by side](.github/screenshots/translation.png)
+
+The screenshot uses an example translation from a local test server.
+
 ## Available in v0.9.0
 
 - Install for the current Windows user without administrator rights, with a Start menu shortcut
@@ -33,11 +37,36 @@ in chunks using a bundled [DLX](https://github.com/OwO-Network/DLX) (formerly De
 
 ## Install
 
-Download `DLX-Tray-Setup-0.9.0.exe` from the
-[Releases](https://github.com/zrumyk/DLX-Tray/releases) page, run Setup, and open DLX Tray from Start.
+1. On Windows 10 version 1809 or later or Windows 11 x64, download
+   `DLX-Tray-Setup-0.9.0.exe` from the [Releases](https://github.com/zrumyk/DLX-Tray/releases) page.
+2. Run Setup for your Windows account. Select the desktop shortcut during setup if you want one.
+3. Open **DLX Tray** from Start and wait for **DLX ready**. Enter text, select a target language,
+   and choose **Translate** or press **Ctrl+Enter**.
+
+To upgrade, close DLX Tray and run the newer installer over your existing installation. Setup
+preserves your settings and translation history.
+
+## FAQ
+
+### What should I do if DLX returns HTTP 429?
+
+HTTP 429 means DLX is rate-limited. Tray waits before retrying and shows the retry delay in the status
+bar. You can cancel and keep any translation that already finished. If you save a DeepL API
+key, Tray can continue the job through the official API. Check the status bar for the active
+provider.
+
+### Why is Windows warning me about the installer?
 
 Microsoft Defender SmartScreen may warn about a downloaded installer with an unfamiliar
 reputation. Verify that the download came from the DLX Tray Releases page before opening it.
+
+### Where do I enter my DeepL API key?
+
+A DeepL API Free or Pro key is optional. Open **Settings…**, enter it in **DeepL API key**,
+choose **Test key**, then **Save**. The test checks the key without sending translation text.
+Tray saves the key in Windows Credential Manager. To remove it, clear the field and save again.
+
+![Settings dialog with the DeepL API key field and Test key button](.github/screenshots/settings.png)
 
 ## Build from source
 
