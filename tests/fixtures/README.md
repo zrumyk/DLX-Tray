@@ -15,6 +15,7 @@ fixtures in `tests/conftest.py`) **and** for manual checks: paste a file into th
 | `crlf_windows.txt` | CRLF line endings, blank CRLF lines, a lone CR and a lone LF |
 | `mixed.txt` | Leading indentation, Markdown, tab indents, code block, URL/base64 without spaces, NBSP, trailing spaces, double blank lines, a trailing blank line |
 | `field_notes.pdf` | Five text pages with headings, wrapped lines, first-line indents, and both compact and double line spacing |
+| `field_notes_edited.pdf` | The same five pages with only the second page's heading text changed |
 | `scanned_field_notes.pdf` | One raster-only page with visible text and no extractable text layer |
 
 When adding a fixture: keep it original, describe it here, and check that it is picked up by

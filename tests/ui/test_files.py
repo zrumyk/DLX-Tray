@@ -14,6 +14,7 @@ from pytestqt.qtbot import QtBot
 from tests.conftest import FIXTURES_DIR
 from tests.fakes.fake_dlx import FakeDLXFactory
 
+from dlx_tray.core.chunker import join, split
 from dlx_tray.core.pipeline import TranslationJob
 from dlx_tray.fileio.pdf_io import read_pdf
 from dlx_tray.providers import deeplx
@@ -98,6 +99,13 @@ def test_docx_reuses_cached_segments_before_pacing_and_preserves_export(
         _save(window, qtbot, monkeypatch, destination)
         now += 2.5
 
+        _open(window, qtbot, monkeypatch, source)
+        window.translate_button.click()
+        qtbot.waitUntil(window.save_file_action.isEnabled)
+        assert requests_sent.call_count == 3
+        assert wait.call_count == 2
+        _save(window, qtbot, monkeypatch, destination)
+
         _open(window, qtbot, monkeypatch, edited)
         window.translate_button.click()
         qtbot.waitUntil(window.save_file_action.isEnabled)
@@ -112,6 +120,97 @@ def test_docx_reuses_cached_segments_before_pacing_and_preserves_export(
             "[UK] Closing",
         ]
         assert paragraphs[0].style is not None and paragraphs[0].style.name == "Heading 1"
+
+
+def test_txt_reuses_paragraphs_after_offsets_and_chunk_limit_change(
+    qtbot: QtBot,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    fake_dlx: FakeDLXFactory,
+    file_window: Callable[[TranslationJob], MainWindow],
+) -> None:
+    source = tmp_path / "source.txt"
+    output = tmp_path / "translated.txt"
+    cache_path = tmp_path / "cache.db"
+    long_paragraph = (FIXTURES_DIR / "long_paragraph.txt").read_bytes().decode().strip()
+    chunks = split(long_paragraph, 1500)
+    assert len(chunks) > 1
+    translated_long = join(chunks, [f"[UK] {chunk.text}" for chunk in chunks])
+    changed = "An expanded opening shifts every later chunk offset."
+    requests: list[str] = []
+
+    def record(texts: list[str], step: str) -> str:
+        requests.extend(texts)
+        return step
+
+    def write(opening: str) -> None:
+        source.write_bytes(f"\r\n  {opening}\r\n\r\n\t{long_paragraph}\n \nClosing\r\n".encode())
+
+    def translate(window: MainWindow, opening: str) -> None:
+        _open(window, qtbot, monkeypatch, source)
+        window.translate_button.click()
+        qtbot.waitUntil(window.save_file_action.isEnabled, timeout=5000)
+        expected = f"\r\n  [UK] {opening}\r\n\r\n\t{translated_long}\n \n[UK] Closing\r\n"
+        assert window.result_editor.toPlainText() == expected.replace("\r\n", "\n")
+        _save(window, qtbot, monkeypatch, output)
+        assert output.read_bytes() == expected.encode()
+
+    with fake_dlx([]) as server, DeeplxTranslator(server.url, server.token) as translator:
+        server.on_request = record
+        job = TranslationJob(translator=translator, cache=TranslationCache(cache_path))
+        window = file_window(job)
+        write("Opening")
+        translate(window, "Opening")
+        initial = ["Opening", *(chunk.text for chunk in chunks), "Closing"]
+        assert requests == initial
+
+        translate(window, "Opening")
+        assert requests == initial
+
+        write(changed)
+        resized = TranslationJob(
+            translator=translator, cache=TranslationCache(cache_path), max_units=750
+        )
+        translate(file_window(resized), changed)
+        assert requests == [*initial, changed]
+
+
+def test_pdf_reopens_and_translates_only_the_edited_paragraph(
+    qtbot: QtBot,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    fake_dlx: FakeDLXFactory,
+    file_window: Callable[[TranslationJob], MainWindow],
+) -> None:
+    source = FIXTURES_DIR / "field_notes.pdf"
+    edited = FIXTURES_DIR / "field_notes_edited.pdf"
+    output = tmp_path / "translated.docx"
+    original = read_pdf(source)
+    expected = original.copy()
+    expected[4] = "Revised field notes 2"
+    assert read_pdf(edited) == expected
+    requests: list[str] = []
+
+    def record(texts: list[str], step: str) -> str:
+        requests.extend(texts)
+        return step
+
+    with fake_dlx([]) as server, DeeplxTranslator(server.url, server.token) as translator:
+        server.on_request = record
+        window = file_window(
+            TranslationJob(translator=translator, cache=TranslationCache(tmp_path / "cache.db"))
+        )
+        for path, request_count in ((source, 8), (source, 8), (edited, 9)):
+            _open(window, qtbot, monkeypatch, path)
+            window.translate_button.click()
+            qtbot.waitUntil(window.save_file_action.isEnabled, timeout=5000)
+            assert len(requests) == request_count
+            _save(window, qtbot, monkeypatch, output)
+
+    assert requests == [*dict.fromkeys(original), expected[4]]
+    assert [paragraph.text for paragraph in Document(str(output)).paragraphs] == [
+        f"[UK] {paragraph}" for paragraph in expected
+    ]
 
 
 @pytest.mark.parametrize("encoding", ["cp1251", "utf-16"])
