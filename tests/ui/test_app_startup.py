@@ -113,8 +113,8 @@ def test_selection_translates_in_a_popup_and_keeps_main_window_text(
         assert window.source_editor.toPlainText() == "Main window draft"
         assert not window.result_editor.toPlainText()
         assert HistoryStore(tmp_path / "history.sqlite3", 500).search("another application")
-        popup.close()
-        qtbot.waitUntil(lambda: not popup.isVisible())
+        with qtbot.waitSignal(popup.finished):
+            popup.close()
 
     with fake_dlx(["ok"]) as server:
         run_window(
