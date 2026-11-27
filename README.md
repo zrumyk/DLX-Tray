@@ -103,6 +103,7 @@ To package the app from source, run `.\scripts\build.ps1` in PowerShell. Open
 In the packaged app, turn on **Start DLX Tray when I sign in to Windows** in Settings and save.
 At sign-in, DLX Tray opens in the notification area. Click the tray icon or launch DLX Tray
 again to show the window. Clear the checkbox and save to remove the startup entry.
+Windows can also disable the registered entry under **Settings → Apps → Startup**.
 
 The v1.0.0 build uses the [DLX fork at `177f235`](https://github.com/zrumyk/DLX/commit/177f2355274295a6bee35feaccc27fe06fbd1fa1).
 On 27 November 2026, a locally built installer translated **Hello** to **Привіт** in a clean

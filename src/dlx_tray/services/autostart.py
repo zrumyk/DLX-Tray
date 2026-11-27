@@ -6,9 +6,16 @@ from dlx_tray import APP_NAME
 
 if sys.platform == "win32":
     import winreg
+    from ctypes import windll
+    from ctypes.wintypes import BOOL, INT, LPCWSTR
+
+    _compare_ordinal = windll.kernel32.CompareStringOrdinal
+    _compare_ordinal.argtypes = (LPCWSTR, INT, LPCWSTR, INT, BOOL)
+    _compare_ordinal.restype = INT
 
 ARGUMENT = "--autostart"
 _RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
+_CSTR_EQUAL = 2
 
 
 def is_supported() -> bool:
@@ -25,7 +32,9 @@ def _matches(key: "winreg.HKEYType", command: str) -> bool:
     except FileNotFoundError:
         return False
     return (
-        kind == winreg.REG_SZ and isinstance(value, str) and value.casefold() == command.casefold()
+        kind == winreg.REG_SZ
+        and isinstance(value, str)
+        and _compare_ordinal(value, -1, command, -1, True) == _CSTR_EQUAL
     )
 
 

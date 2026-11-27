@@ -16,7 +16,8 @@ def test_current_user_registration(monkeypatch: pytest.MonkeyPatch) -> None:
 
     key_path = rf"Software\DLX Tray autostart test {uuid4()}"
     monkeypatch.setattr(autostart, "_RUN_KEY", key_path)
-    monkeypatch.setattr(sys, "executable", r"C:\Path With Spaces\DLX Tray.exe")
+    executable = "C:\\Ma\u00dfe With Spaces\\DLX Tray.exe"
+    monkeypatch.setattr(sys, "executable", executable)
     try:
         assert not autostart.is_registered()
         autostart.set_registered(False)
@@ -24,13 +25,13 @@ def test_current_user_registration(monkeypatch: pytest.MonkeyPatch) -> None:
         assert autostart.is_registered()
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path) as key:
             assert winreg.QueryValueEx(key, APP_NAME) == (
-                r'"C:\Path With Spaces\DLX Tray.exe" --autostart',
+                f'"{executable}" --autostart',
                 winreg.REG_SZ,
             )
-        monkeypatch.setattr(sys, "executable", r"C:\Other Copy\DLX Tray.exe")
+        monkeypatch.setattr(sys, "executable", r"C:\Masse With Spaces\DLX Tray.exe")
         assert not autostart.is_registered()
         autostart.set_registered(False)
-        monkeypatch.setattr(sys, "executable", r"C:\Path With Spaces\DLX Tray.exe")
+        monkeypatch.setattr(sys, "executable", executable.lower())
         assert autostart.is_registered()
         autostart.set_registered(False)
         autostart.set_registered(False)

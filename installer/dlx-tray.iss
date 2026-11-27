@@ -60,13 +60,19 @@ ukrainian.RemoveDataFailed=Не вдалося повністю видалити
 [Code]
 const
   StartupKey = 'Software\Microsoft\Windows\CurrentVersion\Run';
+  CSTR_EQUAL = 2;
+
+function CompareStringOrdinal(Left: String; LeftCount: Integer; Right: String;
+  RightCount, IgnoreCase: Integer): Integer;
+  external 'CompareStringOrdinal@kernel32.dll stdcall';
 
 procedure RemoveStartupEntry;
 var
   Command: String;
 begin
   if RegQueryStringValue(HKCU, StartupKey, '{#AppName}', Command) and
-    (CompareText(Command, '"' + ExpandConstant('{app}\{#AppExe}') + '" --autostart') = 0) then
+    (CompareStringOrdinal(Command, -1, '"' + ExpandConstant('{app}\{#AppExe}') +
+      '" --autostart', -1, 1) = CSTR_EQUAL) then
     if not RegDeleteValue(HKCU, StartupKey, '{#AppName}') then
       Log('Could not remove the DLX Tray startup entry.');
 end;
