@@ -139,6 +139,10 @@ def modifiers_down() -> bool:
     return any(_down(key) for key in (_CTRL, _SHIFT, _ALT, _LEFT_WIN, _RIGHT_WIN))
 
 
+def pointer_buttons_down() -> bool:
+    return any(_down(key) for key in (0x01, 0x02, 0x04, 0x05, 0x06))
+
+
 def copy_selection() -> bool:
     inputs = (_Input * 4)(
         *(
@@ -171,7 +175,7 @@ class KeyboardHook:
         self._clipboard_updates = clipboard_updates
         self._pressed = False
         self._consumed = False
-        self._first: tuple[int, int, int, int] | None = None
+        self._first: tuple[int, int] | None = None
         self.input_serial = 0
         self._paused = False
         self._ready = Event()
@@ -263,8 +267,11 @@ class KeyboardHook:
                 and (event.time - first[1]) % (1 << 32) <= _DOUBLE_COPY_MS
             ):
                 self._first = None
-                self._consumed = True
-                self._activate(Capture(window, first[2], self.input_serial, first[3]))
+                self._activate(
+                    Capture(
+                        window, clipboard_sequence(), self.input_serial, self._clipboard_updates()
+                    )
+                )
             else:
-                self._first = (window, event.time, clipboard_sequence(), self._clipboard_updates())
+                self._first = (window, event.time)
         return self._consumed

@@ -31,23 +31,30 @@ def test_double_copy_requires_two_distinct_presses(monkeypatch: pytest.MonkeyPat
     assert not key(1300)
     activate.assert_not_called()
     assert not key(1310, native._KEY_UP)
-    assert key(1320)
-    assert key(1330, native._KEY_UP)
+    assert not key(1320)
+    assert not key(1330, native._KEY_UP)
     activate.assert_called_once_with(native.Capture(10, 30, 2, 2))
 
 
 @pytest.mark.parametrize(
     ("second_text", "intervening_input"),
-    [("New selection", False), ("Unrelated clipboard write", False), ("New selection", True)],
+    [
+        ("New selection", None),
+        ("Unrelated clipboard write", None),
+        ("New selection", "keyboard"),
+        ("New selection", "pointer"),
+    ],
 )
 def test_requires_matching_fresh_copies_from_foreground_application(
-    second_text: str, intervening_input: bool, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch
+    second_text: str, intervening_input: str | None, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     hotkey = SelectionHotkey()
     hook = native.KeyboardHook(DEFAULT_SELECTION_HOTKEY, Mock(), lambda: 0)
     hotkey._hook = hook
     monkeypatch.setattr(native, "foreground", lambda: 10)
     monkeypatch.setattr(native, "modifiers_down", lambda: False)
+    pointer_buttons = Mock(return_value=False)
+    monkeypatch.setattr(native, "pointer_buttons_down", pointer_buttons)
     copy = Mock(return_value=True)
     monkeypatch.setattr(native, "copy_selection", copy)
     sequence = Mock(return_value=30)
@@ -72,8 +79,10 @@ def test_requires_matching_fresh_copies_from_foreground_application(
 
     clipboard.setText(second_text)
     sequence.return_value = 32
-    if intervening_input:
+    if intervening_input == "keyboard":
         hook.input_serial += 1
+    elif intervening_input == "pointer":
+        pointer_buttons.return_value = True
     if second_text == "New selection" and not intervening_input:
         with qtbot.waitSignal(hotkey.selection_ready, timeout=500) as ready:
             hotkey._poll()
@@ -91,6 +100,7 @@ def test_delayed_rendering_reads_text_after_update(
     hotkey._hook = native.KeyboardHook(DEFAULT_SELECTION_HOTKEY, Mock(), lambda: 0)
     monkeypatch.setattr(native, "foreground", lambda: 10)
     monkeypatch.setattr(native, "clipboard_belongs_to", lambda _window: True)
+    monkeypatch.setattr(native, "pointer_buttons_down", lambda: False)
     sequence = Mock(return_value=30)
     monkeypatch.setattr(native, "clipboard_sequence", sequence)
     clipboard = QApplication.clipboard()

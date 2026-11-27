@@ -130,6 +130,7 @@ class SelectionHotkey(QObject):
             self._hook is not None
             and self._hook.input_serial == capture.input_serial
             and native.foreground() == capture.window
+            and not native.pointer_buttons_down()
             and QApplication.activeModalWidget() is None
         )
 
