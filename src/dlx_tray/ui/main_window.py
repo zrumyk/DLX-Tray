@@ -358,7 +358,7 @@ class MainWindow(QMainWindow):
             self.source_editor.show_file_preview()
             self.result_editor.show_file_preview()
         self.setWindowTitle(f"{source.path.name} — {APP_NAME} {__version__}")
-        self.source_editor.setPlainText("\n\n".join(source.segments))
+        self.source_editor.setPlainText(source.assemble(source.segments))
         self.result_editor.clear()
         self._provider_status.hide()
         self._rate_limit_status.hide()

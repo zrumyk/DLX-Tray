@@ -13,6 +13,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   shared results, request pacing, and retry waits alongside provider attempt timings.
 
 ### Changed
+- Reopening a TXT file reuses cached translations for unchanged paragraphs and preserves the
+  original paragraph separators in the export.
 - Translate with up to two DLX requests at a time while keeping the preview in input order.
   Set Concurrent DLX requests to 1 in Settings to translate sequentially.
 - Show paragraph or file-segment progress while streaming completed chunks.

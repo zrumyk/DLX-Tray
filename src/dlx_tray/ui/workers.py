@@ -156,7 +156,7 @@ class TranslationWorker(QObject):
             self._open_history().add(
                 source_lang=self._source,
                 target_lang=self._target,
-                source_text="\n\n".join(content.segments)
+                source_text=content.assemble(content.segments)
                 if isinstance(content, SourceFile)
                 else content,
                 target_text=result.text,
@@ -197,6 +197,7 @@ class TranslationWorker(QObject):
         offset = 0
         self.progress.emit(0, total, "")
         translations: list[str] = []
+        partial = ""
         providers: list[str | None] = []
         detected: Language | None = None
         error: TranslationError | None = None
@@ -210,18 +211,24 @@ class TranslationWorker(QObject):
                 break
             result = self._translate_text(text, report, file_pacing=pacing)
             providers.extend(result.chunk_providers)
-            if result.text or not result.cancelled:
-                translations.append(result.text)
             detected = detected or result.detected_source
             error = result.error
             if result.cancelled:
+                partial = result.text
                 self._cancel.set()
                 break
             if error is not None:
                 break
+            translations.append(result.text)
             offset += count
         cancelled = error is None and (self._cancel.is_set() or offset < total)
-        preview = JobResult("\n\n".join(translations), detected, cancelled, error, tuple(providers))
+        preview = JobResult(
+            source.assemble(translations, partial=partial),
+            detected,
+            cancelled,
+            error,
+            tuple(providers),
+        )
         return FileJobResult(preview, None if cancelled or error else tuple(translations))
 
     def _translate_file_segments(self, source: SourceFile) -> FileJobResult:
@@ -247,7 +254,7 @@ class TranslationWorker(QObject):
             on_rate_limit=self._report_rate_limit,
         )
         partial = preview.text[sum(map(len, translations)) :]
-        preview_text = "\n\n".join([*translations, partial] if partial else translations)
+        preview_text = source.assemble(translations, partial=partial)
         preview = replace(preview, text=preview_text)
         return FileJobResult(
             preview, None if preview.cancelled or preview.error else tuple(translations)

@@ -55,3 +55,17 @@ def test_export_uses_original_text_snapshot_after_source_disappears(tmp_path: Pa
     destination = tmp_path / "translation.txt"
     source.save(destination, ("Translation",))
     assert destination.read_bytes() == b"Translation"
+
+
+def test_txt_snapshot_preserves_mixed_paragraph_separators(tmp_path: Path) -> None:
+    path = tmp_path / "source.txt"
+    original = b"\r\n  First\r\nwrapped\r\n \t\r\n  Second\r\rThird\n "
+    path.write_bytes(original)
+    source = SourceFile.read(path)
+
+    assert source.segments == ("First\r\nwrapped", "Second", "Third")
+    assert source.assemble(source.segments).encode() == original
+    assert source.assemble(("One",), partial="T") == "\r\n  One\r\n \t\r\n  T"
+    destination = tmp_path / "translated.txt"
+    source.save(destination, ("One\r\ncontinued", "Two", "Three"))
+    assert destination.read_bytes() == b"\r\n  One\r\ncontinued\r\n \t\r\n  Two\r\rThree\n "
