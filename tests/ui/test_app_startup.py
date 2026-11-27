@@ -748,6 +748,42 @@ def test_close_during_dlx_startup_joins_worker_before_stopping_process(
     process.stop.assert_called_once_with()
 
 
+def test_declining_exit_during_dlx_startup_keeps_provider_ready(
+    run_window: Callable[[Settings, Callable[[MainWindow, QLabel], None]], None],
+    qtbot: QtBot,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    wait_for_prompt = Event()
+
+    def start() -> None:
+        assert wait_for_prompt.wait(timeout=5)
+
+    process = Mock(spec=DLXProcess, base_url="http://127.0.0.1:1", token="")
+    process.start.side_effect = start
+    monkeypatch.setattr(app, "DLXProcess", Mock(return_value=process))
+
+    def check(window: MainWindow, status: QLabel) -> None:
+        def decline(*_args: object) -> QMessageBox.StandardButton:
+            wait_for_prompt.set()
+            qtbot.waitUntil(lambda: status.text() == "DLX ready")
+            return QMessageBox.StandardButton.No
+
+        monkeypatch.setattr(QMessageBox, "question", decline)
+        assert status.text() == "Starting DLX…"
+        window._file_unsaved = True
+        try:
+            window.exit_action.trigger()
+            assert window.isVisible() and window._file_unsaved
+            window.source_editor.setPlainText("Hello")
+            assert window.translate_button.isEnabled()
+        finally:
+            window._file_unsaved = False
+            wait_for_prompt.set()
+
+    run_window(Settings(), check)
+    process.stop.assert_called_once_with()
+
+
 def _edit_settings(
     window: MainWindow, edit: Callable[[SettingsDialog], None], *, save: bool = True
 ) -> None:

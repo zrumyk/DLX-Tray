@@ -158,7 +158,8 @@ class MainWindow(QMainWindow):
         self._detected_source: Language | None = None
         self._last_provider: DiagnosticProvider | None = None
         self._close_pending = False
-        self._exiting = False
+        self._exit_requested = False
+        self._closed = False
         self._tray: QSystemTrayIcon | None = None
         self._tray_timer = QTimer(self)
         self._rendered_chars = 0
@@ -298,8 +299,8 @@ class MainWindow(QMainWindow):
         return self._dlx_rate_limited
 
     @property
-    def is_exiting(self) -> bool:
-        return self._exiting
+    def is_closed(self) -> bool:
+        return self._closed
 
     def enable_tray(self, icon: QIcon, cooldown_deadline: Callable[[], float]) -> None:
         if not QSystemTrayIcon.isSystemTrayAvailable() or icon.isNull():
@@ -346,7 +347,7 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def restore_from_tray(self) -> None:
-        if self._exiting:
+        if self._closed:
             return
         self.setWindowState(self.windowState() & ~Qt.WindowState.WindowMinimized)
         self.show()
@@ -360,7 +361,7 @@ class MainWindow(QMainWindow):
         if modal is not None and modal is not self._error_dialog:
             self.restore_from_tray()
             return
-        self._exiting = True
+        self._exit_requested = True
         self.close()
 
     def changeEvent(self, event: QEvent) -> None:
@@ -1027,7 +1028,11 @@ class MainWindow(QMainWindow):
             self.close()
 
     def closeEvent(self, event: QCloseEvent) -> None:
-        if not self._exiting and self._tray is not None and QSystemTrayIcon.isSystemTrayAvailable():
+        if (
+            not self._exit_requested
+            and self._tray is not None
+            and QSystemTrayIcon.isSystemTrayAvailable()
+        ):
             self.hide()
             event.ignore()
             return
@@ -1038,15 +1043,14 @@ class MainWindow(QMainWindow):
             return
         self._close_pending = False
         if self._file_unsaved and not self.isVisible():
-            self.show()
+            self.restore_from_tray()
         if not self._confirm_discard_file_translation():
-            self._exiting = False
+            self._exit_requested = False
             event.ignore()
             return
         super().closeEvent(event)
-        explicit_exit = self._exiting
-        self._exiting = True
-        if explicit_exit:
+        self._closed = True
+        if self._exit_requested:
             self.hide_tray()
             QApplication.quit()
 

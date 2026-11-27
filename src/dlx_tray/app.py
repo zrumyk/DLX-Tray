@@ -321,7 +321,7 @@ def _run_window(
 
         def startup_finished() -> None:
             nonlocal dlx, dlx_connection, dlx_status
-            if window.is_exiting:
+            if window.is_closed:
                 return
             if worker.ready:
                 dlx = stack.enter_context(
