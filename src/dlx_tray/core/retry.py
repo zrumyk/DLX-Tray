@@ -43,7 +43,7 @@ class RetryPolicy:
     """
 
     max_attempts: int = 5
-    initial_delay: float = 5.0
+    initial_delay: float = 2.0
     multiplier: float = 2.0
     max_delay: float = 60.0
     jitter: float = 0.2

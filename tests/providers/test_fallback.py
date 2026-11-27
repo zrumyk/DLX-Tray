@@ -132,4 +132,4 @@ def test_secondary_failure_uses_job_retry_budget_and_preserves_prefix(
     assert primary.translate.call_count == 2
     assert secondary.translate.call_count == 2
     sleep.assert_called_once()
-    assert sleep.call_args.args[0] == 5.0
+    assert sleep.call_args.args[0] == 2.0

@@ -60,20 +60,20 @@ def test_success_first_time_does_not_sleep() -> None:
     assert clock.sleeps == []
 
 
-def test_backoff_doubles_from_five_seconds_and_caps_at_sixty() -> None:
+def test_backoff_doubles_from_two_seconds_and_caps_at_sixty() -> None:
     clock = FakeClock()
     errors = [ProviderUnavailableError("503")] * 6
     policy = RetryPolicy(max_attempts=7, jitter=0.0)
     assert call_with_retry(Scripted(*errors, "ok"), policy, sleep=clock) == "ok"
-    assert clock.sleeps == [5.0, 10.0, 20.0, 40.0, 60.0, 60.0]
-    assert clock.now == 195.0
+    assert clock.sleeps == [2.0, 4.0, 8.0, 16.0, 32.0, 60.0]
+    assert clock.now == 122.0
 
 
 def test_rate_limited_is_retried() -> None:
     clock = FakeClock()
     result = call_with_retry(Scripted(RateLimitedError("429"), "ok"), NO_JITTER, sleep=clock)
     assert result == "ok"
-    assert clock.sleeps == [5.0]
+    assert clock.sleeps == [2.0]
 
 
 @pytest.mark.parametrize(
@@ -104,7 +104,7 @@ def test_gives_up_after_max_attempts_and_reraises_last_error() -> None:
         call_with_retry(fn, RetryPolicy(max_attempts=3, jitter=0.0), sleep=clock)
     assert info.value is last
     assert fn.calls == 3
-    assert clock.sleeps == [5.0, 10.0]
+    assert clock.sleeps == [2.0, 4.0]
 
 
 def test_single_attempt_never_sleeps() -> None:
@@ -125,7 +125,7 @@ def test_retry_after_shorter_than_backoff_keeps_backoff() -> None:
     clock = FakeClock()
     fn = Scripted(RateLimitedError("429", retry_after=1.0), "ok")
     call_with_retry(fn, NO_JITTER, sleep=clock)
-    assert clock.sleeps == [5.0]
+    assert clock.sleeps == [2.0]
 
 
 def test_long_retry_after_stops_automatic_retry_instead_of_retrying_early() -> None:
@@ -143,17 +143,17 @@ def test_negative_retry_after_is_ignored() -> None:
     clock = FakeClock()
     fn = Scripted(RateLimitedError("429", retry_after=-5.0), "ok")
     call_with_retry(fn, NO_JITTER, sleep=clock)
-    assert clock.sleeps == [5.0]
+    assert clock.sleeps == [2.0]
 
 
 def test_cancel_during_wait_raises_cancelled() -> None:
-    clock = FakeClock(cancel_at=7.0)  # during the second wait (5 s, then 10 s)
+    clock = FakeClock(cancel_at=3.0)  # during the second wait (2 s, then 4 s)
     errors = [ProviderUnavailableError("503")] * 3
     fn = Scripted(*errors, "ok")
     with pytest.raises(TranslationCancelledError) as info:
         call_with_retry(fn, NO_JITTER, sleep=clock)
     assert isinstance(info.value.__cause__, ProviderUnavailableError)
-    assert clock.now == 7.0
+    assert clock.now == 3.0
     assert fn.calls == 2
 
 
@@ -179,14 +179,14 @@ def test_on_retry_reports_each_wait() -> None:
         sleep=FakeClock(),
         on_retry=lambda n, delay, err: seen.append((n, delay, str(err))),
     )
-    assert seen == [(1, 5.0, "a"), (2, 10.0, "b")]
+    assert seen == [(1, 2.0, "a"), (2, 4.0, "b")]
 
 
 def test_jitter_varies_delay_within_bounds() -> None:
     policy = RetryPolicy()
     rng = random.Random(1234)
     delays = [policy.backoff(1, rng) for _ in range(200)]
-    assert all(4.0 <= d <= 6.0 for d in delays)
+    assert all(1.6 <= d <= 2.4 for d in delays)
     assert len(set(delays)) > 100
 
 
@@ -196,7 +196,7 @@ def test_seeded_rng_makes_jitter_reproducible() -> None:
     call_with_retry(Scripted(*errors, "ok"), sleep=first, rng=random.Random(7))
     call_with_retry(Scripted(*errors, "ok"), sleep=second, rng=random.Random(7))
     assert first.sleeps == second.sleeps
-    assert first.sleeps != [5.0, 10.0, 20.0]
+    assert first.sleeps != [2.0, 4.0, 8.0]
 
 
 @given(retry_number=st.integers(min_value=1, max_value=10_000), seed=st.integers())

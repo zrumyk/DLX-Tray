@@ -17,11 +17,14 @@ from dlx_tray.core.chunker import HARD_MAX_UNITS, utf16_len
 DEFAULT_TOKEN = "fake-dlx"
 ERRORS = {
     "401": (401, "Invalid access token"),
+    "403": (403, "Forbidden"),
     "413": (413, "Text exceeds maximum length"),
     "429": (429, "Too many requests"),
     "429-retry-after": (429, "Too many requests"),
+    "429-retry-after-15": (429, "Too many requests"),
     "503": (503, "Translation failed"),
 }
+RETRY_AFTER = {"429-retry-after": "9", "429-retry-after-15": "15"}
 STEPS = ("ok", "reverse", "slow", "drop", *ERRORS)
 
 type FakeDLXFactory = Callable[[Sequence[str]], AbstractContextManager[FakeDLX]]
@@ -135,7 +138,7 @@ class _Handler(BaseHTTPRequestHandler):
         step = server.next_step()
         if step in ERRORS:
             status, message = ERRORS[step]
-            self._error(status, message, retry_after="9" if step == "429-retry-after" else None)
+            self._error(status, message, retry_after=RETRY_AFTER.get(step))
             return
         if step == "drop" or (step == "slow" and server.stopping.wait(server.slow_seconds)):
             self.close_connection = True
