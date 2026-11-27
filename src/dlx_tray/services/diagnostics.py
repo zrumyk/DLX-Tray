@@ -136,7 +136,10 @@ def markdown_report(
     for event in timeline.events:
         if isinstance(event, TrayWait):
             label = "Retry wait" if event.kind == "retry" else "Request pacing wait"
-            lines.append(f"- {label}: {event.seconds:g} s scheduled, {event.elapsed:.3f} s elapsed")
+            progress = " (in progress)" if event.in_progress else ""
+            lines.append(
+                f"- {label}: {event.seconds:g} s scheduled, {event.elapsed:.3f} s elapsed{progress}"
+            )
             continue
         if isinstance(event, LocalCache):
             lines.append(f"- Local segment cache: {'hit' if event.hit else 'miss'}")
