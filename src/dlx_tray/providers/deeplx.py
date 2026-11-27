@@ -7,10 +7,11 @@ from collections.abc import Sequence
 from threading import Lock
 from time import monotonic
 from types import TracebackType
-from typing import Any, Self
+from typing import Any, Literal, Self
 
 import httpx
 
+from dlx_tray.core.diagnostics import DiagnosticTimeline, ProviderAttempt
 from dlx_tray.core.models import (
     AuthError,
     Formality,
@@ -46,6 +47,7 @@ class DeeplxTranslator:
         *,
         timeout: float = DEFAULT_TIMEOUT,
         client: httpx.Client | None = None,
+        diagnostics: DiagnosticTimeline | None = None,
     ) -> None:
         url = httpx.URL(base_url)
         if url.scheme not in ("http", "https"):
@@ -57,6 +59,7 @@ class DeeplxTranslator:
         )
         self._headers = {"Authorization": f"Bearer {token}"} if token else {}
         self._timeout = timeout
+        self._diagnostics = diagnostics
         self._owns_client = client is None
         self._request_lock = Lock()
         self._blocked_until = 0.0
@@ -110,6 +113,8 @@ class DeeplxTranslator:
             return self._request(payload, len(texts))
 
     def _request(self, payload: dict[str, list[str] | str], count: int) -> list[TranslationResult]:
+        started = monotonic()
+        response = None
         try:
             response = self._client.post(
                 self._url, json=payload, headers=self._headers, timeout=self._timeout
@@ -120,6 +125,9 @@ class DeeplxTranslator:
         except httpx.TransportError as exc:
             log.warning("DLX unreachable: %s", type(exc).__name__)
             raise ProviderUnavailableError("DLX is unreachable") from exc
+        finally:
+            if self._diagnostics is not None:
+                self._record_attempt(started, response)
 
         body = _json_or_none(response)
         if response.status_code != httpx.codes.OK:
@@ -133,6 +141,28 @@ class DeeplxTranslator:
         results = _parse_success(body, count)
         self._next_cooldown = _INITIAL_COOLDOWN
         return results
+
+    def _record_attempt(self, started: float, response: httpx.Response | None) -> None:
+        assert self._diagnostics is not None
+        elapsed = monotonic() - started
+        if response is None:
+            self._diagnostics.append(ProviderAttempt(PROVIDER_NAME, elapsed, None))
+            return
+        cache_header = response.headers.get("X-DLX-Cache", "").strip().lower()
+        cache: Literal["hit", "miss"] | None = None
+        if cache_header == "hit":
+            cache = "hit"
+        elif cache_header == "miss":
+            cache = "miss"
+        self._diagnostics.append(
+            ProviderAttempt(
+                PROVIDER_NAME,
+                elapsed,
+                response.status_code,
+                parse_retry_after(response.headers.get("Retry-After")),
+                cache,
+            )
+        )
 
 
 def _json_or_none(response: httpx.Response) -> Any:

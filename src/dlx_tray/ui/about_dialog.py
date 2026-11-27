@@ -1,12 +1,14 @@
 """Show the running version and license notices."""
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QDialog, QDialogButtonBox, QLabel, QVBoxLayout, QWidget
 
 from dlx_tray import APP_NAME, __version__
 
 
 class AboutDialog(QDialog):
+    diagnostics_requested = Signal()
+
     def __init__(self, parent: QWidget) -> None:
         super().__init__(parent)
         self.setWindowTitle(self.tr("About DLX Tray"))
@@ -32,4 +34,10 @@ class AboutDialog(QDialog):
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         buttons.rejected.connect(self.reject)
+        self.diagnostics_button = buttons.addButton(
+            self.tr("Copy diagnostics"), QDialogButtonBox.ButtonRole.ActionRole
+        )
+        self.diagnostics_button.clicked.connect(self.diagnostics_requested)
         layout.addWidget(buttons)
+        self.diagnostics_feedback = QLabel()
+        layout.addWidget(self.diagnostics_feedback)

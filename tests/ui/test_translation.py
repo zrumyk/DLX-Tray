@@ -147,7 +147,7 @@ def test_auto_detect_swap_uses_only_the_current_translation(
             assert not window.detected_language.isVisible()
             assert not window.swap_button.isEnabled()
             dialog = _wait_for_failure_dialog(qtbot, window)
-            assert "rejected its credentials" in dialog.informativeText()
+            assert "rejected its credentials" in dialog.detail.text()
             dialog.cancel_button.click()
             qtbot.waitUntil(window.translate_button.isEnabled)
             assert window.statusBar().currentMessage() == "Translation cancelled."
@@ -257,6 +257,7 @@ def _wait_for_failure_dialog(qtbot: QtBot, window: MainWindow) -> ErrorDialog:
         ("continue", "[EN] first [EN] txen [EN] last"),
         ("skip", "[EN] first next [EN] tsal"),
         ("cancel", "[EN] first "),
+        ("return", "[EN] first "),
         ("escape", "[EN] first "),
         ("dismiss", "[EN] first "),
         ("close window", "[EN] first "),
@@ -281,8 +282,8 @@ def test_chunk_failure_actions(
         window.source_editor.setPlainText(" first next last")
         window.translate_button.click()
         dialog = _wait_for_failure_dialog(qtbot, window)
-        assert dialog.text() == "Could not translate chunk 2 of 3."
-        assert "provider is unavailable" in dialog.informativeText()
+        assert dialog.heading.text() == "Could not translate chunk 2 of 3."
+        assert "provider is unavailable" in dialog.detail.text()
         assert window.result_editor.toPlainText() == " [EN] first "
         assert window.progress_bar.value() == 1
         assert not window.translate_button.isEnabled()
@@ -291,12 +292,15 @@ def test_chunk_failure_actions(
             dialog.continue_button.click()
             again = _wait_for_failure_dialog(qtbot, window)
             assert again is not dialog
-            assert again.text() == "Could not translate chunk 2 of 3."
+            assert again.heading.text() == "Could not translate chunk 2 of 3."
             again.continue_button.click()
         elif action == "skip":
             dialog.skip_button.click()
         elif action == "cancel":
             dialog.cancel_button.click()
+        elif action == "return":
+            assert dialog.cancel_button.isDefault()
+            qtbot.keyClick(dialog, Qt.Key.Key_Return)
         elif action == "escape":
             qtbot.keyClick(dialog, Qt.Key.Key_Escape)
         elif action == "dismiss":

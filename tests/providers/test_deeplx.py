@@ -9,6 +9,7 @@ import pytest
 import respx
 
 from dlx_tray.core.chunker import HARD_MAX_UNITS
+from dlx_tray.core.diagnostics import DiagnosticTimeline, ProviderAttempt
 from dlx_tray.core.models import (
     AuthError,
     Formality,
@@ -70,6 +71,30 @@ def test_auto_source_is_sent_lowercase(mock: respx.MockRouter, dlx: DeeplxTransl
     route = mock.post(URL).mock(return_value=ok(["Привіт"]))
     assert translate(dlx, "Hello") == ["Привіт"]
     assert json.loads(route.calls.last.request.content)["source_lang"] == "auto"
+
+
+@pytest.mark.parametrize(
+    ("header", "expected"),
+    [(" HIT ", "hit"), ("miss", "miss"), ("synthetic-sensitive-header", None), (None, None)],
+)
+def test_attempt_records_only_known_cache_values(
+    mock: respx.MockRouter, header: str | None, expected: str | None
+) -> None:
+    diagnostics = DiagnosticTimeline()
+    response = ok("result")
+    if header is not None:
+        response.headers["X-DLX-Cache"] = header
+    mock.post(URL).mock(return_value=response)
+
+    with DeeplxTranslator(BASE, TOKEN, diagnostics=diagnostics) as translator:
+        assert translate(translator, "sample") == ["result"]
+
+    (attempt,) = diagnostics.snapshot()
+    assert isinstance(attempt, ProviderAttempt)
+    assert attempt.provider == "dlx"
+    assert attempt.status == 200
+    assert attempt.elapsed >= 0
+    assert attempt.cache == expected
 
 
 def test_omits_authorization_when_no_token_is_configured(mock: respx.MockRouter) -> None:

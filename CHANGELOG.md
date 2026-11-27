@@ -8,6 +8,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 - Open Help → About DLX Tray to see the installed version and the DLX and Qt license notices.
+- Copy a Markdown diagnostics report from About or the translation error dialog to share
+  version, provider and recent request details without translation text or credentials.
 
 ### Changed
 - Update bundled DLX for translation without an API key. A short English-to-Ukrainian

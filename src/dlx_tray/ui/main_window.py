@@ -36,6 +36,7 @@ from PySide6.QtWidgets import (
 
 from dlx_tray import APP_NAME, __version__
 from dlx_tray.core import chunker
+from dlx_tray.core.diagnostics import DiagnosticProvider
 from dlx_tray.core.models import Formality, Language, TranslationError
 from dlx_tray.core.pipeline import JobResult, TranslationJob
 from dlx_tray.fileio.pdf_io import NoTextLayerError
@@ -93,6 +94,8 @@ class _TextEditor(QPlainTextEdit):
 class MainWindow(QMainWindow):
     translation_requested = Signal(str, object, object)
     settings_requested = Signal()
+    diagnostics_requested = Signal()
+    diagnostics_finished = Signal(str)
 
     def __init__(
         self,
@@ -137,6 +140,7 @@ class MainWindow(QMainWindow):
         self._file_unsaved = False
         self._error_dialog: ErrorDialog | None = None
         self._detected_source: Language | None = None
+        self._last_provider: DiagnosticProvider | None = None
         self._close_pending = False
         self._rendered_chars = 0
         self.setWindowTitle(f"{APP_NAME} {__version__}")
@@ -248,7 +252,21 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def _show_about(self) -> None:
-        AboutDialog(self).exec()
+        dialog = AboutDialog(self)
+        dialog.diagnostics_requested.connect(self.diagnostics_requested)
+        self.diagnostics_finished.connect(dialog.diagnostics_feedback.setText)
+        try:
+            dialog.exec()
+        finally:
+            dialog.deleteLater()
+
+    @property
+    def diagnostic_provider(self) -> DiagnosticProvider | None:
+        return None if self._provider_status.isHidden() else self._last_provider
+
+    @property
+    def diagnostic_rate_limited(self) -> bool:
+        return not self._rate_limit_status.isHidden()
 
     @Slot()
     def _show_history(self) -> None:
@@ -699,6 +717,12 @@ class MainWindow(QMainWindow):
 
     @Slot(str)
     def _show_provider(self, provider: str) -> None:
+        if provider == DLX_NAME:
+            self._last_provider = DLX_NAME
+        elif provider == DEEPL_NAME:
+            self._last_provider = DEEPL_NAME
+        else:
+            self._last_provider = None
         names = {DLX_NAME: "DLX", DEEPL_NAME: self.tr("DeepL API")}
         self._provider_status.setText(
             self.tr("Provider: {name}").format(name=names.get(provider, provider))
@@ -772,6 +796,8 @@ class MainWindow(QMainWindow):
             self.progress_bar.value() + 1, self.progress_bar.maximum(), error, self
         )
         self._error_dialog = dialog
+        dialog.diagnostics_requested.connect(self.diagnostics_requested)
+        self.diagnostics_finished.connect(dialog.diagnostics_feedback.setText)
         dialog.finished.connect(self._answer_chunk_failure)
         dialog.show()
 
