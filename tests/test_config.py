@@ -69,6 +69,46 @@ def test_frozen_app_ignores_dotenv(monkeypatch: pytest.MonkeyPatch, tmp_path: Pa
     assert Settings.load().chunk_size == 1400
 
 
+@pytest.mark.parametrize(
+    ("stored_delay", "expected"), [(None, 0), (2.5, 0), (1.0, 1.0), (5.0, 5.0)]
+)
+def test_migrate_unversioned_profile(
+    tmp_path: Path, stored_delay: float | None, expected: float
+) -> None:
+    path = tmp_path / "settings.json"
+    data: dict[str, object] = {}
+    if stored_delay is not None:
+        data = {"request_delay": stored_delay, "theme": "dark"}
+        path.write_text(json.dumps(data), encoding="utf-8")
+        data["request_delay"] = expected
+
+    assert Settings.load(path, migrate=True).request_delay == expected
+    assert json.loads(path.read_text(encoding="utf-8")) == data | {"settings_version": 1}
+
+
+def test_migration_uses_json_and_preserves_override_precedence(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    path = tmp_path / "settings.json"
+    path.write_text('{"request_delay": 2.5}', encoding="utf-8")
+    (tmp_path / ".env").write_text("DLX_REQUEST_DELAY=1\n", encoding="utf-8")
+    monkeypatch.setenv("DLX_REQUEST_DELAY", "5")
+    monkeypatch.setenv("DLX_SETTINGS_VERSION", "99")
+
+    settings = Settings.load(path, migrate=True)
+    assert settings.request_delay == 5
+    assert settings.is_overridden("request_delay")
+    assert settings.settings_version == 1
+    assert json.loads(path.read_text(encoding="utf-8")) == {
+        "request_delay": 0,
+        "settings_version": 1,
+    }
+
+    monkeypatch.delenv("DLX_REQUEST_DELAY")
+    assert Settings.load(path, migrate=True).request_delay == 1
+    assert Settings.load(path, env_file=None, migrate=True).request_delay == 0
+
+
 def test_save_preserves_preferences_shadowed_by_overrides(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

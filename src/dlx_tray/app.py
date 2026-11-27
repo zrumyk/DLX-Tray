@@ -319,7 +319,7 @@ def run(argv: list[str]) -> int:
     app.setWindowIcon(QIcon(str(Path(__file__).with_name("resources") / "dlx-tray.ico")))
 
     try:
-        settings = Settings.load()
+        settings = Settings.load(migrate=True)
     except (OSError, ValueError, SettingsError):
         QMessageBox.critical(
             None,

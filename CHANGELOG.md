@@ -6,6 +6,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- Upgrade unversioned settings that still use the old 2.5-second request delay to the
+  current zero-second default. A 2.5-second delay saved after the upgrade is kept.
+
 ## [1.0.0] - 2026-11-27
 
 ### Added

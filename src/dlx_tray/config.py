@@ -28,6 +28,9 @@ type UiLanguage = Literal["en", "uk"]
 type Theme = Literal["system", "light", "dark"]
 type LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR"]
 
+_SETTINGS_VERSION = 1
+_LEGACY_REQUEST_DELAY = 2.5
+
 
 def app_data_dir() -> Path:
     if appdata := os.getenv("APPDATA"):
@@ -51,6 +54,20 @@ def _read_preferences(path: Path) -> dict[str, object]:
     return data
 
 
+def _write_preferences(path: Path, data: dict[str, object]) -> None:
+    temporary: Path | None = None
+    try:
+        with NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=path.parent, delete=False
+        ) as stream:
+            temporary = Path(stream.name)
+            stream.write(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+        temporary.replace(path)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
 class Settings(BaseSettings):
     """Effective preferences, with environment and dotenv taking priority over JSON."""
 
@@ -62,6 +79,7 @@ class Settings(BaseSettings):
         hide_input_in_errors=True,
     )
 
+    settings_version: int = Field(default=_SETTINGS_VERSION, ge=1)
     source_lang: Language = Language.AUTO
     target_lang: Language = Language.UK
     window_geometry: str | None = None
@@ -132,17 +150,39 @@ class Settings(BaseSettings):
         return name in self._overridden_preferences
 
     @classmethod
-    def load(cls, path: Path | None = None, *, env_file: Path | None = Path(".env")) -> Self:
+    def load(
+        cls,
+        path: Path | None = None,
+        *,
+        env_file: Path | None = Path(".env"),
+        migrate: bool = False,
+    ) -> Self:
         if path is None:
             path = app_data_dir() / "settings.json"
-        data = _read_preferences(path)
-        preference_fields = {name for name, field in cls.model_fields.items() if not field.exclude}
-        preferences = {name: data[name] for name in preference_fields & data.keys()}
         dotenv = DotEnvSettingsSource(
             cls, env_file=None if getattr(sys, "frozen", False) else env_file
         )
         # Match declared DLX_* fields only, just as for the process environment.
         overrides = EnvSettingsSource.__call__(dotenv) | EnvSettingsSource(cls)()
+        overrides.pop("settings_version", None)
+        data = _read_preferences(path)
+        if migrate and "settings_version" not in data:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with file_lock(path.with_name(f"{path.name}.lock")):
+                data = _read_preferences(path)
+                if "settings_version" not in data:
+                    data["settings_version"] = _SETTINGS_VERSION
+                    if data.get("request_delay") == _LEGACY_REQUEST_DELAY:
+                        data["request_delay"] = DEFAULT_REQUEST_DELAY
+                    settings = cls._with_overrides(data, overrides)
+                    _write_preferences(path, data)
+                    return settings
+        return cls._with_overrides(data, overrides)
+
+    @classmethod
+    def _with_overrides(cls, data: dict[str, object], overrides: dict[str, object]) -> Self:
+        preference_fields = {name for name, field in cls.model_fields.items() if not field.exclude}
+        preferences = {name: data[name] for name in preference_fields & data.keys()}
         settings = cls.model_validate(preferences | overrides)
         settings._overridden_preferences = preference_fields & overrides.keys()
         return settings
@@ -163,14 +203,4 @@ class Settings(BaseSettings):
                 existing = _read_preferences(path)
                 saved.update({name: existing[name] for name in preserve & existing.keys()})
 
-            temporary: Path | None = None
-            try:
-                with NamedTemporaryFile(
-                    mode="w", encoding="utf-8", dir=path.parent, delete=False
-                ) as stream:
-                    temporary = Path(stream.name)
-                    stream.write(json.dumps(saved, indent=2, ensure_ascii=False) + "\n")
-                temporary.replace(path)
-            finally:
-                if temporary is not None:
-                    temporary.unlink(missing_ok=True)
+            _write_preferences(path, saved)
