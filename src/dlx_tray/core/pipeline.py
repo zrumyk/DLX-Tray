@@ -7,10 +7,12 @@ from collections.abc import Callable, Generator, Iterator, Sequence
 from contextlib import ExitStack
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
+from functools import partial
 from threading import TIMEOUT_MAX, Event
 from typing import TYPE_CHECKING
 
 from dlx_tray.core import chunker
+from dlx_tray.core.diagnostics import DiagnosticTimeline, LocalCache, SharedResult
 from dlx_tray.core.models import (
     Chunk,
     Formality,
@@ -103,6 +105,7 @@ class TranslationJob:
     cache: TranslationCache | None = None
     flights: SingleFlight | None = None
     concurrency: int = 1
+    diagnostics: DiagnosticTimeline | None = None
 
     def __post_init__(self) -> None:
         if not 0 <= self.request_delay <= TIMEOUT_MAX:
@@ -115,6 +118,16 @@ class TranslationJob:
     @property
     def uses_segments(self) -> bool:
         return self.cache is not None or self.flights is not None
+
+    @property
+    def _has_dlx(self) -> bool:
+        return isinstance(self.translator, DeeplxTranslator) or (
+            isinstance(self.translator, FallbackTranslator) and self.translator.has_dlx
+        )
+
+    @property
+    def effective_concurrency(self) -> int:
+        return self.concurrency if self._has_dlx else 1
 
     def run(
         self,
@@ -145,11 +158,14 @@ class TranslationJob:
         if pacing is None:
             pacing = RequestPacing()
         translator = self.translator
-        dlx = isinstance(translator, DeeplxTranslator) or (
-            isinstance(translator, FallbackTranslator) and translator.has_dlx
-        )
-        concurrency = self.concurrency if dlx else 1
-        dispatch = RequestDispatch(cancel, self.request_delay, concurrency, self.sleep)
+        dlx = self._has_dlx
+        concurrency = self.effective_concurrency
+        diagnostics = self.diagnostics
+        pacing_sleep = retry_sleep = self.sleep
+        if diagnostics is not None:
+            pacing_sleep = partial(diagnostics.wait, sleep=self.sleep, kind="pacing")
+            retry_sleep = partial(diagnostics.wait, sleep=self.sleep, kind="retry")
+        dispatch = RequestDispatch(cancel, self.request_delay, concurrency, pacing_sleep)
         provider_names = (
             translator.provider_names()
             if isinstance(translator, FallbackTranslator)
@@ -159,6 +175,12 @@ class TranslationJob:
         parts: list[str] = []
         providers: list[str | None] = []
         detected_source: Language | None = None
+
+        def shared_result(provider: str) -> None:
+            if diagnostics is not None:
+                diagnostics.append(SharedResult())
+            if on_provider is not None:
+                on_provider(provider)
 
         def record(chunk: Chunk, result: TranslationResult | None) -> None:
             nonlocal detected_source
@@ -203,7 +225,7 @@ class TranslationJob:
                 lambda: request(piece.chunk.text, control),
                 self.retry_policy,
                 cancel=control.cancel,
-                sleep=self.sleep,
+                sleep=retry_sleep,
                 on_retry=on_retry,
             )
 
@@ -222,7 +244,7 @@ class TranslationJob:
                         pacing,
                         cancel,
                         on_failure,
-                        on_provider,
+                        shared_result,
                         provider_pacing=dlx or isinstance(translator, DeepLOfficialTranslator),
                     ),
                 )
@@ -263,13 +285,13 @@ class TranslationJob:
                             translation_key(route, source, target, formality, segment.text)
                         )
                     )
-                hit = (
-                    self._cached_segment(
+                hit = None
+                if cache is not None and not cancel.is_set():
+                    hit = self._cached_segment(
                         segment.text, source, target, formality, cache, provider_names
                     )
-                    if cache is not None and not cancel.is_set()
-                    else None
-                )
+                    if diagnostics is not None:
+                        diagnostics.append(LocalCache(hit is not None))
                 if hit is not None:
                     yield Work(_Piece(segment, group, first=True, last=True, cached=hit))
                     continue
@@ -338,7 +360,7 @@ class TranslationJob:
             with ExitStack() as scopes:
                 tasks = plan(scopes)
                 results = (
-                    ordered_attempts(tasks, dispatch, resolve, on_provider)
+                    ordered_attempts(tasks, dispatch, resolve, shared_result)
                     if concurrency == 2 and total
                     else serial(tasks)
                 )
@@ -376,7 +398,7 @@ class TranslationJob:
         pacing: RequestPacing,
         cancel: Event,
         on_failure: FailureCallback | None,
-        on_provider: Callable[[str], None] | None,
+        on_shared: Callable[[str], None],
         *,
         provider_pacing: bool,
     ) -> TranslationResult | None:
@@ -387,7 +409,7 @@ class TranslationJob:
         def run() -> TranslationResult:
             nonlocal started
             if not started and not provider_pacing:
-                pacing.before_request(self.request_delay, self.sleep, cancel)
+                pacing.before_request(dispatch.delay, dispatch.sleep, cancel)
                 started = True
             return attempt(dispatch)
 
@@ -402,8 +424,8 @@ class TranslationJob:
                 started = pacing.dispatched = True
                 raise
             pacing.dispatched = True
-            if not leader and on_provider is not None:
-                on_provider(result.provider)
+            if not leader:
+                on_shared(result.provider)
             return result
 
         return self._translate_chunk(translate, item.item.chunk, cancel, on_failure)

@@ -34,7 +34,8 @@ The screenshot uses an example translation from a local test server.
 - Choose Light, Dark, or Follow Windows. Theme changes apply immediately.
 - Restore the window's size, position, maximized state, and last languages when the app starts.
 - Open Help → About DLX Tray to see the app version and license notices.
-- Copy a Markdown diagnostics report from About or the translation error dialog.
+- Copy a Markdown diagnostics report from About or the translation error dialog. It includes
+  the worker limit, local cache counts, request delay and retry timings.
 - Apply development overrides and write rotating diagnostic logs.
 
 ## Install

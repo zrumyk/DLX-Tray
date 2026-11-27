@@ -1,6 +1,7 @@
 """Exercise startup and shutdown through the application event loop."""
 
 import json
+import re
 from collections.abc import Callable
 from contextlib import ExitStack, nullcontext
 from itertools import pairwise
@@ -26,6 +27,7 @@ from dlx_tray.core.chunker import paragraphs
 from dlx_tray.core.models import Formality, Language, ProviderUnavailableError, TranslationResult
 from dlx_tray.core.retry import RequestDispatch
 from dlx_tray.providers import deeplx, fallback
+from dlx_tray.services.cache import translation_key
 from dlx_tray.services.deeplx_process import DLXProcess
 from dlx_tray.services.history import HistoryStore
 from dlx_tray.ui.about_dialog import AboutDialog
@@ -190,9 +192,9 @@ def test_copy_diagnostics_redacts_secrets_and_keeps_error_dialog_open(
             try:
                 report = copy(dialog)
                 assert "Active provider: DeepL API" in report
-                assert "HTTP 200, Retry-After unknown, cache unknown" in report
-                assert "HTTP 429, Retry-After 9 s, cache unknown" in report
-                assert "Tray wait:" in report
+                assert "HTTP 200, Retry-After unknown" in report
+                assert "HTTP 429, Retry-After 9 s, DLX cache header: unknown" in report
+                assert "Request pacing wait:" in report
             finally:
                 dialog.reject()
 
@@ -221,6 +223,76 @@ def test_copy_diagnostics_redacts_secrets_and_keeps_error_dialog_open(
             run_window(Settings.load(env_file=None), check)
     finally:
         clipboard.setText(previous_clipboard)
+
+
+def test_copy_translation_timing_after_a_cache_hit_and_retry(
+    run_window: Callable[[Settings, Callable[[MainWindow, QLabel], None]], None],
+    qtbot: QtBot,
+) -> None:
+    warm = "DIAG_WARM_PARAGRAPH"
+    cold = "DIAG_COLD_PARAGRAPH"
+    token = "DIAG_SCRIPTED_TOKEN"
+    clipboard = QApplication.clipboard()
+    previous_clipboard = clipboard.text()
+    requests_sent: list[list[str]] = []
+
+    def receive(text: list[str], step: str) -> str:
+        requests_sent.append(text)
+        return step
+
+    def check(window: MainWindow, _status: QLabel) -> None:
+        for text in (warm, f"{warm}\n\n{cold}"):
+            window.source_editor.setPlainText(text)
+            window.translate_button.click()
+            qtbot.waitUntil(window.translate_button.isEnabled, timeout=7000)
+        assert window.result_editor.toPlainText() == f"[UK] {warm}\n\n[UK] {cold}"
+
+        def check_about() -> None:
+            dialog = QApplication.activeModalWidget()
+            assert isinstance(dialog, AboutDialog)
+            try:
+                clipboard.clear()
+                dialog.diagnostics_button.click()
+                qtbot.waitUntil(lambda: clipboard.text().startswith("## DLX Tray diagnostics"))
+                report = clipboard.text()
+                assert "Concurrency: 2 (worker limit)" in report
+                assert "Effective request delay: 0.05 s" in report
+                assert "Cache hits/misses (local segments, session): 1/2" in report
+                retry = re.search(
+                    r"Retry waits \(session\): 1, (\d+\.\d{3}) s total elapsed", report
+                )
+                assert retry is not None and float(retry[1]) >= 1.5
+                assert "- Local segment cache: hit" in report
+                assert "- Local segment cache: miss" in report
+                assert re.search(r"dlx, \d+\.\d{3} s, HTTP 503", report)
+                assert "HTTP 200, Retry-After unknown, DLX cache header: hit" in report
+                source, target = window.selected_languages
+                key = translation_key("dlx", source, target, Formality.DEFAULT, warm).hex()
+                assert all(secret not in report for secret in (warm, cold, token, key))
+            finally:
+                dialog.reject()
+
+        QTimer.singleShot(0, check_about)
+        window.about_action.trigger()
+
+    try:
+        with running_fake_dlx(["ok", "503", "ok-cache-hit"], token=token) as server:
+            server.on_request = receive
+            run_window(
+                Settings.model_validate(
+                    {
+                        "deeplx_url": server.url,
+                        "deeplx_token": token,
+                        "dlx_concurrency": 2,
+                        "request_delay": 0.05,
+                        "retries": 1,
+                    }
+                ),
+                check,
+            )
+    finally:
+        clipboard.setText(previous_clipboard)
+    assert requests_sent == [[warm], [cold], [cold]]
 
 
 @pytest.mark.parametrize("maximized", [False, True], ids=["normal", "maximized"])

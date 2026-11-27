@@ -3,7 +3,12 @@
 import hashlib
 import json
 from pathlib import Path
+from threading import Event
 
+import pytest
+
+from dlx_tray.core import diagnostics
+from dlx_tray.core.diagnostics import DiagnosticSnapshot, DiagnosticTimeline, TrayWait
 from dlx_tray.services.diagnostics import markdown_report
 
 
@@ -43,8 +48,9 @@ def test_report_keeps_safe_rotated_logs_and_only_attributes_matching_dlx(tmp_pat
             has_key=False,
             chunk_size=1400,
             request_delay=0,
+            concurrency=None,
             retries=3,
-            events=(),
+            timeline=DiagnosticSnapshot(),
         )
 
     result = report()
@@ -60,3 +66,44 @@ def test_report_keeps_safe_rotated_logs_and_only_attributes_matching_dlx(tmp_pat
     result = report()
     assert "Bundled DLX version: unknown" in result
     assert f"Bundled DLX SHA-256: {hashlib.sha256(replacement).hexdigest()}" in result
+
+
+def test_reports_active_retry_once_before_and_after_cancellation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    timeline = DiagnosticTimeline()
+    now = 100.0
+    monkeypatch.setattr(diagnostics, "monotonic", lambda: now)
+
+    def cancel_during_retry(seconds: float, cancel: Event) -> bool:
+        nonlocal now
+        now += 2.0
+        snapshot = timeline.snapshot()
+        assert snapshot.events == (TrayWait(seconds, 2.0, "retry", in_progress=True),)
+        assert snapshot.retry_waits == 1
+        assert snapshot.retry_elapsed == 2.0
+        report = markdown_report(
+            binary=tmp_path / "no-binary",
+            dlx_lock=tmp_path / "no-lock",
+            log_path=tmp_path / "no-log",
+            provider="dlx",
+            dlx_status="external",
+            rate_limited=True,
+            has_key=False,
+            chunk_size=1500,
+            request_delay=0,
+            concurrency=2,
+            retries=1,
+            timeline=snapshot,
+        )
+        assert "Retry waits (session): 1, 2.000 s total elapsed" in report
+        assert "Retry wait: 30 s scheduled, 2.000 s elapsed (in progress)" in report
+        now += 1.0
+        cancel.set()
+        return False
+
+    assert not timeline.wait(30, Event(), sleep=cancel_during_retry, kind="retry")
+    snapshot = timeline.snapshot()
+    assert snapshot.events == (TrayWait(30, 3.0, "retry"),)
+    assert snapshot.retry_waits == 1
+    assert snapshot.retry_elapsed == 3.0

@@ -5,12 +5,18 @@ import json
 import platform
 import re
 from collections import deque
-from collections.abc import Sequence
 from pathlib import Path
 
 from dlx_tray import __version__
 from dlx_tray._file_lock import file_lock
-from dlx_tray.core.diagnostics import DiagnosticProvider, DLXConnection, ProviderAttempt, TrayWait
+from dlx_tray.core.diagnostics import (
+    DiagnosticProvider,
+    DiagnosticSnapshot,
+    DLXConnection,
+    LocalCache,
+    SharedResult,
+    TrayWait,
+)
 
 _LOG_LINE = re.compile(
     r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3} (?:DEBUG|INFO|WARNING|ERROR)) "
@@ -95,12 +101,14 @@ def markdown_report(
     has_key: bool,
     chunk_size: int,
     request_delay: float,
+    concurrency: int | None,
     retries: int,
-    events: Sequence[ProviderAttempt | TrayWait],
+    timeline: DiagnosticSnapshot,
 ) -> str:
     dlx_version, dlx_digest = _bundled_dlx(binary, dlx_lock)
     windows = platform.win32_ver()[1] or "unknown"
     provider_name = {"dlx": "DLX", "deepl": "DeepL API"}.get(provider or "", "none yet")
+    worker_limit = str(concurrency) if concurrency is not None else "unavailable"
     lines = [
         "## DLX Tray diagnostics",
         "",
@@ -114,24 +122,42 @@ def markdown_report(
         f"- DLX rate-limit warning shown: {'yes' if rate_limited else 'no'}",
         f"- DeepL API key: {'set' if has_key else 'not set'}",
         f"- Chunk size: {chunk_size} UTF-16 units",
-        f"- Request delay: {request_delay:g} s",
+        f"- Concurrency: {worker_limit} (worker limit)",
+        f"- Effective request delay: {request_delay:g} s",
         f"- Retries: {retries}",
+        f"- Cache hits/misses (local segments, session): "
+        f"{timeline.cache_hits}/{timeline.cache_misses}",
+        f"- Retry waits (session): {timeline.retry_waits}, "
+        f"{timeline.retry_elapsed:.3f} s total elapsed",
         "",
-        "### Recent chunk attempts and waits",
+        "### Recent translation events",
         "",
     ]
-    for event in events:
+    for event in timeline.events:
         if isinstance(event, TrayWait):
-            lines.append(f"- Tray wait: {event.seconds:g} s scheduled")
+            label = "Retry wait" if event.kind == "retry" else "Request pacing wait"
+            progress = " (in progress)" if event.in_progress else ""
+            lines.append(
+                f"- {label}: {event.seconds:g} s scheduled, {event.elapsed:.3f} s elapsed{progress}"
+            )
+            continue
+        if isinstance(event, LocalCache):
+            lines.append(f"- Local segment cache: {'hit' if event.hit else 'miss'}")
+            continue
+        if isinstance(event, SharedResult):
+            lines.append("- Single-flight: waiter reused a shared result")
             continue
         retry_after = "unknown" if event.retry_after is None else f"{event.retry_after:g} s"
         status = "unknown" if event.status is None else str(event.status)
+        server_cache = (
+            f", DLX cache header: {event.cache or 'unknown'}" if event.provider == "dlx" else ""
+        )
         lines.append(
             f"- {event.provider}, {event.elapsed:.3f} s, HTTP {status}, "
-            f"Retry-After {retry_after}, cache {event.cache or 'unknown'}"
+            f"Retry-After {retry_after}{server_cache}"
         )
-    if not events:
-        lines.append("No attempts recorded.")
+    if not timeline.events:
+        lines.append("No translation events recorded.")
 
     lines.extend(("", "### Latest log lines", ""))
     lines.extend(f"    {line}" for line in _log_tail(log_path) or ("No log lines available.",))
