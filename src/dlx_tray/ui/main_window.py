@@ -303,9 +303,9 @@ class MainWindow(QMainWindow):
     def is_closed(self) -> bool:
         return self._closed
 
-    def enable_tray(self, icon: QIcon, cooldown_deadline: Callable[[], float]) -> None:
+    def enable_tray(self, icon: QIcon, cooldown_deadline: Callable[[], float]) -> bool:
         if not QSystemTrayIcon.isSystemTrayAvailable() or icon.isNull():
-            return
+            return False
         tray = QSystemTrayIcon(icon, self)
         menu = QMenu(self)
         menu.addAction(self.tr("Show DLX Tray"), self.restore_from_tray)
@@ -332,6 +332,7 @@ class MainWindow(QMainWindow):
         self._tray_timer.start(1000)
         update_tooltip()
         tray.show()
+        return True
 
     def hide_tray(self) -> None:
         self._tray_timer.stop()

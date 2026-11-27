@@ -58,6 +58,19 @@ english.RemoveDataFailed=Some DLX Tray data could not be removed from %1.
 ukrainian.RemoveDataFailed=Не вдалося повністю видалити дані DLX Tray з %1.
 
 [Code]
+const
+  StartupKey = 'Software\Microsoft\Windows\CurrentVersion\Run';
+
+procedure RemoveStartupEntry;
+var
+  Command: String;
+begin
+  if RegQueryStringValue(HKCU, StartupKey, '{#AppName}', Command) and
+    (CompareText(Command, '"' + ExpandConstant('{app}\{#AppExe}') + '" --autostart') = 0) then
+    if not RegDeleteValue(HKCU, StartupKey, '{#AppName}') then
+      Log('Could not remove the DLX Tray startup entry.');
+end;
+
 function CanRemoveExecutable(const FileName: String): Boolean;
 var
   Stream: TFileStream;
@@ -91,7 +104,11 @@ begin
     Exit;
   end;
 
-  if (CurUninstallStep <> usPostUninstall) or UninstallSilent then
+  if CurUninstallStep <> usPostUninstall then
+    Exit;
+
+  RemoveStartupEntry;
+  if UninstallSilent then
     Exit;
 
   DataDir := ExpandConstant('{userappdata}\{#AppName}');

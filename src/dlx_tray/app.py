@@ -29,6 +29,7 @@ from dlx_tray.providers.deepl_official import DeepLOfficialTranslator
 from dlx_tray.providers.deeplx import DeeplxTranslator
 from dlx_tray.providers.fallback import FallbackTranslator
 from dlx_tray.secrets import delete_deepl_api_key, get_deepl_api_key, set_deepl_api_key
+from dlx_tray.services import autostart
 from dlx_tray.services.cache import TranslationCache
 from dlx_tray.services.deeplx_process import DLXProcess, resolve_binary
 from dlx_tray.services.diagnostics import markdown_report
@@ -89,7 +90,12 @@ def _check_deepl_api_key(key: str) -> None:
 
 
 def _run_window(
-    app: QApplication, settings: Settings, stack: ExitStack, server: QLocalServer | None = None
+    app: QApplication,
+    settings: Settings,
+    stack: ExitStack,
+    server: QLocalServer | None = None,
+    *,
+    start_in_tray: bool = False,
 ) -> int:
     apply_theme(app, settings.theme)
     window = MainWindow(
@@ -136,7 +142,7 @@ def _run_window(
             else 0.0
         )
 
-    window.enable_tray(app.windowIcon(), cooldown_deadline)
+    tray_available = window.enable_tray(app.windowIcon(), cooldown_deadline)
     hotkey = SelectionHotkey(window)
     popup: SelectionPopup | None = None
 
@@ -330,6 +336,13 @@ def _run_window(
         return error
 
     def open_settings() -> None:
+        autostart_supported = autostart.is_supported()
+        registered = None
+        if autostart_supported:
+            try:
+                registered = autostart.is_registered()
+            except OSError as exc:
+                log.warning("Could not read Windows startup settings (%s)", type(exc).__name__)
         dialog = SettingsDialog(
             settings,
             api_key,
@@ -337,6 +350,8 @@ def _run_window(
             save=save_preferences,
             check_key=_check_deepl_api_key,
             clear_cache=cache.clear,
+            autostart_registered=registered,
+            set_autostart=autostart.set_registered if autostart_supported else None,
             parent=window,
         )
         if api_key is None:
@@ -391,7 +406,8 @@ def _run_window(
     try:
         start_dlx_if_needed()
         refresh_job()
-        window.show()
+        if not start_in_tray or not tray_available:
+            window.show()
         configure_hotkey()
         initial_placement = _window_placement(window)
         if server is not None and server.hasPendingConnections():
@@ -425,6 +441,7 @@ def _run_window(
 
 
 def run(argv: list[str]) -> int:
+    start_in_tray = autostart.ARGUMENT in argv[1:]
     app = QApplication(argv)
     app.setApplicationName(APP_NAME)
     app.setApplicationVersion(__version__)
@@ -433,7 +450,9 @@ def run(argv: list[str]) -> int:
 
     with ExitStack() as stack:
         try:
-            server = stack.enter_context(single_instance(config.app_data_dir()))
+            server = stack.enter_context(
+                single_instance(config.app_data_dir(), activate=not start_in_tray)
+            )
         except OSError as exc:
             log.warning("Could not initialize single-instance control: %s", type(exc).__name__)
             try:
@@ -452,10 +471,12 @@ def run(argv: list[str]) -> int:
             return 1
         if server is None:
             return 0
-        return _run_primary(app, stack, server)
+        return _run_primary(app, stack, server, start_in_tray=start_in_tray)
 
 
-def _run_primary(app: QApplication, stack: ExitStack, server: QLocalServer) -> int:
+def _run_primary(
+    app: QApplication, stack: ExitStack, server: QLocalServer, *, start_in_tray: bool
+) -> int:
     try:
         settings = Settings.load(migrate=True)
     except (OSError, ValueError, SettingsError):
@@ -484,4 +505,4 @@ def _run_primary(app: QApplication, stack: ExitStack, server: QLocalServer) -> i
     log.info("Starting DLX Tray %s", __version__)
     if settings.migration_error is not None:
         log.warning("Could not persist settings migration (%s)", settings.migration_error)
-    return _run_window(app, settings, stack, server)
+    return _run_window(app, settings, stack, server, start_in_tray=start_in_tray)

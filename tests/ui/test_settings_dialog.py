@@ -13,6 +13,35 @@ from dlx_tray.core.models import AuthError, ProviderUnavailableError
 from dlx_tray.ui.settings_dialog import SettingsDialog
 
 
+@pytest.mark.parametrize("registered", [False, True])
+def test_autostart_only_changes_on_successful_save(qtbot: QtBot, registered: bool) -> None:
+    save = Mock(side_effect=["Could not save settings.", None, None])
+    change = Mock(side_effect=[PermissionError, None])
+    dialog = SettingsDialog(
+        Settings(),
+        None,
+        key_overridden=False,
+        save=save,
+        check_key=Mock(),
+        autostart_registered=registered,
+        set_autostart=change,
+    )
+    qtbot.addWidget(dialog)
+    dialog.show()
+    assert dialog.autostart.isChecked() is registered
+    dialog.autostart.click()
+    change.assert_not_called()
+    save_button = dialog.buttons.button(QDialogButtonBox.StandardButton.Save)
+    save_button.click()
+    change.assert_not_called()
+    save_button.click()
+    change.assert_called_once_with(not registered)
+    assert dialog.isVisible()
+    assert "Could not update Windows startup settings" in dialog.save_status.text()
+    save_button.click()
+    assert dialog.result() == QDialog.DialogCode.Accepted
+
+
 @pytest.mark.parametrize(
     ("error", "message"),
     [

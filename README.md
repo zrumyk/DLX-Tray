@@ -100,6 +100,10 @@ selected in DLX Tray and can copy the result. In **Settings → Selection hotkey
 To package the app from source, run `.\scripts\build.ps1` in PowerShell. Open
 `dist/DLX Tray/DLX Tray.exe` and keep the entire `dist/DLX Tray` folder together when moving it.
 
+In the packaged app, turn on **Start DLX Tray when I sign in to Windows** in Settings and save.
+At sign-in, DLX Tray opens in the notification area. Click the tray icon or launch DLX Tray
+again to show the window. Clear the checkbox and save to remove the startup entry.
+
 The v1.0.0 build uses the [DLX fork at `177f235`](https://github.com/zrumyk/DLX/commit/177f2355274295a6bee35feaccc27fe06fbd1fa1).
 On 27 November 2026, a locally built installer translated **Hello** to **Привіт** in a clean
 Windows Sandbox. Tray showed **Provider: DLX** and completed the translation in one request
@@ -144,7 +148,7 @@ precedence over `.env`. If the effective override is missing or blank, the app u
 | 0.9.0 | Installer and GitHub Releases (completed) |
 | 1.0.0 | First stable release with bundled DLX, About and diagnostics |
 | 1.1.0 | Provider selection and visible retry waits (planned) |
-| 2.0.0 | System tray icon and global hotkey to translate selected text |
+| 2.0.0 | System tray icon, global selection hotkey, and optional Windows autostart |
 
 See [CHANGELOG.md](CHANGELOG.md) for what changed in each version.
 

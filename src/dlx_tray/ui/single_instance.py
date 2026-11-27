@@ -29,7 +29,7 @@ def _activate_primary(name: str, lock: QLockFile) -> bool:
 
 
 @contextmanager
-def single_instance(profile: Path) -> Iterator[QLocalServer | None]:
+def single_instance(profile: Path, *, activate: bool = True) -> Iterator[QLocalServer | None]:
     # Canonicalize the profile so case and path aliases share the same endpoint on Windows.
     profile.mkdir(parents=True, exist_ok=True)
     profile = profile.resolve()
@@ -41,7 +41,7 @@ def single_instance(profile: Path) -> Iterator[QLocalServer | None]:
     while not lock.tryLock(0):
         if lock.error() != QLockFile.LockError.LockFailedError:
             raise OSError("Could not lock the application profile")
-        if _activate_primary(name, lock):
+        if not activate or _activate_primary(name, lock):
             yield None
             return
         if monotonic() >= deadline:

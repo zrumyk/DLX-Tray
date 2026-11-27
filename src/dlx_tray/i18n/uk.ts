@@ -642,6 +642,18 @@
 <context>
     <name>SettingsDialog</name>
     <message>
+        <source>Start DLX Tray when I sign in to Windows</source>
+        <translation>Запускати DLX Tray під час входу у Windows</translation>
+    </message>
+    <message>
+        <source>Could not read Windows startup settings.</source>
+        <translation>Не вдалося прочитати налаштування автозапуску Windows.</translation>
+    </message>
+    <message>
+        <source>Preferences saved. Could not update Windows startup settings.</source>
+        <translation>Налаштування збережено. Не вдалося змінити автозапуск Windows.</translation>
+    </message>
+    <message>
         <source>Translation &amp;provider</source>
         <translation>Пров&amp;айдер перекладу</translation>
     </message>

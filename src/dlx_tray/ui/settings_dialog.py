@@ -58,6 +58,8 @@ class SettingsDialog(QDialog):
         save: Callable[[Settings, str | None], str | None],
         check_key: Callable[[str], None],
         clear_cache: Callable[[], None] | None = None,
+        autostart_registered: bool | None = None,
+        set_autostart: Callable[[bool], None] | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -67,6 +69,8 @@ class SettingsDialog(QDialog):
         self._save = save
         self._check_key = check_key
         self._clear_cache = clear_cache
+        self._autostart_registered = autostart_registered
+        self._set_autostart = set_autostart
         self._operation: _SettingsOperation | None = None
 
         layout = QVBoxLayout(self)
@@ -139,6 +143,15 @@ class SettingsDialog(QDialog):
         )
         shortcut_help.setWordWrap(True)
         form.addRow("", shortcut_help)
+
+        self.autostart = QCheckBox(self.tr("Start DLX Tray when I sign in to Windows"), self)
+        self.autostart.setVisible(set_autostart is not None)
+        self.autostart.setEnabled(autostart_registered is not None)
+        self.autostart.setChecked(bool(autostart_registered))
+        if set_autostart is not None:
+            if autostart_registered is None:
+                self.autostart.setToolTip(self.tr("Could not read Windows startup settings."))
+            form.addRow(self.autostart)
 
         self.history_enabled = QCheckBox(self.tr("&Enable translation history"))
         self.history_enabled.setChecked(settings.history_enabled)
@@ -341,4 +354,17 @@ class SettingsDialog(QDialog):
         if error := self._save(settings, self._effective_key()):
             self.save_status.setText(error)
             return
+        if self._set_autostart is not None and self._autostart_registered is not None:
+            enabled = self.autostart.isChecked()
+            if enabled != self._autostart_registered:
+                try:
+                    self._set_autostart(enabled)
+                except (OSError, ValueError) as exc:
+                    log.warning(
+                        "Could not update Windows startup settings (%s)", type(exc).__name__
+                    )
+                    self.save_status.setText(
+                        self.tr("Preferences saved. Could not update Windows startup settings.")
+                    )
+                    return
         self.accept()

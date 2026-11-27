@@ -19,6 +19,9 @@ from dlx_tray.ui.single_instance import single_instance
 def test_launch_with_same_profile_contacts_primary(qtbot: QtBot, tmp_path: Path) -> None:
     with single_instance(tmp_path) as primary:
         assert primary is not None
+        with single_instance(tmp_path, activate=False) as duplicate:
+            assert duplicate is None
+        assert not primary.hasPendingConnections()
         with qtbot.waitSignal(primary.newConnection), single_instance(tmp_path) as duplicate:
             assert duplicate is None
         assert primary.hasPendingConnections()
@@ -57,10 +60,59 @@ def test_accepted_exit_stops_activation_before_profile_cleanup(
     assert not (tmp_path / "instance.lock").exists()
 
 
+@pytest.mark.parametrize("tray_available", [True, False])
+def test_autostart_uses_tray_when_available(
+    qapp: QApplication,
+    qtbot: QtBot,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tray_available: bool,
+) -> None:
+    monkeypatch.setattr(config, "app_data_dir", lambda: tmp_path)
+    monkeypatch.setattr(app, "get_deepl_api_key", lambda _override: None)
+    monkeypatch.setattr(QSystemTrayIcon, "isSystemTrayAvailable", lambda: tray_available)
+    icon = qapp.windowIcon()
+    pixmap = QPixmap(16, 16)
+    pixmap.fill(Qt.GlobalColor.blue)
+    qapp.setWindowIcon(QIcon(pixmap))
+    try:
+        with single_instance(tmp_path) as primary, ExitStack() as stack:
+            assert primary is not None
+
+            def check_window() -> None:
+                try:
+                    window = next(
+                        w
+                        for w in qapp.topLevelWidgets()
+                        if isinstance(w, MainWindow) and not w.is_closed
+                    )
+                    assert window.isVisible() is not tray_available
+                    if tray_available:
+                        tray = window.findChild(QSystemTrayIcon)
+                        assert tray is not None and tray.isVisible()
+                        with single_instance(tmp_path, activate=False) as duplicate:
+                            assert duplicate is None
+                        assert not window.isVisible()
+                        with single_instance(tmp_path) as manual:
+                            assert manual is None
+                        qtbot.waitUntil(window.isVisible)
+                    window.exit_action.trigger()
+                except Exception:
+                    qapp.exit(2)
+                    raise
+
+            QTimer.singleShot(0, check_window)
+            settings = Settings(provider_mode="official_only")
+            assert app._run_window(qapp, settings, stack, primary, start_in_tray=True) == 0
+    finally:
+        qapp.setWindowIcon(icon)
+
+
 def test_activation_error_uses_the_configured_language(
     qapp: QApplication, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    def fail_to_activate(_profile: Path) -> None:
+    def fail_to_activate(_profile: Path, *, activate: bool) -> None:
+        assert activate
         raise OSError("Activation failed")
 
     monkeypatch.setattr(app, "QApplication", lambda _argv: qapp)
