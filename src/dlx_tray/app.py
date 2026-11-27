@@ -22,12 +22,14 @@ from dlx_tray.core.diagnostics import DiagnosticTimeline, DLXConnection, TrayWai
 from dlx_tray.core.models import ProviderUnavailableError
 from dlx_tray.core.pipeline import TranslationJob
 from dlx_tray.core.retry import RetryPolicy, event_sleep
+from dlx_tray.core.single_flight import SingleFlight
 from dlx_tray.logging_setup import file_logging
 from dlx_tray.providers.base import Translator
 from dlx_tray.providers.deepl_official import DeepLOfficialTranslator
 from dlx_tray.providers.deeplx import DeeplxTranslator
 from dlx_tray.providers.fallback import FallbackTranslator
 from dlx_tray.secrets import delete_deepl_api_key, get_deepl_api_key, set_deepl_api_key
+from dlx_tray.services.cache import TranslationCache
 from dlx_tray.services.deeplx_process import DLXProcess, resolve_binary
 from dlx_tray.services.diagnostics import markdown_report
 from dlx_tray.ui.localization import interface_language
@@ -91,6 +93,8 @@ def _run_window(app: QApplication, settings: Settings, stack: ExitStack) -> int:
         ui_language=settings.ui_language,
     )
     history_path = config.app_data_dir() / "history.sqlite3"
+    cache = TranslationCache(history_path.with_name("cache.db"))
+    flights = SingleFlight()
     window.set_history(history_path, enabled=settings.history_enabled, limit=settings.history_limit)
     geometry_restored = False
     if settings.window_geometry:
@@ -175,6 +179,8 @@ def _run_window(app: QApplication, settings: Settings, stack: ExitStack) -> int:
                 request_delay=settings.request_delay,
                 retry_policy=RetryPolicy(max_attempts=settings.max_attempts),
                 sleep=wait_for_request,
+                cache=cache if settings.cache_enabled else None,
+                flights=flights,
             )
             if translator is not None
             else None
@@ -240,12 +246,13 @@ def _run_window(app: QApplication, settings: Settings, stack: ExitStack) -> int:
             key_overridden=override_key is not None,
             save=save_preferences,
             check_key=_check_deepl_api_key,
+            clear_cache=cache.clear,
             parent=window,
         )
         try:
             dialog.exec()
         finally:
-            dialog.wait_for_key_check()
+            dialog.wait_for_operation()
             dialog.deleteLater()
 
     window.settings_requested.connect(open_settings)

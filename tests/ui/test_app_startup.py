@@ -12,12 +12,13 @@ import requests
 from keyring.errors import KeyringError
 from PySide6.QtCore import QRect, QSize, Qt, QTimer
 from PySide6.QtGui import QShortcut
-from PySide6.QtWidgets import QApplication, QDialogButtonBox, QLabel
+from PySide6.QtWidgets import QApplication, QDialogButtonBox, QLabel, QMessageBox
 from pytestqt.qtbot import QtBot
 from tests.fakes.fake_dlx import FakeDLXFactory, running_fake_dlx
 
 from dlx_tray import app, config, secrets
 from dlx_tray.config import Settings, Theme
+from dlx_tray.core.chunker import paragraphs
 from dlx_tray.core.models import Formality, Language, ProviderUnavailableError, TranslationResult
 from dlx_tray.providers import fallback
 from dlx_tray.services.deeplx_process import DLXProcess
@@ -683,7 +684,7 @@ def test_settings_save_applies_to_next_job_and_reloads(
     monkeypatch.setattr("dlx_tray.providers.fallback.monotonic", lambda: now)
     job_factory = Mock(wraps=app.TranslationJob)
     monkeypatch.setattr(app, "TranslationJob", job_factory)
-    source = fixture_text("en_article.txt")[:240]
+    source = paragraphs(fixture_text("en_article.txt"))[1].text[:240]
     path = tmp_path / "settings.json"
 
     def edit(dialog: SettingsDialog) -> None:
@@ -701,9 +702,8 @@ def test_settings_save_applies_to_next_job_and_reloads(
     def check(window: MainWindow, status: QLabel) -> None:
         nonlocal now
         window.source_editor.setPlainText(source)
-        assert "1 chunks" in window.counter.text()
+        assert "Paragraphs: 1" in window.counter.text()
         _edit_settings(window, edit)
-        assert "2 chunks" in window.counter.text()
         job_arguments = job_factory.call_args.kwargs
         assert job_arguments["max_units"] == 200
         assert job_arguments["request_delay"] == 0
@@ -753,7 +753,12 @@ def test_settings_save_applies_to_next_job_and_reloads(
 
     with fake_dlx(["429"]) as server:
         settings = Settings.model_validate(
-            {"deeplx_url": server.url, "deeplx_token": server.token, "request_delay": 2.5}
+            {
+                "deeplx_url": server.url,
+                "deeplx_token": server.token,
+                "request_delay": 2.5,
+                "cache_enabled": False,
+            }
         )
         run_window(settings, check)
 
@@ -771,6 +776,7 @@ def test_settings_save_applies_to_next_job_and_reloads(
 @pytest.mark.parametrize("settings_fail", [True, False], ids=["json", "credential-manager"])
 def test_settings_save_reports_storage_failures(
     run_window: Callable[[Settings, Callable[[MainWindow, QLabel], None]], None],
+    qtbot: QtBot,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     fake_dlx: FakeDLXFactory,
@@ -796,13 +802,78 @@ def test_settings_save_reports_storage_failures(
     def check(window: MainWindow, status: QLabel) -> None:
         window.source_editor.setPlainText("a" * 201)
         _edit_settings(window, edit, save=False)
-        assert window.counter.text().endswith("1 chunks" if settings_fail else "2 chunks")
+        window.translate_button.click()
+        qtbot.waitUntil(window.translate_button.isEnabled)
 
     with fake_dlx([]) as server:
-        run_window(Settings.model_validate({"deeplx_url": server.url}), check)
+        requests_sent = Mock(wraps=server.next_step)
+        monkeypatch.setattr(server, "next_step", requests_sent)
+        settings = Settings.model_validate({"deeplx_url": server.url, "deeplx_token": server.token})
+        run_window(settings, check)
+        assert requests_sent.call_count == (1 if settings_fail else 2)
 
     if settings_fail:
         write_key.assert_not_called()
     else:
         write_key.assert_called_once_with("test-key")
         assert Settings.load(tmp_path / "settings.json", env_file=None).chunk_size == 200
+
+
+def test_cache_reopens_and_can_be_disabled_and_cleared_from_settings(
+    run_window: Callable[[Settings, Callable[[MainWindow, QLabel], None]], None],
+    qtbot: QtBot,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    fake_dlx: FakeDLXFactory,
+    fixture_text: Callable[[str], str],
+) -> None:
+    source = "\n\n".join(piece.text for piece in paragraphs(fixture_text("en_article.txt"))[:2])
+    waits = Mock(return_value=True)
+    monkeypatch.setattr(app, "event_sleep", waits)
+    translated: list[str] = []
+
+    def translate(window: MainWindow, text: str) -> str:
+        window.source_editor.setPlainText(text)
+        window.translate_button.click()
+        qtbot.waitUntil(window.translate_button.isEnabled)
+        return window.result_editor.toPlainText()
+
+    def cold(window: MainWindow, _status: QLabel) -> None:
+        translated.append(translate(window, source))
+        assert translated[0].startswith("[UK] ")
+
+    with fake_dlx(["reverse", "reverse"]) as server:
+        requests_sent = Mock(wraps=server.next_step)
+        monkeypatch.setattr(server, "next_step", requests_sent)
+        settings = Settings.model_validate(
+            {"deeplx_url": server.url, "deeplx_token": server.token, "request_delay": 2.5}
+        )
+        run_window(settings, cold)
+        assert requests_sent.call_count == 2
+        assert waits.call_count == 1
+
+        def reopened(window: MainWindow, _status: QLabel) -> None:
+            assert translate(window, source) == translated[0]
+            assert requests_sent.call_count == 2
+            assert waits.call_count == 1
+
+            _edit_settings(window, lambda dialog: dialog.cache_enabled.setChecked(False))
+            assert translate(window, source) != translated[0]
+            assert requests_sent.call_count == 4
+            assert not Settings.load(tmp_path / "settings.json", env_file=None).cache_enabled
+            _edit_settings(window, lambda dialog: dialog.cache_enabled.setChecked(True))
+            assert translate(window, source) == translated[0]
+            assert requests_sent.call_count == 4
+
+            monkeypatch.setattr(QMessageBox, "question", lambda *_: QMessageBox.StandardButton.Yes)
+
+            def clear(dialog: SettingsDialog) -> None:
+                dialog.clear_cache_button.click()
+                qtbot.waitUntil(dialog.clear_cache_button.isEnabled)
+                assert dialog.save_status.text() == "Translation cache cleared."
+
+            _edit_settings(window, clear, save=False)
+            assert translate(window, source) != translated[0]
+            assert requests_sent.call_count == 6
+
+        run_window(settings, reopened)

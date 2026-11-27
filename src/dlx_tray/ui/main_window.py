@@ -564,11 +564,18 @@ class MainWindow(QMainWindow):
         self.counter.setToolTip(self.tr("Characters are counted in UTF-16 code units."))
         text = _editor_text(self.source_editor)
         chars = chunker.utf16_len(text)
-        self._chunk_count = sum(
-            chunk.translatable for chunk in chunker.split(text, self._chunk_size)
-        )
-        label = self.tr("{chars} characters · {chunks} chunks")
-        self.counter.setText(label.format(chars=chars, chunks=self._chunk_count))
+        if self._job is not None and self._job.uses_segments:
+            self._chunk_count = sum(
+                bool(segment.text.strip()) for segment in chunker.paragraphs(text)
+            )
+            label = self.tr("{chars} characters · Paragraphs: {paragraphs}")
+            self.counter.setText(label.format(chars=chars, paragraphs=self._chunk_count))
+        else:
+            self._chunk_count = sum(
+                chunk.translatable for chunk in chunker.split(text, self._chunk_size)
+            )
+            label = self.tr("{chars} characters · {chunks} chunks")
+            self.counter.setText(label.format(chars=chars, chunks=self._chunk_count))
         self._update_translate()
 
     def _update_translate(self) -> None:
@@ -707,11 +714,18 @@ class MainWindow(QMainWindow):
         self.progress_bar.setMaximum(total)
         self.progress_bar.setValue(processed)
         if self.cancel_button.isEnabled():
-            label = (
-                self.tr("File translation · Chunk {processed} of {total}")
-                if self._file is not None
-                else self.tr("Chunk {processed} of {total}")
-            )
+            if self._job is not None and self._job.uses_segments:
+                label = (
+                    self.tr("File translation · Segments completed {processed} of {total}")
+                    if self._file is not None
+                    else self.tr("Paragraphs completed {processed} of {total}")
+                )
+            else:
+                label = (
+                    self.tr("File translation · Chunk {processed} of {total}")
+                    if self._file is not None
+                    else self.tr("Chunk {processed} of {total}")
+                )
             self.progress_label.setText(label.format(processed=processed, total=total))
         self._append_result(text)
 

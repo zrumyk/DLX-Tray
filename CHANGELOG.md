@@ -6,7 +6,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- Reuse completed paragraph and file-segment translations for up to 30 days. Settings can
+  clear the translation cache or turn it off.
+
 ### Changed
+- Show paragraph or file-segment progress while streaming completed chunks.
 - Retry temporary translation failures after about two seconds. Server-specified rate-limit
   waits still apply.
 

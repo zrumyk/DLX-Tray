@@ -12,7 +12,13 @@ from PySide6.QtCore import QObject, Signal, Slot
 
 from dlx_tray.core import chunker
 from dlx_tray.core.models import Chunk, Formality, Language, RateLimitedError, TranslationError
-from dlx_tray.core.pipeline import FailureAction, JobResult, ProgressCallback, TranslationJob
+from dlx_tray.core.pipeline import (
+    FailureAction,
+    JobResult,
+    ProgressCallback,
+    RequestPacing,
+    TranslationJob,
+)
 from dlx_tray.fileio.translation import SourceFile
 from dlx_tray.providers.deeplx import PROVIDER_NAME as DLX_NAME
 from dlx_tray.services.history import HistoryStore
@@ -162,7 +168,9 @@ class TranslationWorker(QObject):
             return False
         return True
 
-    def _translate_text(self, text: str, on_progress: ProgressCallback) -> JobResult:
+    def _translate_text(
+        self, text: str, on_progress: ProgressCallback, *, file_pacing: RequestPacing | None = None
+    ) -> JobResult:
         return self._job.run(
             text,
             self._source,
@@ -174,11 +182,15 @@ class TranslationWorker(QObject):
             on_retry=self._report_retry,
             on_provider=self.provider_changed.emit,
             on_rate_limit=self._report_rate_limit,
+            file_segment=file_pacing is not None,
+            pacing=file_pacing,
         )
 
     def _translate_file(self, source: SourceFile) -> FileJobResult:
         counts = [
-            sum(chunk.translatable for chunk in chunker.split(text, self._job.max_units))
+            int(bool(text.strip()))
+            if self._job.uses_segments
+            else sum(chunk.translatable for chunk in chunker.split(text, self._job.max_units))
             for text in source.segments
         ]
         total = sum(counts)
@@ -188,6 +200,7 @@ class TranslationWorker(QObject):
         providers: list[str | None] = []
         detected: Language | None = None
         error: TranslationError | None = None
+        pacing = RequestPacing()
 
         def report(processed: int, _total: int, _text: str) -> None:
             self.progress.emit(offset + processed, total, "")
@@ -195,21 +208,16 @@ class TranslationWorker(QObject):
         for text, count in zip(source.segments, counts, strict=True):
             if self._cancel.is_set():
                 break
-            # Each segment is a separate job, so enforce the request delay at its boundary.
-            if (
-                offset
-                and self._job.request_delay
-                and not self._job.sleep(self._job.request_delay, self._cancel)
-            ):
-                self._cancel.set()
-                break
-            result = self._translate_text(text, report)
+            result = self._translate_text(text, report, file_pacing=pacing)
             providers.extend(result.chunk_providers)
             if result.text or not result.cancelled:
                 translations.append(result.text)
             detected = detected or result.detected_source
             error = result.error
-            if result.cancelled or error is not None:
+            if result.cancelled:
+                self._cancel.set()
+                break
+            if error is not None:
                 break
             offset += count
         cancelled = error is None and (self._cancel.is_set() or offset < total)

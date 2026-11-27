@@ -3,6 +3,7 @@
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from threading import Event
+from unittest.mock import Mock
 
 import pytest
 from docx import Document
@@ -16,6 +17,7 @@ from tests.fakes.fake_dlx import FakeDLXFactory
 from dlx_tray.core.pipeline import TranslationJob
 from dlx_tray.fileio.pdf_io import read_pdf
 from dlx_tray.providers.deeplx import DeeplxTranslator
+from dlx_tray.services.cache import TranslationCache
 from dlx_tray.ui.error_dialog import ErrorDialog
 from dlx_tray.ui.main_window import MainWindow
 
@@ -46,6 +48,60 @@ def _save(window: MainWindow, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, pat
     monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *_: (str(path), ""))
     window.save_file_action.trigger()
     qtbot.waitUntil(window.open_file_action.isEnabled, timeout=5000)
+
+
+def test_docx_reuses_cached_segments_before_pacing_and_preserves_export(
+    qtbot: QtBot,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    fake_dlx: FakeDLXFactory,
+    file_window: Callable[[TranslationJob], MainWindow],
+) -> None:
+    def write_document(path: Path, second: str) -> None:
+        document = Document()
+        document.add_heading("Heading", level=1)
+        document.add_paragraph(second)
+        document.add_paragraph("Closing")
+        document.save(str(path))
+
+    source = tmp_path / "source.docx"
+    edited = tmp_path / "edited.docx"
+    destination = tmp_path / "translated.docx"
+    write_document(source, "Original")
+    write_document(edited, "Updated")
+    wait = Mock(return_value=True)
+
+    with fake_dlx([]) as server, DeeplxTranslator(server.url, server.token) as translator:
+        requests_sent = Mock(wraps=server.next_step)
+        monkeypatch.setattr(server, "next_step", requests_sent)
+        job = TranslationJob(
+            translator=translator,
+            cache=TranslationCache(tmp_path / "cache.db"),
+            request_delay=2.5,
+            sleep=wait,
+        )
+        window = file_window(job)
+        _open(window, qtbot, monkeypatch, source)
+        window.translate_button.click()
+        qtbot.waitUntil(window.save_file_action.isEnabled)
+        assert requests_sent.call_count == 3
+        assert wait.call_count == 2
+        _save(window, qtbot, monkeypatch, destination)
+
+        _open(window, qtbot, monkeypatch, edited)
+        window.translate_button.click()
+        qtbot.waitUntil(window.save_file_action.isEnabled)
+        assert requests_sent.call_count == 4
+        assert wait.call_count == 2
+        second_destination = tmp_path / "translated-edited.docx"
+        _save(window, qtbot, monkeypatch, second_destination)
+        paragraphs = Document(str(second_destination)).paragraphs
+        assert [paragraph.text for paragraph in paragraphs] == [
+            "[UK] Heading",
+            "[UK] Updated",
+            "[UK] Closing",
+        ]
+        assert paragraphs[0].style is not None and paragraphs[0].style.name == "Heading 1"
 
 
 @pytest.mark.parametrize("encoding", ["cp1251", "utf-16"])

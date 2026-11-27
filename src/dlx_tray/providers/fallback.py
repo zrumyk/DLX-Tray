@@ -35,6 +35,17 @@ class FallbackTranslator:
         with self._lock:
             self._secondary = secondary
 
+    def cache_providers(self) -> tuple[str, ...]:
+        """Look for a primary hit even while the network route is in cooldown."""
+        with self._lock:
+            if monotonic() < self._primary_blocked_until:
+                return self._primary.name, self._secondary.name
+        return (self._primary.name,)
+
+    def flight_route(self) -> tuple[str, str]:
+        with self._lock:
+            return self._primary.name, self._secondary.name
+
     def translate(
         self,
         texts: Sequence[str],

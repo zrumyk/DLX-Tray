@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+from functools import partial
 
 from PySide6.QtCore import QRegularExpression, QThread, Slot
 from PySide6.QtGui import QRegularExpressionValidator
@@ -17,6 +18,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QPushButton,
     QSpinBox,
     QVBoxLayout,
@@ -29,21 +31,21 @@ from dlx_tray.core.models import AuthError, Formality
 log = logging.getLogger(__name__)
 
 
-class _KeyCheck(QThread):
-    def __init__(self, key: str, check: Callable[[str], None], parent: QDialog) -> None:
+class _SettingsOperation(QThread):
+    def __init__(self, operation: Callable[[], None], parent: QDialog) -> None:
         super().__init__(parent)
-        self._key = key
-        self._check = check
+        self._operation: Callable[[], None] | None = operation
         self.error: type[Exception] | None = None
 
     def run(self) -> None:
+        assert self._operation is not None
         try:
-            self._check(self._key)
+            self._operation()
         except Exception as exc:
-            log.info("DeepL key check did not succeed (%s)", type(exc).__name__)
+            log.info("Settings operation failed (%s)", type(exc).__name__)
             self.error = type(exc)
         finally:
-            self._key = ""
+            self._operation = None
 
 
 class SettingsDialog(QDialog):
@@ -55,6 +57,7 @@ class SettingsDialog(QDialog):
         key_overridden: bool,
         save: Callable[[Settings, str | None], str | None],
         check_key: Callable[[str], None],
+        clear_cache: Callable[[], None] | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -63,7 +66,8 @@ class SettingsDialog(QDialog):
         self._override_key = api_key if key_overridden else None
         self._save = save
         self._check_key = check_key
-        self._key_check: _KeyCheck | None = None
+        self._clear_cache = clear_cache
+        self._operation: _SettingsOperation | None = None
 
         layout = QVBoxLayout(self)
         form = QFormLayout()
@@ -118,6 +122,15 @@ class SettingsDialog(QDialog):
         self._add(form, self.tr("&History entry limit"), self.history_limit, "history_limit")
         self.history_enabled.toggled.connect(self._update_history)
         self._update_history(self.history_enabled.isChecked())
+
+        self.cache_enabled = QCheckBox(self.tr("Enable translation c&ache"))
+        self.cache_enabled.setChecked(settings.cache_enabled)
+        self._add(form, "", self.cache_enabled, "cache_enabled")
+        self.clear_cache_button = QPushButton(self.tr("Clear translation cache"))
+        self.clear_cache_button.setAutoDefault(False)
+        self.clear_cache_button.setEnabled(clear_cache is not None)
+        self.clear_cache_button.clicked.connect(self._start_cache_clear)
+        form.addRow("", self.clear_cache_button)
 
         self.api_key = QLineEdit()
         self.api_key.setEchoMode(QLineEdit.EchoMode.Password)
@@ -189,52 +202,86 @@ class SettingsDialog(QDialog):
     def _update_key_controls(self) -> None:
         has_key = self._effective_key() is not None
         self.formality.setEnabled(has_key and not self._settings.is_overridden("formality"))
-        self.test_button.setEnabled(has_key)
+        self.test_button.setEnabled(has_key and self._operation is None)
         self.key_status.clear()
 
     @Slot()
     def _start_key_check(self) -> None:
         key = self._effective_key()
-        if key is None or self._key_check is not None:
+        if key is None or self._operation is not None:
             return
-        self._key_check = _KeyCheck(key, self._check_key, self)
-        self._key_check.finished.connect(self._key_check_finished)
+        self.key_status.setText(self.tr("Checking the API key…"))
+        self._start_operation(partial(self._check_key, key), self._key_check_finished)
+
+    def _start_operation(self, work: Callable[[], None], finished: Callable[[], None]) -> None:
+        self._operation = _SettingsOperation(work, self)
+        self._operation.finished.connect(finished)
         self.api_key.setEnabled(False)
         self.test_button.setEnabled(False)
+        self.clear_cache_button.setEnabled(False)
         self.buttons.setEnabled(False)
-        self.key_status.setText(self.tr("Checking the API key…"))
-        self._key_check.start()
+        self._operation.start()
+
+    def _finish_operation(self) -> type[Exception] | None:
+        operation = self._operation
+        assert operation is not None
+        operation.wait()
+        self._operation = None
+        operation.deleteLater()
+        self.api_key.setEnabled(True)
+        self.test_button.setEnabled(self._effective_key() is not None)
+        self.clear_cache_button.setEnabled(self._clear_cache is not None)
+        self.buttons.setEnabled(True)
+        return operation.error
 
     @Slot()
     def _key_check_finished(self) -> None:
-        check = self._key_check
-        assert check is not None
-        check.wait()
-        self._key_check = None
-        check.deleteLater()
-        self.api_key.setEnabled(True)
-        self.test_button.setEnabled(True)
-        self.buttons.setEnabled(True)
-        if check.error is None:
+        error = self._finish_operation()
+        if error is None:
             self.key_status.setText(self.tr("DeepL accepted the API key."))
-        elif issubclass(check.error, AuthError):
+        elif issubclass(error, AuthError):
             self.key_status.setText(self.tr("DeepL rejected the API key."))
         else:
             self.key_status.setText(
                 self.tr("Could not verify the key. Check the connection and retry.")
             )
 
+    @Slot()
+    def _start_cache_clear(self) -> None:
+        clear = self._clear_cache
+        if clear is None or self._operation is not None:
+            return
+        answer = QMessageBox.question(
+            self,
+            self.tr("Clear translation cache"),
+            self.tr("Remove all cached translations?"),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer == QMessageBox.StandardButton.Yes:
+            self.save_status.setText(self.tr("Clearing the translation cache…"))
+            self._start_operation(clear, self._cache_clear_finished)
+
+    @Slot()
+    def _cache_clear_finished(self) -> None:
+        error = self._finish_operation()
+        self.save_status.setText(
+            self.tr("Translation cache cleared.")
+            if error is None
+            else self.tr("Could not clear the translation cache.")
+        )
+
     def done(self, result: int) -> None:
-        if self._key_check is None:
+        if self._operation is None:
             super().done(result)
 
-    def wait_for_key_check(self) -> None:
-        if self._key_check is not None:
-            self._key_check.wait()
+    def wait_for_operation(self) -> None:
+        if self._operation is not None:
+            self._operation.wait()
 
     @Slot()
     def _save_and_close(self) -> None:
-        if self._key_check is not None:
+        if self._operation is not None:
             return
         try:
             retries = int(self.retries.text())
@@ -257,6 +304,7 @@ class SettingsDialog(QDialog):
         settings.ui_language = self.ui_language.currentData()
         settings.history_enabled = self.history_enabled.isChecked()
         settings.history_limit = history_limit
+        settings.cache_enabled = self.cache_enabled.isChecked()
         if error := self._save(settings, self._effective_key()):
             self.save_status.setText(error)
             return

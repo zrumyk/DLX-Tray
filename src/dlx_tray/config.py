@@ -96,6 +96,7 @@ class Settings(BaseSettings):
     formality: Formality = Formality.DEFAULT
     history_enabled: bool = True
     history_limit: int = Field(default=500, ge=1)
+    cache_enabled: bool = True
     theme: Theme = "system"
     ui_language: UiLanguage = Field(default_factory=_system_ui_language)
 
