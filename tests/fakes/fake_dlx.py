@@ -45,6 +45,7 @@ class FakeDLX(ThreadingHTTPServer):
         self.slow_seconds = slow_seconds
         self.stopping = Event()
         self._steps = deque(script)
+        self.on_request: Callable[[list[str], str], str] | None = None
         self._lock = Lock()
         super().__init__(("127.0.0.1", 0), _Handler)
 
@@ -136,6 +137,8 @@ class _Handler(BaseHTTPRequestHandler):
             return
 
         step = server.next_step()
+        if server.on_request is not None:
+            step = server.on_request(texts, step)
         if step in ERRORS:
             status, message = ERRORS[step]
             self._error(status, message, retry_after=RETRY_AFTER.get(step))

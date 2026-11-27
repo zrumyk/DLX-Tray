@@ -11,6 +11,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   clear the translation cache or turn it off.
 
 ### Changed
+- Translate with up to two DLX requests at a time while keeping the preview in input order.
+  Set Concurrent DLX requests to 1 in Settings to translate sequentially.
 - Show paragraph or file-segment progress while streaming completed chunks.
 - Retry temporary translation failures after about two seconds. Server-specified rate-limit
   waits still apply.

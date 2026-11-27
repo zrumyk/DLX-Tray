@@ -33,6 +33,36 @@ def event_sleep(seconds: float, cancel: threading.Event) -> bool:
 
 
 @dataclass(frozen=True, slots=True)
+class RequestDispatch:
+    cancel: threading.Event
+    delay: float
+    concurrency: int
+    sleep: Sleeper
+    may_start: Callable[[], bool] = lambda: True
+    on_start: Callable[[], None] = lambda: None
+    clock: RequestStartClock | None = None
+
+
+class RequestStartClock:
+    def __init__(self, monotonic: Callable[[], float]) -> None:
+        self._monotonic = monotonic
+        self._lock = threading.Lock()
+        self._last_start: float | None = None
+
+    def reserve(self, dispatch: RequestDispatch) -> float:
+        """Return the required wait, or reserve a start across the selected providers."""
+        with self._lock:
+            now = self._monotonic()
+            pause = 0.0 if self._last_start is None else self._last_start + dispatch.delay - now
+            if pause <= 0:
+                if dispatch.cancel.is_set():
+                    raise TranslationCancelledError("cancelled before provider start")
+                dispatch.on_start()
+                self._last_start = self._monotonic()
+            return pause
+
+
+@dataclass(frozen=True, slots=True)
 class RetryPolicy:
     """How often and how long to wait between attempts.
 

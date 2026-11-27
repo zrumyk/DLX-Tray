@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from threading import Event
+from typing import TYPE_CHECKING
 
 import httpx
 import pytest
@@ -11,6 +13,7 @@ from dlx_tray.core.chunker import HARD_MAX_UNITS
 from dlx_tray.core.models import (
     AuthError,
     Chunk,
+    Formality,
     Language,
     ProviderUnavailableError,
     RateLimitedError,
@@ -20,9 +23,245 @@ from dlx_tray.core.models import (
 )
 from dlx_tray.core.pipeline import FailureAction, JobResult, TranslationJob
 from dlx_tray.core.retry import RetryPolicy, call_with_retry
+from dlx_tray.core.single_flight import SingleFlight
 from dlx_tray.providers import deeplx
 from dlx_tray.providers.deeplx import DeeplxTranslator
+from dlx_tray.services.cache import TranslationCache, translation_key
 from tests.fakes.fake_dlx import FakeDLXFactory
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+
+def test_parallel_cache_hits_and_followers_leave_room_for_distinct_misses(
+    fake_dlx: FakeDLXFactory, tmp_path: Path
+) -> None:
+    first_started, last_started, release = Event(), Event(), Event()
+    starts: list[str] = []
+
+    def receive(texts: list[str], step: str) -> str:
+        (text,) = texts
+        starts.append(text)
+        if text == "First":
+            first_started.set()
+            assert release.wait(5)
+        elif text == "Last":
+            last_started.set()
+        return step
+
+    cache = TranslationCache(tmp_path / "cache.db")
+    cache.store(
+        translation_key("dlx", Language.EN, Language.UK, Formality.DEFAULT, "Cached"),
+        TranslationResult("From cache", Language.EN, "dlx"),
+    )
+    with (
+        fake_dlx([]) as server,
+        DeeplxTranslator(server.url, server.token) as translator,
+        ThreadPoolExecutor() as executor,
+    ):
+        server.on_request = receive
+        job = TranslationJob(
+            translator=translator, concurrency=2, cache=cache, flights=SingleFlight()
+        )
+        result = executor.submit(
+            job.run, "First\n\nCached\n\nFirst\n\nLast", Language.EN, Language.UK
+        )
+        try:
+            assert first_started.wait(5)
+            assert last_started.wait(5)
+        finally:
+            release.set()
+        assert result.result(5).text == "[UK] First\n\nFrom cache\n\n[UK] First\n\n[UK] Last"
+    assert sorted(starts) == ["First", "Last"]
+
+
+def test_later_failure_stops_dispatch_and_preserves_only_the_prefix(
+    fake_dlx: FakeDLXFactory,
+) -> None:
+    first_started, release_first, failed, release_failure = (Event() for _ in range(4))
+    starts: list[str] = []
+    progress: list[str] = []
+
+    def receive(texts: list[str], step: str) -> str:
+        (text,) = texts
+        starts.append(text)
+        if text == "First":
+            first_started.set()
+            assert release_first.wait(5)
+        if text == "Second":
+            failed.set()
+            return "401"
+        return step
+
+    def on_failure(_chunk: Chunk, _error: TranslationError) -> FailureAction:
+        assert release_failure.wait(5)
+        return FailureAction.CANCEL
+
+    with (
+        fake_dlx([]) as server,
+        DeeplxTranslator(server.url, server.token) as translator,
+        ThreadPoolExecutor() as executor,
+    ):
+        server.on_request = receive
+        job = TranslationJob(translator=translator, concurrency=2, flights=SingleFlight())
+        result = executor.submit(
+            job.run,
+            "First\n\nSecond\n\nThird",
+            Language.EN,
+            Language.UK,
+            on_progress=lambda _i, _n, text: progress.append(text),
+            on_failure=on_failure,
+        )
+        try:
+            assert first_started.wait(5)
+            assert failed.wait(5)
+            assert progress == []
+        finally:
+            release_first.set()
+            release_failure.set()
+        outcome = result.result(5)
+        assert outcome.cancelled
+        assert outcome.text == "[UK] First\n\n"
+    assert sorted(starts) == ["First", "Second"]
+
+
+@pytest.mark.parametrize("cancel_job", [True, False], ids=["cancel", "cooldown"])
+def test_parallel_dispatch_rechecks_state_after_pacing(
+    fake_dlx: FakeDLXFactory, monkeypatch: pytest.MonkeyPatch, cancel_job: bool
+) -> None:
+    pacing, release_pacing, release_first, rated, cancel = (Event() for _ in range(5))
+    now = 100.0
+    monkeypatch.setattr(deeplx, "monotonic", lambda: now)
+    starts: list[str] = []
+
+    def receive(texts: list[str], step: str) -> str:
+        (text,) = texts
+        starts.append(text)
+        assert release_first.wait(5)
+        return step if cancel_job else "429-retry-after"
+
+    def sleep(seconds: float, cancel: Event) -> bool:
+        nonlocal now
+        pacing.set()
+        assert release_pacing.wait(5)
+        now += seconds
+        return not cancel.is_set()
+
+    with (
+        fake_dlx([]) as server,
+        DeeplxTranslator(server.url, server.token) as translator,
+        ThreadPoolExecutor() as executor,
+    ):
+        server.on_request = receive
+        job = TranslationJob(
+            translator=translator,
+            concurrency=2,
+            flights=SingleFlight(),
+            request_delay=0.5,
+            sleep=sleep,
+            retry_policy=RetryPolicy(max_attempts=1),
+        )
+        result = executor.submit(
+            job.run,
+            "First\n\nSecond\n\nThird",
+            Language.EN,
+            Language.UK,
+            cancel=cancel,
+            on_rate_limit=lambda _provider: rated.set(),
+        )
+        try:
+            assert pacing.wait(5)
+            if cancel_job:
+                cancel.set()
+            release_first.set()
+            if not cancel_job:
+                assert rated.wait(5)
+        finally:
+            release_first.set()
+            release_pacing.set()
+        outcome = result.result(5)
+        if cancel_job:
+            assert outcome.cancelled and outcome.text == "[UK] First\n\n"
+        else:
+            assert isinstance(outcome.error, RateLimitedError)
+            assert outcome.text == ""
+    assert starts == ["First"]
+
+
+def test_parallel_dlx_reopens_with_one_probe_after_a_429(
+    fake_dlx: FakeDLXFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    now = 100.0
+    monkeypatch.setattr(deeplx, "monotonic", lambda: now)
+    old_started, release_old, rate_limited, probe_started, release_probe = (
+        Event() for _ in range(5)
+    )
+    second_started, third_started, release_second = Event(), Event(), Event()
+    starts: list[str] = []
+
+    def receive(texts: list[str], step: str) -> str:
+        (text,) = texts
+        starts.append(text)
+        if text == "Old":
+            old_started.set()
+            assert release_old.wait(5)
+        elif text == "Limited":
+            assert old_started.wait(5)
+            return "429-retry-after"
+        elif text == "Probe":
+            probe_started.set()
+            assert release_probe.wait(5)
+        elif text == "Second":
+            second_started.set()
+            assert release_second.wait(5)
+        elif text == "Third":
+            third_started.set()
+        return step
+
+    with (
+        fake_dlx([]) as server,
+        DeeplxTranslator(server.url, server.token) as translator,
+        ThreadPoolExecutor() as executor,
+    ):
+        server.on_request = receive
+        job = TranslationJob(
+            translator=translator,
+            concurrency=2,
+            flights=SingleFlight(),
+            retry_policy=RetryPolicy(max_attempts=1),
+        )
+        first = executor.submit(
+            job.run,
+            "Old\n\nLimited",
+            Language.EN,
+            Language.UK,
+            on_rate_limit=lambda _provider: rate_limited.set(),
+        )
+        try:
+            assert rate_limited.wait(5)
+            now += 5
+            with pytest.raises(RateLimitedError) as cooldown:
+                translator.translate(["Too early"], Language.EN, Language.UK)
+            assert cooldown.value.retry_after == 4
+        finally:
+            release_old.set()
+        assert first.result(5).text == "[UK] Old\n\n"
+        with pytest.raises(RateLimitedError):
+            translator.translate(["Still too early"], Language.EN, Language.UK)
+        now += 4
+
+        recovered = executor.submit(job.run, "Probe\n\nSecond\n\nThird", Language.EN, Language.UK)
+        try:
+            assert probe_started.wait(5)
+            assert not second_started.wait(0.1)
+            release_probe.set()
+            assert second_started.wait(5)
+            assert third_started.wait(5)
+        finally:
+            release_probe.set()
+            release_second.set()
+        assert recovered.result(5).text == "[UK] Probe\n\n[UK] Second\n\n[UK] Third"
+    assert sorted(starts) == ["Limited", "Old", "Probe", "Second", "Third"]
 
 
 @pytest.mark.parametrize(

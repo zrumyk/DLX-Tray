@@ -177,6 +177,7 @@ def _run_window(app: QApplication, settings: Settings, stack: ExitStack) -> int:
                 translator=translator,
                 max_units=settings.chunk_size,
                 request_delay=settings.request_delay,
+                concurrency=settings.dlx_concurrency,
                 retry_policy=RetryPolicy(max_attempts=settings.max_attempts),
                 sleep=wait_for_request,
                 cache=cache if settings.cache_enabled else None,

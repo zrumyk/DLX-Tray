@@ -85,6 +85,13 @@ class SettingsDialog(QDialog):
         self._initial_delay = self.delay.value()
         self._add(form, self.tr("&Delay between requests (s)"), self.delay, "request_delay")
 
+        self.dlx_concurrency = QSpinBox()
+        self.dlx_concurrency.setRange(1, 2)
+        self.dlx_concurrency.setValue(settings.dlx_concurrency)
+        self._add(
+            form, self.tr("Concurrent DLX &requests"), self.dlx_concurrency, "dlx_concurrency"
+        )
+
         self.retries = self._integer_field(settings.retries)
         self._add(form, self.tr("&Retries after the first attempt"), self.retries, "retries")
 
@@ -298,6 +305,7 @@ class SettingsDialog(QDialog):
         settings.chunk_size = self.chunk_size.value()
         if self.delay.value() != self._initial_delay:
             settings.request_delay = self.delay.value()
+        settings.dlx_concurrency = self.dlx_concurrency.value()
         settings.retries = retries
         settings.formality = Formality(self.formality.currentData())
         settings.theme = self.theme.currentData()

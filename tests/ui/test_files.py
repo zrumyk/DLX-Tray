@@ -16,6 +16,7 @@ from tests.fakes.fake_dlx import FakeDLXFactory
 
 from dlx_tray.core.pipeline import TranslationJob
 from dlx_tray.fileio.pdf_io import read_pdf
+from dlx_tray.providers import deeplx
 from dlx_tray.providers.deeplx import DeeplxTranslator
 from dlx_tray.services.cache import TranslationCache
 from dlx_tray.ui.error_dialog import ErrorDialog
@@ -69,7 +70,15 @@ def test_docx_reuses_cached_segments_before_pacing_and_preserves_export(
     destination = tmp_path / "translated.docx"
     write_document(source, "Original")
     write_document(edited, "Updated")
-    wait = Mock(return_value=True)
+    now = 100.0
+    monkeypatch.setattr(deeplx, "monotonic", lambda: now)
+
+    def advance(seconds: float, cancel: Event) -> bool:
+        nonlocal now
+        now += seconds
+        return not cancel.is_set()
+
+    wait = Mock(side_effect=advance)
 
     with fake_dlx([]) as server, DeeplxTranslator(server.url, server.token) as translator:
         requests_sent = Mock(wraps=server.next_step)
@@ -87,6 +96,7 @@ def test_docx_reuses_cached_segments_before_pacing_and_preserves_export(
         assert requests_sent.call_count == 3
         assert wait.call_count == 2
         _save(window, qtbot, monkeypatch, destination)
+        now += 2.5
 
         _open(window, qtbot, monkeypatch, edited)
         window.translate_button.click()
@@ -187,8 +197,12 @@ def test_twenty_page_docx_through_window(
     document.sections[0].footer.paragraphs[0].text = "Footer"
     document.save(str(source))
     waits: list[float] = []
+    now = 100.0
+    monkeypatch.setattr(deeplx, "monotonic", lambda: now)
 
     def record_delay(seconds: float, cancel: Event) -> bool:
+        nonlocal now
+        now += seconds
         waits.append(seconds)
         return not cancel.is_set()
 

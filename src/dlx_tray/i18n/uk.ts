@@ -591,6 +591,10 @@
         <translation>&amp;Пауза між запитами (с)</translation>
     </message>
     <message>
+        <source>Concurrent DLX &amp;requests</source>
+        <translation>Одночасні &amp;запити DLX</translation>
+    </message>
+    <message>
         <source>&amp;Retries after the first attempt</source>
         <translation>По&amp;вторні спроби після першої</translation>
     </message>
