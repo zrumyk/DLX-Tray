@@ -6,12 +6,13 @@ import logging
 import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass, replace
-from threading import Event, Lock
+from threading import Event, Lock, get_ident
+from time import monotonic
 
 from PySide6.QtCore import QObject, Signal, Slot
 
 from dlx_tray.core import chunker
-from dlx_tray.core.models import Chunk, Formality, Language, RateLimitedError, TranslationError
+from dlx_tray.core.models import Chunk, Formality, Language, TranslationError
 from dlx_tray.core.pipeline import (
     FailureAction,
     JobResult,
@@ -54,7 +55,9 @@ class FileJobResult:
 class TranslationWorker(QObject):
     progress = Signal(int, int, str)
     provider_changed = Signal(str)
-    dlx_rate_limited = Signal(float)
+    dlx_rate_limited = Signal()
+    retry_wait_started = Signal(object, float, object)
+    retry_wait_finished = Signal(object)
     chunk_failed = Signal(object)
     finished = Signal(object)
     failed = Signal()
@@ -106,11 +109,14 @@ class TranslationWorker(QObject):
 
     def _report_rate_limit(self, provider: str) -> None:
         if provider == DLX_NAME:
-            self.dlx_rate_limited.emit(0.0)
+            self.dlx_rate_limited.emit()
 
     def _report_retry(self, _attempt: int, delay: float, error: TranslationError) -> None:
-        if self._job.translator.name == DLX_NAME and isinstance(error, RateLimitedError):
-            self.dlx_rate_limited.emit(delay)
+        if delay > 0:
+            self.retry_wait_started.emit(get_ident(), monotonic() + delay, type(error))
+
+    def _finish_retry_wait(self) -> None:
+        self.retry_wait_finished.emit(get_ident())
 
     @Slot()
     def run(self) -> None:
@@ -180,6 +186,7 @@ class TranslationWorker(QObject):
             on_progress=on_progress,
             on_failure=self._ask_about_failure,
             on_retry=self._report_retry,
+            on_retry_finished=self._finish_retry_wait,
             on_provider=self.provider_changed.emit,
             on_rate_limit=self._report_rate_limit,
             file_segment=file_pacing is not None,
@@ -250,6 +257,7 @@ class TranslationWorker(QObject):
             on_progress=report,
             on_failure=self._ask_about_failure,
             on_retry=self._report_retry,
+            on_retry_finished=self._finish_retry_wait,
             on_provider=self.provider_changed.emit,
             on_rate_limit=self._report_rate_limit,
         )

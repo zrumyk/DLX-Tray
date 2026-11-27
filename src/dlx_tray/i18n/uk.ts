@@ -536,8 +536,16 @@
         <translation>Досягнуто ліміту запитів до DLX.</translation>
     </message>
     <message>
-        <source>DLX rate limit reached. Retrying in {seconds} s.</source>
-        <translation>Досягнуто ліміту запитів до DLX. Повторна спроба через {seconds} с.</translation>
+        <source>Tray cooldown. Retrying in {seconds} s.</source>
+        <translation>Пауза в DLX Tray. Повторна спроба через {seconds} с.</translation>
+    </message>
+    <message>
+        <source>Rate limited. Retrying in {seconds} s.</source>
+        <translation>Досягнуто ліміту запитів. Повторна спроба через {seconds} с.</translation>
+    </message>
+    <message>
+        <source>Retrying in {seconds} s.</source>
+        <translation>Повторна спроба через {seconds} с.</translation>
     </message>
     <message>
         <source>Detected: {language}</source>

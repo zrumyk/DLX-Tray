@@ -17,6 +17,7 @@ from dlx_tray.core.models import (
     AuthError,
     Formality,
     Language,
+    LocalCooldownError,
     ProviderUnavailableError,
     RateLimitedError,
     TextTooLongError,
@@ -167,7 +168,7 @@ class DeeplxTranslator:
                     if not dispatch.may_observe_cooldown(self._cooldown_origin):
                         self._dispatch.wait(0.05)
                         continue
-                    raise RateLimitedError("DLX is in rate-limit cooldown", retry_after=remaining)
+                    raise LocalCooldownError("DLX is in rate-limit cooldown", retry_after=remaining)
                 limit = 2 if dispatch.concurrency == 2 and not self._recovering else 1
                 if self._active >= limit:
                     self._dispatch.wait(0.05)

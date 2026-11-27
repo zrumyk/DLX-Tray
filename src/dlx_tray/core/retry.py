@@ -133,6 +133,7 @@ def call_with_retry[T](
     sleep: Sleeper = event_sleep,
     rng: random.Random | None = None,
     on_retry: RetryCallback | None = None,
+    on_retry_finished: Callable[[], None] | None = None,
 ) -> T:
     """Call ``fn`` until it succeeds, fails with a non-retryable error, or attempts run out.
 
@@ -165,6 +166,10 @@ def call_with_retry[T](
             delay = policy.delay_for(error, attempt, rng)
             if on_retry is not None:
                 on_retry(attempt, delay, error)
-            if not sleep(delay, cancel):
-                raise TranslationCancelledError("cancelled while waiting to retry") from error
+            try:
+                if not sleep(delay, cancel):
+                    raise TranslationCancelledError("cancelled while waiting to retry") from error
+            finally:
+                if on_retry_finished is not None:
+                    on_retry_finished()
             attempt += 1

@@ -140,6 +140,7 @@ class TranslationJob:
         on_progress: ProgressCallback | None = None,
         on_failure: FailureCallback | None = None,
         on_retry: RetryCallback | None = None,
+        on_retry_finished: Callable[[], None] | None = None,
         on_provider: Callable[[str], None] | None = None,
         on_rate_limit: Callable[[str], None] | None = None,
         file_segment: bool = False,
@@ -225,6 +226,7 @@ class TranslationJob:
                 cancel=control.cancel,
                 sleep=retry_sleep,
                 on_retry=on_retry,
+                on_retry_finished=on_retry_finished,
             )
 
         def attempt(piece: _Piece, control: RequestDispatch) -> TranslationResult:
