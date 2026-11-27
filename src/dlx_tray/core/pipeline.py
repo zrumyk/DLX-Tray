@@ -118,11 +118,12 @@ class TranslationJob:
         if pacing is None:
             pacing = RequestPacing()
         translator = self.translator
-        route = repr(
-            translator.flight_route()
+        provider_names = (
+            translator.provider_names()
             if isinstance(translator, FallbackTranslator)
             else (translator.name,)
         )
+        route = repr(provider_names)
         parts: list[str] = []
         providers: list[str | None] = []
         detected_source: Language | None = None
@@ -178,9 +179,16 @@ class TranslationJob:
                 )
 
             def translate() -> TranslationResult:
+                nonlocal started
                 if flights is None or key is None or shared is None:
                     return retry_request()
-                result, leader = flights.run(key, shared, retry_request, cancel)
+                try:
+                    result, leader = flights.run(key, shared, retry_request, cancel)
+                except TranslationError:
+                    # A shared failure still consumed an attempt for this chunk.
+                    started = pacing.dispatched = True
+                    raise
+                pacing.dispatched = True
                 if not leader and on_provider is not None:
                     on_provider(result.provider)
                 return result
@@ -209,7 +217,9 @@ class TranslationJob:
         def process_segment(segment: Chunk, shared: SegmentFlights | None) -> None:
             nonlocal processed
             if cache is not None and not cancel.is_set():
-                hit = self._cached_segment(segment.text, source, target, formality, cache)
+                hit = self._cached_segment(
+                    segment.text, source, target, formality, cache, provider_names
+                )
                 if hit is not None:
                     record(segment, hit)
                     if on_provider is not None:
@@ -284,21 +294,16 @@ class TranslationJob:
             failure = exc
         return JobResult("".join(parts), detected_source, cancelled, failure, tuple(providers))
 
+    @staticmethod
     def _cached_segment(
-        self,
         text: str,
         source: Language,
         target: Language,
         formality: Formality,
         cache: TranslationCache,
+        provider_names: tuple[str, ...],
     ) -> TranslationResult | None:
-        translator = self.translator
-        providers = (
-            translator.cache_providers()
-            if isinstance(translator, FallbackTranslator)
-            else (translator.name,)
-        )
-        for provider in providers:
+        for provider in provider_names:
             key = translation_key(provider, source, target, formality, text)
             result = cache.lookup(key, provider)
             if result is not None:

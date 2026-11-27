@@ -410,18 +410,32 @@ def test_cache_keeps_incomplete_or_mixed_segments_out(tmp_path: Path, outcome: s
         assert None in result.chunk_providers
 
 
-def test_fallback_segment_is_stored_under_the_successful_provider(tmp_path: Path) -> None:
-    store = TranslationCache(tmp_path / "cache.db")
-    primary = FakeTranslator(RateLimitedError("blocked"))
+@pytest.mark.parametrize(
+    "error", [RateLimitedError("blocked"), ProviderUnavailableError("unavailable")]
+)
+def test_fallback_segment_reopens_under_the_successful_provider(
+    tmp_path: Path, error: TranslationError
+) -> None:
+    path = tmp_path / "cache.db"
+    store = TranslationCache(path)
+    primary = FakeTranslator(error)
     secondary = FakeTranslator()
     secondary.name = "deepl"
     job = TranslationJob(translator=FallbackTranslator(primary, secondary), cache=store)
     original = job.run("Sample", Language.AUTO, Language.UK)
     assert original.chunk_providers == ("deepl",)
-    assert job.run("Sample", Language.AUTO, Language.UK) == original
+    reopened = TranslationJob(
+        translator=FallbackTranslator(primary, secondary), cache=TranslationCache(path)
+    )
+    assert reopened.run("Sample", Language.AUTO, Language.UK) == original
     assert len(primary.calls) == len(secondary.calls) == 1
     key = translation_key("fake", Language.AUTO, Language.UK, Formality.DEFAULT, "Sample")
     assert store.lookup(key, "fake") is None
+
+    TranslationJob(translator=primary, cache=store).run("Sample", Language.AUTO, Language.UK)
+    assert reopened.run("Sample", Language.AUTO, Language.UK).chunk_providers == ("fake",)
+    assert len(primary.calls) == 2
+    assert len(secondary.calls) == 1
 
 
 @pytest.mark.parametrize("fails", [True, False])
@@ -524,3 +538,36 @@ def test_overlapping_segment_keeps_results_until_a_late_follower_finishes_planni
     else:
         assert first.text == second.text == "ONE TWO"
         assert len(translator.calls) == 2
+
+
+def test_follower_honors_pacing_before_dispatching_the_next_missing_chunk() -> None:
+    leader_paused, release_leader = Event(), Event()
+
+    def pause_leader(_processed: int, _total: int, text: str) -> None:
+        if text == "ONE ":
+            leader_paused.set()
+            assert release_leader.wait(5)
+
+    translator = FakeTranslator()
+    wait = Mock(return_value=True)
+    job = TranslationJob(
+        translator=translator,
+        flights=SingleFlight(),
+        max_units=3,
+        request_delay=2.5,
+        sleep=wait,
+    )
+    with ThreadPoolExecutor(max_workers=2) as workers:
+        leader = workers.submit(
+            job.run, "one two", Language.EN, Language.UK, on_progress=pause_leader
+        )
+        try:
+            assert leader_paused.wait(5)
+            follower = workers.submit(job.run, "one two", Language.EN, Language.UK)
+            assert follower.result(5).text == "ONE TWO"
+        finally:
+            release_leader.set()
+        assert leader.result(5).text == "ONE TWO"
+    assert [call[0] for call in translator.calls] == [["one"], ["two"]]
+    assert wait.call_count == 1
+    assert wait.call_args.args[0] == 2.5
