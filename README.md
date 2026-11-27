@@ -10,7 +10,15 @@ in chunks using a bundled [DLX](https://github.com/OwO-Network/DLX) (formerly De
 
 The screenshot uses an example translation from a local test server.
 
-## Available in v1.0.0
+## Features
+
+- Keep translations running in the Windows notification area when you minimize or close the window.
+- Translate selected text from another Windows app with a configurable global shortcut.
+- Optionally start DLX Tray in the notification area when you sign in to Windows.
+- Reuse completed paragraph and file-segment translations and translate up to two DLX requests
+  concurrently while keeping the preview in input order.
+- Choose automatic provider selection or use the official DeepL API for every translation.
+- See how long remains before a retry and cancel while keeping completed work.
 
 - Install for the current Windows user without administrator rights, with a Start menu shortcut
   and an optional desktop shortcut.
@@ -43,11 +51,26 @@ The screenshot uses an example translation from a local test server.
 1. On Windows 10 version 1809 or later or Windows 11 x64, download
    the latest `DLX-Tray-Setup-X.Y.Z.exe` from the [Releases](https://github.com/zrumyk/DLX-Tray/releases) page.
 2. Run Setup for your Windows account. Select the desktop shortcut during setup if you want one.
-3. Open **DLX Tray** from Start and wait for **DLX ready**. Enter text, select a target language,
-   and choose **Translate** or press **Ctrl+Enter**.
+3. Open **DLX Tray** from Start. Enter text, select a target language, and choose **Translate**
+   or press **Ctrl+Enter**. In automatic mode, wait for **DLX ready** before translating.
 
 To upgrade, close DLX Tray and run the newer installer over your existing installation. Setup
 preserves your settings and translation history.
+
+## Notification area and selection shortcut
+
+Minimize or close the window to keep DLX Tray running in the Windows notification area.
+Click the icon or launch the app again to reopen the window. The icon's tooltip shows provider
+status and any known DLX cooldown. Choose **Exit** from the icon's menu or **File → Exit** to quit.
+
+Select text in a Windows app and press **Ctrl+C** twice quickly to translate it in a popup.
+The shortcut copies the selection to the clipboard. The popup uses the languages and provider
+selected in DLX Tray and can copy the result. In **Settings → Selection hotkey**, choose
+`Ctrl+Shift` plus a Latin letter (for example, `Ctrl+Shift+Y`) or clear the field to disable it.
+
+In the installed app, turn on **Start DLX Tray when I sign in to Windows** in Settings and save.
+Clear the checkbox and save to remove the startup entry. Windows can also disable the entry
+under **Settings → Apps → Startup**.
 
 ## FAQ
 
@@ -87,25 +110,10 @@ uv run python scripts/fetch_deeplx.py   # builds the pinned DLX binary into vend
 uv run dlx-tray
 ```
 
-In the source build, minimize or close the window to keep it running in the Windows
-notification area. Click the DLX Tray icon or launch the app again to reopen the window.
-The icon's tooltip shows provider status and any known DLX cooldown. Choose **Exit**
-from the icon's menu or **File → Exit** to quit.
-
-Select text in a Windows app and press **Ctrl+C** twice quickly to translate it in a popup.
-The shortcut copies the selection to the clipboard. The popup uses the languages and provider
-selected in DLX Tray and can copy the result. In **Settings → Selection hotkey**, choose
-`Ctrl+Shift` plus a Latin letter (for example, `Ctrl+Shift+Y`) or clear the field to disable it.
-
 To package the app from source, run `.\scripts\build.ps1` in PowerShell. Open
 `dist/DLX Tray/DLX Tray.exe` and keep the entire `dist/DLX Tray` folder together when moving it.
 
-In the packaged app, turn on **Start DLX Tray when I sign in to Windows** in Settings and save.
-At sign-in, DLX Tray opens in the notification area. Click the tray icon or launch DLX Tray
-again to show the window. Clear the checkbox and save to remove the startup entry.
-Windows can also disable the registered entry under **Settings → Apps → Startup**.
-
-The v1.0.0 build uses the [DLX fork at `177f235`](https://github.com/zrumyk/DLX/commit/177f2355274295a6bee35feaccc27fe06fbd1fa1).
+The bundled server is built from the [DLX fork at `177f235`](https://github.com/zrumyk/DLX/commit/177f2355274295a6bee35feaccc27fe06fbd1fa1).
 On 27 November 2026, a locally built installer translated **Hello** to **Привіт** in a clean
 Windows Sandbox. Tray showed **Provider: DLX** and completed the translation in one request
 with no API key or external server configured. Long-file translation and export were tested
@@ -148,8 +156,7 @@ precedence over `.env`. If the effective override is missing or blank, the app u
 | 0.8.0 | Ukrainian and English UI (completed) |
 | 0.9.0 | Installer and GitHub Releases (completed) |
 | 1.0.0 | First stable release with bundled DLX, About and diagnostics |
-| 1.1.0 | Provider selection and visible retry waits (planned) |
-| 2.0.0 | System tray icon, global selection hotkey, and optional Windows autostart |
+| 2.0.0 | Faster translation, provider selection, visible retry waits, system tray icon, global selection hotkey, and optional Windows autostart |
 
 See [CHANGELOG.md](CHANGELOG.md) for what changed in each version.
 
