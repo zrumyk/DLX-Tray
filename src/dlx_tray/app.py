@@ -143,6 +143,7 @@ def _run_window(
 
     if server is not None:
         server.newConnection.connect(activate_window)
+        window.closed.connect(server.close)
 
     def copy_diagnostics() -> None:
         nonlocal export
@@ -350,6 +351,7 @@ def _run_window(
     finally:
         window.hide_tray()
         if server is not None:
+            server.close()
             server.newConnection.disconnect(activate_window)
         # The translator and process remain alive until both workers have stopped.
         window.stop_translation()
@@ -382,14 +384,19 @@ def run(argv: list[str]) -> int:
             server = stack.enter_context(single_instance(config.app_data_dir()))
         except OSError as exc:
             log.warning("Could not initialize single-instance control: %s", type(exc).__name__)
-            QMessageBox.critical(
-                None,
-                APP_NAME,
-                QCoreApplication.translate(
-                    "Startup",
-                    "Could not open DLX Tray. Check whether it is already running.",
-                ),
-            )
+            try:
+                language = Settings.load().ui_language
+            except (OSError, ValueError, SettingsError):
+                language = config.system_ui_language()
+            with interface_language(app, language):
+                QMessageBox.critical(
+                    None,
+                    APP_NAME,
+                    QCoreApplication.translate(
+                        "Startup",
+                        "Could not open DLX Tray. Check whether it is already running.",
+                    ),
+                )
             return 1
         if server is None:
             return 0

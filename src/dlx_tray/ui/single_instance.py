@@ -37,7 +37,7 @@ def single_instance(profile: Path) -> Iterator[QLocalServer | None]:
     name = f"dlx-tray-{digest}"
     lock = QLockFile(str(profile / "instance.lock"))
     lock.setStaleLockTime(0)
-    deadline = monotonic() + 2
+    deadline = monotonic() + 6
     while not lock.tryLock(0):
         if lock.error() != QLockFile.LockError.LockFailedError:
             raise OSError("Could not lock the application profile")

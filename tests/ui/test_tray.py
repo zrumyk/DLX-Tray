@@ -1,5 +1,6 @@
 """Exercise tray lifecycle, tooltip state, and profile activation."""
 
+from contextlib import ExitStack
 from pathlib import Path
 
 import pytest
@@ -8,6 +9,8 @@ from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import QApplication, QMessageBox, QSystemTrayIcon
 from pytestqt.qtbot import QtBot
 
+from dlx_tray import app, config
+from dlx_tray.config import Settings
 from dlx_tray.ui import main_window
 from dlx_tray.ui.main_window import MainWindow
 from dlx_tray.ui.single_instance import single_instance
@@ -23,6 +26,60 @@ def test_launch_with_same_profile_contacts_primary(qtbot: QtBot, tmp_path: Path)
             assert other is not None
     with single_instance(tmp_path) as restarted:
         assert restarted is not None
+
+
+def test_accepted_exit_stops_activation_before_profile_cleanup(
+    qapp: QApplication, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(config, "app_data_dir", lambda: tmp_path)
+    monkeypatch.setattr(app, "get_deepl_api_key", lambda _override: None)
+    settings = Settings(provider_mode="official_only")
+    with single_instance(tmp_path) as primary, ExitStack() as stack:
+        assert primary is not None
+
+        def exit_window() -> None:
+            try:
+                window = next(
+                    widget
+                    for widget in qapp.topLevelWidgets()
+                    if isinstance(widget, MainWindow) and widget.isVisible()
+                )
+                assert primary.isListening()
+                window.exit_action.trigger()
+                assert not primary.isListening()
+                assert (tmp_path / "instance.lock").is_file()
+            except Exception:
+                qapp.exit(2)
+                raise
+
+        QTimer.singleShot(0, exit_window)
+        assert app._run_window(qapp, settings, stack, primary) == 0
+    assert not (tmp_path / "instance.lock").exists()
+
+
+def test_activation_error_uses_the_configured_language(
+    qapp: QApplication, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fail_to_activate(_profile: Path) -> None:
+        raise OSError("Activation failed")
+
+    monkeypatch.setattr(app, "QApplication", lambda _argv: qapp)
+    monkeypatch.setattr(app, "single_instance", fail_to_activate)
+    monkeypatch.setattr(config, "app_data_dir", lambda: tmp_path)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("DLX_UI_LANGUAGE", "uk")
+    messages: list[str] = []
+    monkeypatch.setattr(
+        QMessageBox, "critical", lambda _parent, _title, text: messages.append(text)
+    )
+    icon = qapp.windowIcon()
+    try:
+        assert app.run([]) == 1
+    finally:
+        qapp.setWindowIcon(icon)
+    assert messages == [
+        "Не вдалося відкрити DLX Tray. Перевірте, чи програму вже запущено."  # noqa: RUF001
+    ]
 
 
 @pytest.fixture

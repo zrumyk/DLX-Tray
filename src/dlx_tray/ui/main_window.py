@@ -107,6 +107,7 @@ class MainWindow(QMainWindow):
     settings_requested = Signal()
     diagnostics_requested = Signal()
     diagnostics_finished = Signal(str)
+    closed = Signal()
 
     def __init__(
         self,
@@ -1050,9 +1051,11 @@ class MainWindow(QMainWindow):
             return
         super().closeEvent(event)
         self._closed = True
+        self.closed.emit()
         if self._exit_requested:
             self.hide_tray()
-            QApplication.quit()
+            if not self.isVisible():
+                QApplication.quit()
 
     def stop_translation(self) -> None:
         """Join an active translation or file worker after the event loop exits."""
