@@ -64,9 +64,10 @@ def test_parallel_fallback_serializes_calls_to_the_official_sdk(
         ThreadPoolExecutor() as executor,
     ):
         job = TranslationJob(
-            translator=FallbackTranslator(primary, secondary), concurrency=2, max_units=6
+            translator=FallbackTranslator(primary, secondary), concurrency=2, max_units=751
         )
-        result = executor.submit(job.run, "First Second", Language.EN, Language.UK)
+        source = f"{'A' * 751}\n{'B' * 751}"
+        result = executor.submit(job.run, source, Language.EN, Language.UK)
         try:
             assert sent.wait(5)
             assert second_waiting.wait(5)
@@ -94,6 +95,7 @@ def test_fallback_cancellation_at_provider_notification_sends_no_http(
 
 
 def test_connection_loss_falls_back_for_the_failed_chunk(fake_dlx: FakeDLXFactory) -> None:
+    first, failed, last = (word.ljust(751, word[-1]) for word in ("Hello", "World", "Again"))
     secondary = Mock(spec=Translator)
     secondary.name = "deepl"
     secondary.translate.return_value = [TranslationResult("[DeepL] World", Language.EN, "deepl")]
@@ -102,12 +104,12 @@ def test_connection_loss_falls_back_for_the_failed_chunk(fake_dlx: FakeDLXFactor
         DeeplxTranslator(server.url, server.token) as primary,
     ):
         job = TranslationJob(
-            translator=FallbackTranslator(primary, secondary), max_units=5, request_delay=0
+            translator=FallbackTranslator(primary, secondary), max_units=751, request_delay=0
         )
         providers: list[str] = []
         rate_limits: list[str] = []
         result = job.run(
-            "Hello\r\nWorld\r\nAgain",
+            f"{first}\r\n{failed}\r\n{last}",
             Language.AUTO,
             Language.UK,
             Formality.MORE,
@@ -118,12 +120,12 @@ def test_connection_loss_falls_back_for_the_failed_chunk(fake_dlx: FakeDLXFactor
     assert providers == ["dlx", "dlx", "deepl", "dlx"]
     assert rate_limits == []
     assert result == JobResult(
-        "[UK] Hello\r\n[DeepL] World\r\n[UK] Again",
+        f"[UK] {first}\r\n[DeepL] World\r\n[UK] {last}",
         Language.EN,
         chunk_providers=("dlx", "deepl", "dlx"),
     )
     secondary.translate.assert_called_once_with(
-        ["World"], Language.AUTO, Language.UK, Formality.MORE
+        [failed], Language.AUTO, Language.UK, Formality.MORE
     )
 
 

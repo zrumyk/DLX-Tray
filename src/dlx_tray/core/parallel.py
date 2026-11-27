@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import deque
-from collections.abc import Callable, Generator, Iterator
+from collections.abc import Callable, Generator, Iterator, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from threading import Condition, Event
@@ -14,6 +14,7 @@ from dlx_tray.core.retry import DispatchTicket, RequestDispatch
 from dlx_tray.core.single_flight import SegmentFlights, SingleFlight
 
 type Attempt = Callable[[RequestDispatch], TranslationResult]
+type BatchAttempt[T] = Callable[[T, T, RequestDispatch], Sequence[TranslationResult]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,6 +67,9 @@ def ordered_attempts[T](
     dispatch: RequestDispatch,
     resolve: Callable[[T, Callable[[], TranslationResult]], TranslationResult | None],
     on_shared: Callable[[str], None] | None,
+    *,
+    can_pair: Callable[[T, T], bool] = lambda _first, _second: False,
+    batch: BatchAttempt[T] | None = None,
 ) -> Generator[tuple[T, TranslationResult | None]]:
     pending: deque[_Pending[T]] = deque()
     leaders: set[Future[TranslationResult]] = set()
@@ -110,23 +114,44 @@ def ordered_attempts[T](
             may_observe_cooldown=may_observe_cooldown,
         )
 
-    def run_leader(
-        attempt: Attempt,
-        shared: SharedAttempt | None,
-        future: Future[TranslationResult],
+    def claim(index: int, item: Work[T]) -> _Pending[T]:
+        shared = item.shared
+        future, leader = (
+            shared.flights.claim(shared.key, shared.segment)
+            if shared is not None
+            else (Future(), True)
+        )
+        entry = _Pending(index, item, future, not leader)
+        with changed:
+            pending.append(entry)
+        return entry
+
+    def run_leaders(
+        entries: tuple[_Pending[T], ...],
         request: RequestDispatch,
     ) -> None:
-        def run() -> TranslationResult:
-            return attempt(request)
-
+        first = entries[0].work
         try:
-            if shared is not None:
-                shared.flights.complete(shared.key, future, run)
+            if len(entries) == 2:
+                assert batch is not None
+                results = batch(first.item, entries[1].work.item, request)
             else:
-                future.set_result(run())
+                assert first.attempt is not None
+                results = (first.attempt(request),)
+            outcomes = tuple(zip(entries, results, strict=True))
         except BaseException as exc:
-            if shared is None:
-                future.set_exception(exc)
+            for entry in entries:
+                future = entry.future
+                assert future is not None
+                shared = entry.work.shared
+                if shared is None:
+                    future.set_exception(exc)
+                else:
+                    shared.flights.fail(shared.key, future, exc)
+        else:
+            for entry, result in outcomes:
+                assert entry.future is not None
+                entry.future.set_result(result)
         finally:
             request.on_start()
 
@@ -185,8 +210,9 @@ def ordered_attempts[T](
         return result
 
     inputs = enumerate(work)
+    lookahead: tuple[int, Work[T]] | None = None
     exhausted = False
-    with ThreadPoolExecutor(max_workers=2, thread_name_prefix="DLX") as pool:
+    with ThreadPoolExecutor(max_workers=dispatch.concurrency, thread_name_prefix="DLX") as pool:
         try:
             while pending or not exhausted:
                 if dispatch.cancel.is_set():
@@ -195,31 +221,47 @@ def ordered_attempts[T](
                 leaders = {future for future in leaders if not future.done()}
                 with changed:
                     failed = any(entry.failed() for entry in pending)
-                if not exhausted and not failed and len(leaders) < 2 and started.is_set():
-                    for index, item in inputs:
+                if (
+                    not exhausted
+                    and not failed
+                    and len(leaders) < dispatch.concurrency
+                    and started.is_set()
+                    and (dispatch.concurrency == 2 or not pending)
+                ):
+                    while (next_item := lookahead or next(inputs, None)) is not None:
+                        index, item = next_item
+                        lookahead = None
                         if item.attempt is None:
                             with changed:
                                 pending.append(_Pending(index, item, None))
                             if len(pending) == 1 or dispatch.cancel.is_set():
                                 break
                             continue
-                        shared = item.shared
-                        future, leader = (
-                            shared.flights.claim(shared.key, shared.segment)
-                            if shared is not None
-                            else (Future(), True)
+                        if batch is not None:
+                            lookahead = next(inputs, None)
+                        pairable = (
+                            lookahead is not None
+                            and lookahead[1].attempt is not None
+                            and can_pair(item.item, lookahead[1].item)
                         )
-                        entry = _Pending(index, item, future, not leader)
-                        with changed:
-                            pending.append(entry)
-                        if leader:
+                        entry = claim(index, item)
+                        future = entry.future
+                        assert future is not None
+                        if not entry.follower:
+                            entries = (entry,)
+                            if pairable and lookahead is not None:
+                                paired = claim(*lookahead)
+                                lookahead = None
+                                if not paired.follower:
+                                    entries = (entry, paired)
                             started = Event()
-                            leaders.add(future)
+                            # The final result is published last and tracks this request's slot.
+                            last_future = entries[-1].future
+                            assert last_future is not None
+                            leaders.add(last_future)
                             pool.submit(
-                                run_leader,
-                                item.attempt,
-                                shared,
-                                future,
+                                run_leaders,
+                                entries,
                                 dispatch_for(index, started),
                             )
                             break

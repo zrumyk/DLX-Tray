@@ -192,10 +192,10 @@ class TranslationJob:
                 providers.append(result.provider)
                 detected_source = detected_source or result.detected_source
 
-        def request(chunk_text: str, attempt: RequestDispatch) -> TranslationResult:
+        def request(texts: Sequence[str], attempt: RequestDispatch) -> list[TranslationResult]:
             if isinstance(translator, FallbackTranslator):
-                (result,) = translator.translate(
-                    [chunk_text],
+                return translator.translate(
+                    texts,
                     source,
                     target,
                     formality,
@@ -204,29 +204,41 @@ class TranslationJob:
                     on_rate_limit=on_rate_limit,
                     dispatch=attempt if dlx else None,
                 )
-                return result
             if on_provider is not None:
                 on_provider(translator.name)
             try:
                 if isinstance(translator, DeeplxTranslator | DeepLOfficialTranslator):
-                    (result,) = translator.translate(
-                        [chunk_text], source, target, formality, dispatch=attempt
-                    )
-                else:
-                    (result,) = translator.translate([chunk_text], source, target, formality)
+                    return translator.translate(texts, source, target, formality, dispatch=attempt)
+                return translator.translate(texts, source, target, formality)
             except RateLimitedError:
                 if on_rate_limit is not None:
                     on_rate_limit(translator.name)
                 raise
-            return result
 
-        def attempt(piece: _Piece, control: RequestDispatch) -> TranslationResult:
+        def request_with_retry(
+            texts: Sequence[str], control: RequestDispatch
+        ) -> list[TranslationResult]:
             return call_with_retry(
-                lambda: request(piece.chunk.text, control),
+                lambda: request(texts, control),
                 self.retry_policy,
                 cancel=control.cancel,
                 sleep=retry_sleep,
                 on_retry=on_retry,
+            )
+
+        def attempt(piece: _Piece, control: RequestDispatch) -> TranslationResult:
+            (result,) = request_with_retry([piece.chunk.text], control)
+            return result
+
+        def batch(
+            first: _Piece, second: _Piece, control: RequestDispatch
+        ) -> list[TranslationResult]:
+            return request_with_retry([first.chunk.text, second.chunk.text], control)
+
+        def can_pair(first: _Piece, second: _Piece) -> bool:
+            left, right = first.chunk.text, second.chunk.text
+            return left != right and (
+                chunker.utf16_len(left) + chunker.utf16_len(right) <= chunker.HARD_MAX_UNITS
             )
 
         def serial(
@@ -356,12 +368,20 @@ class TranslationJob:
 
         failure: TranslationError | None = None
         cancelled = False
+        batching = dlx and self.max_units <= chunker.HARD_MAX_UNITS // 2
         try:
             with ExitStack() as scopes:
                 tasks = plan(scopes)
                 results = (
-                    ordered_attempts(tasks, dispatch, resolve, shared_result)
-                    if concurrency == 2 and total
+                    ordered_attempts(
+                        tasks,
+                        dispatch,
+                        resolve,
+                        shared_result,
+                        can_pair=can_pair,
+                        batch=batch if batching else None,
+                    )
+                    if (concurrency == 2 or batching) and total
                     else serial(tasks)
                 )
                 scopes.callback(results.close)

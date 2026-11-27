@@ -189,6 +189,9 @@ def test_cancel_interrupts_retry_and_keeps_streamed_text(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     now = 100.0
+    first = "first" + "a" * 746
+    second = "second" + "b" * 745
+    third = "third" + "c" * 746
     monkeypatch.setattr("dlx_tray.providers.deeplx.monotonic", lambda: now)
     waiting = Event()
 
@@ -201,11 +204,11 @@ def test_cancel_interrupts_retry_and_keeps_streamed_text(
         fake_dlx(["ok", "429-retry-after"]) as server,
         DeeplxTranslator(server.url, server.token) as translator,
     ):
-        job = TranslationJob(translator=translator, max_units=6, request_delay=0, sleep=sleep)
+        job = TranslationJob(translator=translator, max_units=751, request_delay=0, sleep=sleep)
         window = translation_window(job)
         path = tmp_path / "history.sqlite3"
         window.set_history(path, enabled=True, limit=2)
-        window.source_editor.setPlainText(" first\u00a0\n\nsecond third")
+        window.source_editor.setPlainText(f" {first}\u00a0\n\n{second} {third}")
         provider = window.findChild(QLabel, "provider_status")
         warning = window.findChild(QLabel, "rate_limit_status")
         assert provider is not None and warning is not None
@@ -218,7 +221,7 @@ def test_cancel_interrupts_retry_and_keeps_streamed_text(
         assert provider.isVisible() and provider.text() == "Provider: DLX"
         assert window.progress_label.text() == "Chunk 1 of 3"
         assert window.progress_bar.maximum() == 3
-        assert window.result_editor.document().toRawText() == " [EN] first\u00a0\u2029\u2029"
+        assert window.result_editor.document().toRawText() == f" [EN] {first}\u00a0\u2029\u2029"
         assert not window.translate_button.isEnabled()
         assert not window.swap_button.isEnabled()
         assert window.source_editor.isReadOnly()
@@ -230,7 +233,7 @@ def test_cancel_interrupts_retry_and_keeps_streamed_text(
         assert not path.exists()
         assert warning.isVisible() and warning.text() == "DLX rate limit reached."
         window.copy_button.click()
-        assert QApplication.clipboard().text() == " [EN] first\u00a0\n\n"
+        assert QApplication.clipboard().text() == f" [EN] {first}\u00a0\n\n"
         assert window.swap_button.isEnabled()
         assert not window.source_editor.isReadOnly()
 
@@ -252,39 +255,35 @@ def _wait_for_failure_dialog(qtbot: QtBot, window: MainWindow) -> ErrorDialog:
 
 
 @pytest.mark.parametrize(
-    ("action", "expected"),
-    [
-        ("continue", "[EN] first [EN] txen [EN] last"),
-        ("skip", "[EN] first next [EN] tsal"),
-        ("cancel", "[EN] first "),
-        ("return", "[EN] first "),
-        ("escape", "[EN] first "),
-        ("dismiss", "[EN] first "),
-        ("close window", "[EN] first "),
-    ],
+    "action", ["continue", "skip", "cancel", "return", "escape", "dismiss", "close window"]
 )
 def test_chunk_failure_actions(
     qtbot: QtBot,
     translation_window: Callable[[TranslationJob], MainWindow],
     fake_dlx: FakeDLXFactory,
     action: str,
-    expected: str,
 ) -> None:
+    first, second, third = (letter * 750 + "." for letter in "abc")
+    prefix = f" [EN] {first} "
+    expected = {
+        "continue": f"{prefix}[EN] {second[::-1]} [EN] {third}",
+        "skip": f"{prefix}{second} [EN] {third[::-1]}",
+    }.get(action, prefix)
     failures = ["503", "503"] if action == "continue" else ["503"]
     with (
         fake_dlx(["ok", *failures, "reverse"]) as server,
         DeeplxTranslator(server.url, server.token) as translator,
     ):
         job = TranslationJob(
-            translator=translator, max_units=5, request_delay=0, retry_policy=RetryPolicy(1)
+            translator=translator, max_units=751, request_delay=0, retry_policy=RetryPolicy(1)
         )
         window = translation_window(job)
-        window.source_editor.setPlainText(" first next last")
+        window.source_editor.setPlainText(f" {first} {second} {third}")
         window.translate_button.click()
         dialog = _wait_for_failure_dialog(qtbot, window)
         assert dialog.heading.text() == "Could not translate chunk 2 of 3."
         assert "provider is unavailable" in dialog.detail.text()
-        assert window.result_editor.toPlainText() == " [EN] first "
+        assert window.result_editor.toPlainText() == prefix
         assert window.progress_bar.value() == 1
         assert not window.translate_button.isEnabled()
 
@@ -310,7 +309,7 @@ def test_chunk_failure_actions(
 
         qtbot.waitUntil(window.translate_button.isEnabled)
         assert QApplication.activeModalWidget() is None
-        assert window.result_editor.toPlainText() == f" {expected}"
+        assert window.result_editor.toPlainText() == expected
         status = (
             "Translation complete." if action in {"continue", "skip"} else "Translation cancelled."
         )

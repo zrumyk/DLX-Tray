@@ -107,13 +107,16 @@ class SingleFlight:
         try:
             result = work()
         except BaseException as exc:
-            with self._lock:
-                if self._pending.get(key) is future:
-                    del self._pending[key]
-            future.set_exception(exc)
+            self.fail(key, future, exc)
             raise
         future.set_result(result)
         return result
+
+    def fail(self, key: bytes, future: Future[TranslationResult], error: BaseException) -> None:
+        with self._lock:
+            if self._pending.get(key) is future:
+                del self._pending[key]
+        future.set_exception(error)
 
     def _await(
         self,
