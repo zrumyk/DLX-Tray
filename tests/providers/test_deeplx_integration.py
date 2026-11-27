@@ -26,12 +26,14 @@ from tests.fakes.fake_dlx import FakeDLXFactory
 
 
 @pytest.mark.parametrize(
-    ("step", "error", "backoff"),
+    ("step", "error", "backoff_bounds"),
     [
-        ("429", RateLimitedError, 15.0),
-        ("429-retry-after", RateLimitedError, 9.0),
-        ("503", ProviderUnavailableError, 5.0),
-        ("drop", ProviderUnavailableError, 5.0),
+        ("429", RateLimitedError, (15.0, 15.0)),
+        ("429-retry-after", RateLimitedError, (9.0, 9.0)),
+        ("429-retry-after-15", RateLimitedError, (15.0, 15.0)),
+        ("503", ProviderUnavailableError, (1.6, 2.4)),
+        ("slow", ProviderUnavailableError, (1.6, 2.4)),
+        ("drop", ProviderUnavailableError, (1.6, 2.4)),
     ],
 )
 def test_job_retries_only_the_failed_chunk(
@@ -39,7 +41,7 @@ def test_job_retries_only_the_failed_chunk(
     monkeypatch: pytest.MonkeyPatch,
     step: str,
     error: type[TranslationError],
-    backoff: float,
+    backoff_bounds: tuple[float, float],
 ) -> None:
     now = 100.0
     monkeypatch.setattr(deeplx, "monotonic", lambda: now)
@@ -64,12 +66,13 @@ def test_job_retries_only_the_failed_chunk(
 
     with (
         fake_dlx(["ok", step, "reverse"]) as server,
-        DeeplxTranslator(server.url, server.token) as translator,
+        DeeplxTranslator(
+            server.url, server.token, timeout=0.5 if step == "slow" else 3
+        ) as translator,
     ):
         job = TranslationJob(
             translator=translator,
             max_units=5,
-            retry_policy=RetryPolicy(max_attempts=2, jitter=0),
             sleep=sleep,
         )
         result = job.run(
@@ -81,8 +84,9 @@ def test_job_retries_only_the_failed_chunk(
             on_progress=on_progress,
         )
 
-    assert waits == [backoff]
-    assert retries == [(1, backoff, error)]
+    assert len(waits) == 1
+    assert backoff_bounds[0] <= waits[0] <= backoff_bounds[1]
+    assert retries == [(1, waits[0], error)]
     assert progress == [(1, 2, "[UK] Hello\r\n"), (2, 2, "[UK] Hello\r\n[UK] dlroW")]
     assert result == JobResult(
         "[UK] Hello\r\n[UK] dlroW", Language.EN, chunk_providers=("dlx", "dlx")
@@ -94,8 +98,8 @@ def test_job_retries_only_the_failed_chunk(
     [
         ("429", RateLimitedError, 15.0),
         ("429-retry-after", RateLimitedError, 9.0),
-        ("503", ProviderUnavailableError, 5.0),
-        ("drop", ProviderUnavailableError, 5.0),
+        ("503", ProviderUnavailableError, 2.0),
+        ("drop", ProviderUnavailableError, 2.0),
     ],
 )
 def test_retries_scripted_failure(
@@ -136,16 +140,21 @@ def test_retries_scripted_failure(
     ]
 
 
-@pytest.mark.parametrize(("step", "error"), [("401", AuthError), ("413", TextTooLongError)])
-def test_scripted_client_errors(
+@pytest.mark.parametrize(
+    ("step", "error"), [("401", AuthError), ("403", AuthError), ("413", TextTooLongError)]
+)
+def test_job_does_not_retry_scripted_client_errors(
     fake_dlx: FakeDLXFactory, step: str, error: type[TranslationError]
 ) -> None:
-    with (
-        fake_dlx([step]) as server,
-        DeeplxTranslator(server.url, server.token) as translator,
-        pytest.raises(error),
-    ):
-        translator.translate(["Hello"], Language.EN, Language.UK)
+    def on_retry(attempt: int, seconds: float, exc: TranslationError) -> None:
+        pytest.fail(f"Unexpected retry after {exc}")
+
+    with fake_dlx([step, "reverse"]) as server, DeeplxTranslator(server.url, server.token) as tr:
+        result = TranslationJob(translator=tr).run(
+            "Hello", Language.EN, Language.UK, on_retry=on_retry
+        )
+        assert isinstance(result.error, error)
+        assert server.next_step() == "reverse"
 
 
 def test_batch_at_limit_with_blank_entry(fake_dlx: FakeDLXFactory) -> None:

@@ -137,7 +137,7 @@ def test_cancel_during_backoff_does_not_ask_for_failure_action() -> None:
     translator = FakeTranslator(ProviderUnavailableError("offline"))
 
     def sleep(seconds: float, cancel: Event) -> bool:
-        assert seconds == 5.0
+        assert seconds == 2.0
         cancel.set()
         return False
 

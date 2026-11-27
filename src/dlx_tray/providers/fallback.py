@@ -14,11 +14,11 @@ from dlx_tray.core.models import (
     TranslationCancelledError,
     TranslationResult,
 )
-from dlx_tray.core.retry import RETRYABLE_ERRORS, RetryPolicy
+from dlx_tray.core.retry import RETRYABLE_ERRORS
 from dlx_tray.providers.base import Translator
 
 log = logging.getLogger(__name__)
-_RETRY_DEFAULTS = RetryPolicy()
+_MIN_PRIMARY_COOLDOWN = 5.0
 
 
 class FallbackTranslator:
@@ -59,7 +59,7 @@ class FallbackTranslator:
                 return self._primary.translate(texts, source, target, formality)
             except RETRYABLE_ERRORS as exc:
                 if isinstance(exc, RateLimitedError):
-                    delay = max(_RETRY_DEFAULTS.initial_delay, exc.retry_after or 0.0)
+                    delay = max(_MIN_PRIMARY_COOLDOWN, exc.retry_after or 0.0)
                     deadline = monotonic() + delay
                     with self._lock:
                         self._primary_blocked_until = max(self._primary_blocked_until, deadline)
