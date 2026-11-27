@@ -9,6 +9,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Changed
 - Update bundled DLX for translation without an API key. A short English-to-Ukrainian
   translation passed through the installed Windows app.
+- Start the next translation chunk immediately by default. Custom request delays and
+  rate-limit waits still apply.
 
 ### Fixed
 - Bundled DLX passes through the upstream retry delay after a rate limit.

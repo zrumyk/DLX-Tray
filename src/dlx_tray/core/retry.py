@@ -15,7 +15,7 @@ from dlx_tray.core.models import (
     TranslationError,
 )
 
-DEFAULT_REQUEST_DELAY = 2.5
+DEFAULT_REQUEST_DELAY = 0.0
 
 RETRYABLE_ERRORS: tuple[type[TranslationError], ...] = (RateLimitedError, ProviderUnavailableError)
 """Rate limiting (429) and an unreachable or failing upstream (connection error, 503)."""

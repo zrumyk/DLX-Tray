@@ -34,7 +34,7 @@ def test_missing_file_uses_defaults(
     assert settings.source_lang is Language.AUTO
     assert settings.target_lang is Language.UK
     assert settings.chunk_size == 1400
-    assert settings.request_delay == 2.5
+    assert settings.request_delay == 0
     assert settings.retries == 3
     assert RetryPolicy(max_attempts=settings.max_attempts).max_attempts == 4
     assert settings.history_enabled and settings.history_limit == 500
@@ -86,7 +86,7 @@ def test_save_preserves_preferences_shadowed_by_overrides(
     monkeypatch.delenv("DLX_CHUNK_SIZE")
     loaded = Settings.load(path, env_file=None)
     assert loaded.chunk_size == 900
-    assert loaded.request_delay == 2.5
+    assert loaded.request_delay == 0
     assert not loaded.history_enabled
     assert "request_delay" not in json.loads(path.read_text(encoding="utf-8"))
 
@@ -99,11 +99,11 @@ def test_partial_saves_merge_edits_from_two_settings_snapshots(
     monkeypatch.setenv("DLX_RETRIES", "1")
     first, second = Settings.load(path), Settings.load(path)
     first.model_copy(update={"chunk_size": 200}).save(path, changes_from=first)
-    second.model_copy(update={"request_delay": 0}).save(path, changes_from=second)
+    second.model_copy(update={"request_delay": 2.5}).save(path, changes_from=second)
 
     assert json.loads(path.read_text(encoding="utf-8")) == {
         "chunk_size": 200,
-        "request_delay": 0.0,
+        "request_delay": 2.5,
         "retries": 2,
     }
 

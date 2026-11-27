@@ -108,7 +108,9 @@ def test_drop_txt_on_editor_and_save_unicode(
         assert not window.save_file_action.isEnabled()
 
 
+@pytest.mark.parametrize("delay", [None, 1.5], ids=["default-delay", "custom-delay"])
 def test_twenty_page_docx_through_window(
+    delay: float | None,
     qtbot: QtBot,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -135,7 +137,11 @@ def test_twenty_page_docx_through_window(
         return not cancel.is_set()
 
     with fake_dlx([]) as server, DeeplxTranslator(server.url, server.token) as translator:
-        job = TranslationJob(translator=translator, request_delay=1.5, sleep=record_delay)
+        job = (
+            TranslationJob(translator=translator, sleep=record_delay)
+            if delay is None
+            else TranslationJob(translator=translator, request_delay=delay, sleep=record_delay)
+        )
         window = file_window(job)
         _open(window, qtbot, monkeypatch, source)
         # Exports must still use the package the user opened if the path is replaced later.
@@ -144,7 +150,7 @@ def test_twenty_page_docx_through_window(
         assert not window.open_file_action.isEnabled()
         qtbot.waitUntil(window.save_file_action.isEnabled, timeout=10000)
         assert window.progress_bar.value() == window.progress_bar.maximum() == 62
-        assert len(waits) == 61 and all(delay == 1.5 for delay in waits)
+        assert waits == ([] if delay is None else [delay] * 61)
         _save(window, qtbot, monkeypatch, destination)
 
     translated = Document(str(destination))
