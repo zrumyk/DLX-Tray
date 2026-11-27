@@ -50,8 +50,8 @@ Name: "{userdesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; WorkingDir: "{app
 Filename: "{app}\{#AppExe}"; WorkingDir: "{app}"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags: nowait postinstall skipifsilent unchecked
 
 [CustomMessages]
-english.CloseApp=Close DLX Tray and try uninstalling again.
-ukrainian.CloseApp=Закрийте DLX Tray і повторіть спробу видалення.
+english.CloseApp=Choose Exit from the DLX Tray notification area icon or File menu, then try uninstalling again.
+ukrainian.CloseApp=Виберіть «Вийти» в меню іконки DLX Tray в області сповіщень або в меню «Файл» і повторіть спробу видалення.
 english.RemoveData=Also remove DLX Tray settings, translation history, and logs from %1?
 ukrainian.RemoveData=Також видалити налаштування, історію перекладів і журнали DLX Tray з %1?
 english.RemoveDataFailed=Some DLX Tray data could not be removed from %1.

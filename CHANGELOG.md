@@ -7,6 +7,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- Minimize or close the window to keep translations running in the system tray. The tray icon
+  shows provider status and the DLX cooldown. Launching again opens the existing window.
+  Choose Exit from the tray or File menu to quit.
 - Choose **Official DeepL API only** in Settings to use your DeepL API key for text and files.
   Automatic mode uses DLX with official API fallback when a key is available.
 - Reuse completed paragraph and file-segment translations for up to 30 days. Settings can

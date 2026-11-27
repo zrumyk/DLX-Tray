@@ -13,6 +13,7 @@ from keyring.errors import KeyringError
 from pydantic_settings import SettingsError
 from PySide6.QtCore import QByteArray, QCoreApplication, QRect, Qt, QThread
 from PySide6.QtGui import QIcon
+from PySide6.QtNetwork import QLocalServer
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from dlx_tray import APP_NAME, __version__, config
@@ -34,6 +35,7 @@ from dlx_tray.services.diagnostics import markdown_report
 from dlx_tray.ui.localization import interface_language
 from dlx_tray.ui.main_window import MainWindow
 from dlx_tray.ui.settings_dialog import SettingsDialog
+from dlx_tray.ui.single_instance import single_instance
 from dlx_tray.ui.theme import apply_theme
 
 log = logging.getLogger(__name__)
@@ -82,7 +84,9 @@ def _check_deepl_api_key(key: str) -> None:
         official.close()
 
 
-def _run_window(app: QApplication, settings: Settings, stack: ExitStack) -> int:
+def _run_window(
+    app: QApplication, settings: Settings, stack: ExitStack, server: QLocalServer | None = None
+) -> int:
     apply_theme(app, settings.theme)
     window = MainWindow(
         source=settings.source_lang,
@@ -119,6 +123,27 @@ def _run_window(app: QApplication, settings: Settings, stack: ExitStack) -> int:
     dlx_status = QCoreApplication.translate("Startup", "Starting DLX…")
     dlx_connection: DLXConnection | None = None
     startup: _DLXStartup | None = None
+
+    def cooldown_deadline() -> float:
+        return (
+            dlx.cooldown_deadline
+            if dlx is not None and settings.provider_mode == "automatic"
+            else 0.0
+        )
+
+    window.enable_tray(app.windowIcon(), cooldown_deadline)
+
+    def activate_window() -> None:
+        assert server is not None
+        while server.hasPendingConnections():
+            socket = server.nextPendingConnection()
+            socket.abort()
+            socket.deleteLater()
+        window.restore_from_tray()
+
+    if server is not None:
+        server.newConnection.connect(activate_window)
+        window.closed.connect(server.close)
 
     def copy_diagnostics() -> None:
         nonlocal export
@@ -297,7 +322,7 @@ def _run_window(app: QApplication, settings: Settings, stack: ExitStack) -> int:
 
         def startup_finished() -> None:
             nonlocal dlx, dlx_connection, dlx_status
-            if not window.isVisible():
+            if window.is_closed:
                 return
             if worker.ready:
                 dlx = stack.enter_context(
@@ -320,8 +345,14 @@ def _run_window(app: QApplication, settings: Settings, stack: ExitStack) -> int:
         refresh_job()
         window.show()
         initial_placement = _window_placement(window)
+        if server is not None and server.hasPendingConnections():
+            activate_window()
         result = app.exec()
     finally:
+        window.hide_tray()
+        if server is not None:
+            server.close()
+            server.newConnection.disconnect(activate_window)
         # The translator and process remain alive until both workers have stopped.
         window.stop_translation()
         if startup is not None:
@@ -348,6 +379,31 @@ def run(argv: list[str]) -> int:
     app.setOrganizationName(APP_NAME)
     app.setWindowIcon(QIcon(str(Path(__file__).with_name("resources") / "dlx-tray.ico")))
 
+    with ExitStack() as stack:
+        try:
+            server = stack.enter_context(single_instance(config.app_data_dir()))
+        except OSError as exc:
+            log.warning("Could not initialize single-instance control: %s", type(exc).__name__)
+            try:
+                language = Settings.load().ui_language
+            except (OSError, ValueError, SettingsError):
+                language = config.system_ui_language()
+            with interface_language(app, language):
+                QMessageBox.critical(
+                    None,
+                    APP_NAME,
+                    QCoreApplication.translate(
+                        "Startup",
+                        "Could not open DLX Tray. Check whether it is already running.",
+                    ),
+                )
+            return 1
+        if server is None:
+            return 0
+        return _run_primary(app, stack, server)
+
+
+def _run_primary(app: QApplication, stack: ExitStack, server: QLocalServer) -> int:
     try:
         settings = Settings.load(migrate=True)
     except (OSError, ValueError, SettingsError):
@@ -361,20 +417,19 @@ def run(argv: list[str]) -> int:
         )
         return 1
 
-    with ExitStack() as stack:
-        log_opened = True
-        try:
-            stack.enter_context(file_logging(settings.log_level))
-        except OSError:
-            log_opened = False
-        stack.enter_context(interface_language(app, settings.ui_language))
-        if not log_opened:
-            QMessageBox.warning(
-                None,
-                APP_NAME,
-                QCoreApplication.translate("Startup", "Could not open the application log."),
-            )
-        log.info("Starting DLX Tray %s", __version__)
-        if settings.migration_error is not None:
-            log.warning("Could not persist settings migration (%s)", settings.migration_error)
-        return _run_window(app, settings, stack)
+    log_opened = True
+    try:
+        stack.enter_context(file_logging(settings.log_level))
+    except OSError:
+        log_opened = False
+    stack.enter_context(interface_language(app, settings.ui_language))
+    if not log_opened:
+        QMessageBox.warning(
+            None,
+            APP_NAME,
+            QCoreApplication.translate("Startup", "Could not open the application log."),
+        )
+    log.info("Starting DLX Tray %s", __version__)
+    if settings.migration_error is not None:
+        log.warning("Could not persist settings migration (%s)", settings.migration_error)
+    return _run_window(app, settings, stack, server)

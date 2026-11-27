@@ -40,7 +40,7 @@ def app_data_dir() -> Path:
     return Path.home() / "AppData" / "Roaming" / APP_NAME
 
 
-def _system_ui_language() -> UiLanguage:
+def system_ui_language() -> UiLanguage:
     language, _ = locale.getlocale()
     primary = (language or "").lower().replace("-", "_").split("_", 1)[0]
     return "uk" if primary in {"uk", "ukrainian"} else "en"
@@ -102,7 +102,7 @@ class Settings(BaseSettings):
     history_limit: int = Field(default=500, ge=1)
     cache_enabled: bool = True
     theme: Theme = "system"
-    ui_language: UiLanguage = Field(default_factory=_system_ui_language)
+    ui_language: UiLanguage = Field(default_factory=system_ui_language)
 
     deepl_api_key: SecretStr | None = Field(default=None, exclude=True, repr=False)
     deeplx_token: SecretStr | None = Field(default=None, exclude=True, repr=False)

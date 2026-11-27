@@ -87,6 +87,11 @@ uv run python scripts/fetch_deeplx.py   # builds the pinned DLX binary into vend
 uv run dlx-tray
 ```
 
+In the source build, minimize or close the window to keep it running in the Windows
+notification area. Click the DLX Tray icon or launch the app again to reopen the window.
+The icon's tooltip shows provider status and any known DLX cooldown. Choose **Exit**
+from the icon's menu or **File → Exit** to quit.
+
 To package the app from source, run `.\scripts\build.ps1` in PowerShell. Open
 `dist/DLX Tray/DLX Tray.exe` and keep the entire `dist/DLX Tray` folder together when moving it.
 

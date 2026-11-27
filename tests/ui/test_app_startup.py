@@ -17,6 +17,7 @@ import requests
 from keyring.errors import KeyringError
 from PySide6.QtCore import QRect, QSize, Qt, QTimer
 from PySide6.QtGui import QShortcut
+from PySide6.QtNetwork import QLocalServer
 from PySide6.QtWidgets import (
     QApplication,
     QDialogButtonBox,
@@ -90,12 +91,17 @@ def run_window(
     return run
 
 
-def test_startup_loads_the_window_icon(qapp: QApplication, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_startup_loads_the_window_icon(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     monkeypatch.setattr(app, "QApplication", lambda _argv: qapp)
+    monkeypatch.setattr(config, "app_data_dir", lambda: tmp_path)
     monkeypatch.setattr(Settings, "load", lambda *, migrate: Settings())
     monkeypatch.setattr(app, "file_logging", lambda _level: nullcontext())
 
-    def check_icon(application: QApplication, _settings: Settings, _stack: ExitStack) -> int:
+    def check_icon(
+        application: QApplication, _settings: Settings, _stack: ExitStack, _server: QLocalServer
+    ) -> int:
         icon = application.windowIcon()
         assert QSize(16, 16) in icon.availableSizes()
         assert QSize(256, 256) in icon.availableSizes()
@@ -121,7 +127,9 @@ def test_startup_migrates_request_delay_before_opening_the_window(
     path.write_text('{"request_delay": 2.5, "ui_language": "en"}', encoding="utf-8")
     observed_delays: list[float] = []
 
-    def check_settings(_app: QApplication, settings: Settings, _stack: ExitStack) -> int:
+    def check_settings(
+        _app: QApplication, settings: Settings, _stack: ExitStack, _server: QLocalServer
+    ) -> int:
         observed_delays.append(settings.request_delay)
         assert json.loads(path.read_text(encoding="utf-8"))["settings_version"] == 1
         if len(observed_delays) == 1:
@@ -735,6 +743,42 @@ def test_close_during_dlx_startup_joins_worker_before_stopping_process(
             assert window.close()
         finally:
             closed.set()
+
+    run_window(Settings(), check)
+    process.stop.assert_called_once_with()
+
+
+def test_declining_exit_during_dlx_startup_keeps_provider_ready(
+    run_window: Callable[[Settings, Callable[[MainWindow, QLabel], None]], None],
+    qtbot: QtBot,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    wait_for_prompt = Event()
+
+    def start() -> None:
+        assert wait_for_prompt.wait(timeout=5)
+
+    process = Mock(spec=DLXProcess, base_url="http://127.0.0.1:1", token="")
+    process.start.side_effect = start
+    monkeypatch.setattr(app, "DLXProcess", Mock(return_value=process))
+
+    def check(window: MainWindow, status: QLabel) -> None:
+        def decline(*_args: object) -> QMessageBox.StandardButton:
+            wait_for_prompt.set()
+            qtbot.waitUntil(lambda: status.text() == "DLX ready")
+            return QMessageBox.StandardButton.No
+
+        monkeypatch.setattr(QMessageBox, "question", decline)
+        assert status.text() == "Starting DLX…"
+        window._file_unsaved = True
+        try:
+            window.exit_action.trigger()
+            assert window.isVisible() and window._file_unsaved
+            window.source_editor.setPlainText("Hello")
+            assert window.translate_button.isEnabled()
+        finally:
+            window._file_unsaved = False
+            wait_for_prompt.set()
 
     run_window(Settings(), check)
     process.stop.assert_called_once_with()

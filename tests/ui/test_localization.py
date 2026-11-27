@@ -110,7 +110,9 @@ def test_saved_interface_language_applies_on_next_start(
     monkeypatch.setattr(localization, "_CATALOG", compiled)
     Settings(ui_language="en", target_lang=Language.PT_BR).save()
 
-    def check_window(_app: QApplication, settings: Settings, _stack: ExitStack) -> int:
+    def check_window(
+        _app: QApplication, settings: Settings, _stack: ExitStack, _server: object
+    ) -> int:
         window = MainWindow(target=settings.target_lang, ui_language=settings.ui_language)
         qtbot.addWidget(window)
         change_to = "uk" if settings.ui_language == "en" else "en"

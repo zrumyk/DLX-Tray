@@ -2,18 +2,20 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from functools import partial
 from math import ceil
 from pathlib import Path
 from time import monotonic
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QCollator, QLocale, Qt, QThread, QTimer, Signal, Slot
+from PySide6.QtCore import QCollator, QEvent, QLocale, Qt, QThread, QTimer, Signal, Slot
 from PySide6.QtGui import (
     QCloseEvent,
     QDragEnterEvent,
     QDragMoveEvent,
     QDropEvent,
+    QIcon,
     QKeySequence,
     QShortcut,
     QTextCursor,
@@ -27,11 +29,13 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QPlainTextDocumentLayout,
     QPlainTextEdit,
     QProgressBar,
     QPushButton,
+    QSystemTrayIcon,
     QWidget,
 )
 
@@ -103,6 +107,7 @@ class MainWindow(QMainWindow):
     settings_requested = Signal()
     diagnostics_requested = Signal()
     diagnostics_finished = Signal(str)
+    closed = Signal()
 
     def __init__(
         self,
@@ -126,6 +131,9 @@ class MainWindow(QMainWindow):
         self.save_file_action.triggered.connect(self._choose_destination)
         self.close_file_action = file_menu.addAction(self.tr("&Close file"))
         self.close_file_action.triggered.connect(self._close_file)
+        file_menu.addSeparator()
+        self.exit_action = file_menu.addAction(self.tr("E&xit"))
+        self.exit_action.triggered.connect(self.exit_application)
         self.history_action = self.menuBar().addAction(self.tr("&History…"))
         self.history_action.triggered.connect(self._show_history)
         self.settings_action = self.menuBar().addAction(self.tr("&Settings…"))
@@ -151,6 +159,10 @@ class MainWindow(QMainWindow):
         self._detected_source: Language | None = None
         self._last_provider: DiagnosticProvider | None = None
         self._close_pending = False
+        self._exit_requested = False
+        self._closed = False
+        self._tray: QSystemTrayIcon | None = None
+        self._tray_timer = QTimer(self)
         self._rendered_chars = 0
         self.setWindowTitle(f"{APP_NAME} {__version__}")
         self.setAcceptDrops(True)
@@ -286,6 +298,87 @@ class MainWindow(QMainWindow):
     @property
     def diagnostic_rate_limited(self) -> bool:
         return self._dlx_rate_limited
+
+    @property
+    def is_closed(self) -> bool:
+        return self._closed
+
+    def enable_tray(self, icon: QIcon, cooldown_deadline: Callable[[], float]) -> None:
+        if not QSystemTrayIcon.isSystemTrayAvailable() or icon.isNull():
+            return
+        tray = QSystemTrayIcon(icon, self)
+        menu = QMenu(self)
+        menu.addAction(self.tr("Show DLX Tray"), self.restore_from_tray)
+        menu.addSeparator()
+        menu.addAction(self.exit_action)
+        tray.setContextMenu(menu)
+        tray.activated.connect(self._tray_activated)
+        self._tray = tray
+
+        def update_tooltip() -> None:
+            cooldown = cooldown_deadline() - monotonic()
+            wait = (
+                self.tr("DLX cooldown: {seconds} s").format(seconds=ceil(cooldown))
+                if cooldown > 0
+                else self._rate_limit_status.text()
+            )
+            provider = self._provider_status.text() if not self._provider_status.isHidden() else ""
+            status = self._dlx_status.text()
+            tooltip = "\n".join(filter(None, (APP_NAME, wait, provider, status)))
+            if tray.toolTip() != tooltip:
+                tray.setToolTip(tooltip)
+
+        self._tray_timer.timeout.connect(update_tooltip)
+        self._tray_timer.start(1000)
+        update_tooltip()
+        tray.show()
+
+    def hide_tray(self) -> None:
+        self._tray_timer.stop()
+        if self._tray is not None:
+            self._tray.hide()
+
+    @Slot(QSystemTrayIcon.ActivationReason)
+    def _tray_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
+        if reason in (
+            QSystemTrayIcon.ActivationReason.Trigger,
+            QSystemTrayIcon.ActivationReason.DoubleClick,
+        ):
+            self.restore_from_tray()
+
+    @Slot()
+    def restore_from_tray(self) -> None:
+        if self._closed:
+            return
+        self.setWindowState(self.windowState() & ~Qt.WindowState.WindowMinimized)
+        self.show()
+        active = QApplication.activeModalWidget() or self
+        active.raise_()
+        active.activateWindow()
+
+    @Slot()
+    def exit_application(self) -> None:
+        modal = QApplication.activeModalWidget()
+        if modal is not None and modal is not self._error_dialog:
+            self.restore_from_tray()
+            return
+        self._exit_requested = True
+        self.close()
+
+    def changeEvent(self, event: QEvent) -> None:
+        super().changeEvent(event)
+        if (
+            event.type() == QEvent.Type.WindowStateChange
+            and self.isMinimized()
+            and self._tray is not None
+            and QSystemTrayIcon.isSystemTrayAvailable()
+        ):
+            # Qt can finish showing the minimized window after this event.
+            QTimer.singleShot(0, self, self._hide_minimized_window)
+
+    def _hide_minimized_window(self) -> None:
+        if self.isMinimized():
+            self.hide()
 
     @Slot()
     def _show_history(self) -> None:
@@ -936,16 +1029,33 @@ class MainWindow(QMainWindow):
             self.close()
 
     def closeEvent(self, event: QCloseEvent) -> None:
+        if (
+            not self._exit_requested
+            and self._tray is not None
+            and QSystemTrayIcon.isSystemTrayAvailable()
+        ):
+            self.hide()
+            event.ignore()
+            return
         if self._thread is not None:
             self._close_pending = True
             self._cancel_translation()
             event.ignore()
             return
         self._close_pending = False
+        if self._file_unsaved and not self.isVisible():
+            self.restore_from_tray()
         if not self._confirm_discard_file_translation():
+            self._exit_requested = False
             event.ignore()
             return
         super().closeEvent(event)
+        self._closed = True
+        self.closed.emit()
+        if self._exit_requested:
+            self.hide_tray()
+            if not self.isVisible():
+                QApplication.quit()
 
     def stop_translation(self) -> None:
         """Join an active translation or file worker after the event loop exits."""
