@@ -87,6 +87,11 @@ class DeeplxTranslator:
     def name(self) -> str:
         return PROVIDER_NAME
 
+    @property
+    def cooldown_deadline(self) -> float:
+        with self._dispatch:
+            return self._blocked_until
+
     def close(self) -> None:
         if self._owns_client:
             self._client.close()

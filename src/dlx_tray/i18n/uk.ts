@@ -176,6 +176,18 @@
 <context>
     <name>MainWindow</name>
     <message>
+        <source>E&amp;xit</source>
+        <translation>Ви&amp;йти</translation>
+    </message>
+    <message>
+        <source>Show DLX Tray</source>
+        <translation>Показати DLX Tray</translation>
+    </message>
+    <message>
+        <source>DLX cooldown: {seconds} s</source>
+        <translation>Пауза DLX: {seconds} с</translation>
+    </message>
+    <message>
         <source>&amp;File</source>
         <translation>&amp;Файл</translation>
     </message>
@@ -773,6 +785,10 @@
 </context>
 <context>
     <name>Startup</name>
+    <message>
+        <source>Could not open DLX Tray. Check whether it is already running.</source>
+        <translation>Не вдалося відкрити DLX Tray. Перевірте, чи програму вже запущено.</translation>
+    </message>
     <message>
         <source>Add a DeepL API key in Settings</source>
         <translation>Додайте ключ API DeepL у налаштуваннях</translation>

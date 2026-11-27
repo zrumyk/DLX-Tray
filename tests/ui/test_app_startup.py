@@ -17,6 +17,7 @@ import requests
 from keyring.errors import KeyringError
 from PySide6.QtCore import QRect, QSize, Qt, QTimer
 from PySide6.QtGui import QShortcut
+from PySide6.QtNetwork import QLocalServer
 from PySide6.QtWidgets import (
     QApplication,
     QDialogButtonBox,
@@ -90,12 +91,17 @@ def run_window(
     return run
 
 
-def test_startup_loads_the_window_icon(qapp: QApplication, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_startup_loads_the_window_icon(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     monkeypatch.setattr(app, "QApplication", lambda _argv: qapp)
+    monkeypatch.setattr(config, "app_data_dir", lambda: tmp_path)
     monkeypatch.setattr(Settings, "load", lambda *, migrate: Settings())
     monkeypatch.setattr(app, "file_logging", lambda _level: nullcontext())
 
-    def check_icon(application: QApplication, _settings: Settings, _stack: ExitStack) -> int:
+    def check_icon(
+        application: QApplication, _settings: Settings, _stack: ExitStack, _server: QLocalServer
+    ) -> int:
         icon = application.windowIcon()
         assert QSize(16, 16) in icon.availableSizes()
         assert QSize(256, 256) in icon.availableSizes()
@@ -121,7 +127,9 @@ def test_startup_migrates_request_delay_before_opening_the_window(
     path.write_text('{"request_delay": 2.5, "ui_language": "en"}', encoding="utf-8")
     observed_delays: list[float] = []
 
-    def check_settings(_app: QApplication, settings: Settings, _stack: ExitStack) -> int:
+    def check_settings(
+        _app: QApplication, settings: Settings, _stack: ExitStack, _server: QLocalServer
+    ) -> int:
         observed_delays.append(settings.request_delay)
         assert json.loads(path.read_text(encoding="utf-8"))["settings_version"] == 1
         if len(observed_delays) == 1:
