@@ -11,7 +11,8 @@ import respx
 from dlx_tray.core.chunker import HARD_MAX_UNITS
 from dlx_tray.core.diagnostics import DiagnosticTimeline, ProviderAttempt
 from dlx_tray.core.models import (
-    AuthError,
+    DlxAuthError,
+    DlxForbiddenError,
     Formality,
     Language,
     ProviderUnavailableError,
@@ -151,12 +152,18 @@ def test_detected_source(
     assert dlx.translate(["x"], Language.AUTO, Language.UK)[0].detected_source is expected
 
 
-@pytest.mark.parametrize("status", [401, 403])
-def test_auth_errors(mock: respx.MockRouter, dlx: DeeplxTranslator, status: int) -> None:
+@pytest.mark.parametrize(
+    ("status", "error"),
+    [(401, DlxAuthError), (403, DlxForbiddenError)],
+)
+def test_access_errors_do_not_trust_the_response_body(
+    mock: respx.MockRouter, dlx: DeeplxTranslator, status: int, error: type[TranslationError]
+) -> None:
     body = {"code": status, "message": "Invalid access token"}
     mock.post(URL).mock(return_value=httpx.Response(status, json=body))
-    with pytest.raises(AuthError, match="Invalid access token"):
+    with pytest.raises(error, match=f"HTTP {status}") as info:
         translate(dlx, "Hello")
+    assert body["message"] not in str(info.value)
 
 
 def test_logging_excludes_input_and_server_supplied_details(
@@ -170,7 +177,7 @@ def test_logging_excludes_input_and_server_supplied_details(
     ]
     with caplog.at_level(logging.DEBUG, logger="dlx_tray.providers.deeplx"):
         translate(dlx, source_text)
-        with pytest.raises(AuthError):
+        with pytest.raises(DlxAuthError):
             translate(dlx, source_text)
 
     assert "unknown source language" in caplog.text
@@ -196,8 +203,9 @@ def test_429_is_rate_limited(
 ) -> None:
     body = {"code": 429, "message": "too many requests, your IP has been blocked by DeepL"}
     mock.post(URL).mock(return_value=httpx.Response(429, json=body, headers=headers))
-    with pytest.raises(RateLimitedError, match="too many requests") as info:
+    with pytest.raises(RateLimitedError, match="rate-limited") as info:
         translate(dlx, "Hello")
+    assert body["message"] not in str(info.value)
     assert info.value.retry_after == retry_after
 
 

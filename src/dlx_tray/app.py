@@ -201,6 +201,7 @@ def _run_window(app: QApplication, settings: Settings, stack: ExitStack) -> int:
             chunk_size=settings.chunk_size,
             formality=settings.formality,
             requires_settings=requires_settings,
+            can_add_api_key=translator is dlx and dlx is not None and api_key is None,
         )
 
     def refresh_provider() -> None:
@@ -265,7 +266,7 @@ def _run_window(app: QApplication, settings: Settings, stack: ExitStack) -> int:
             clear_cache=cache.clear,
             parent=window,
         )
-        if settings.provider_mode == "official_only" and api_key is None:
+        if api_key is None:
             dialog.api_key.setFocus()
         try:
             dialog.exec()

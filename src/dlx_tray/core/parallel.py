@@ -72,6 +72,7 @@ def ordered_attempts[T](
     *,
     can_pair: Callable[[T, T], bool] = lambda _first, _second: False,
     batch: BatchAttempt[T] | None = None,
+    wait_for_first_result: bool = False,
 ) -> Generator[tuple[T, TranslationResult | None]]:
     pending: deque[_Pending[T]] = deque()
     leaders: set[Future[TranslationResult]] = set()
@@ -215,6 +216,8 @@ def ordered_attempts[T](
 
     inputs = enumerate(work)
     lookahead: tuple[int, Work[T]] | None = None
+    # A file's first DLX response can start a retry or switch providers before more requests.
+    first_request: Future[TranslationResult] | None = None
     exhausted = False
     with ThreadPoolExecutor(max_workers=dispatch.concurrency, thread_name_prefix="DLX") as pool:
         try:
@@ -230,6 +233,7 @@ def ordered_attempts[T](
                     and not failed
                     and len(leaders) < dispatch.concurrency
                     and started.is_set()
+                    and (first_request is None or first_request.done())
                     and (dispatch.concurrency == 2 or not pending)
                 ):
                     while (next_item := lookahead or next(inputs, None)) is not None:
@@ -262,6 +266,8 @@ def ordered_attempts[T](
                             # The final result is published last and tracks this request's slot.
                             last_future = entries[-1].future
                             assert last_future is not None
+                            if wait_for_first_result and first_request is None:
+                                first_request = last_future
                             leaders.add(last_future)
                             pool.submit(
                                 run_leaders,

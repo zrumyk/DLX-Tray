@@ -74,8 +74,20 @@
         <translation>Копіювати діагностику</translation>
     </message>
     <message>
+        <source>DLX authentication failed (HTTP 401). Check the DLX access token.</source>
+        <translation>Не вдалося пройти автентифікацію DLX (HTTP 401). Перевірте токен доступу DLX.</translation>
+    </message>
+    <message>
+        <source>DLX returned HTTP 403. The server or an upstream service denied access.</source>
+        <translation>DLX повернув HTTP 403. Доступ заборонив сервер DLX або сервіс, до якого він звертається.</translation>
+    </message>
+    <message>
         <source>The translation provider rejected its credentials.</source>
         <translation>Сервіс перекладу відхилив облікові дані.</translation>
+    </message>
+    <message>
+        <source>Tray paused DLX requests after a rate limit.</source>
+        <translation>Tray призупинив запити до DLX після досягнення ліміту.</translation>
     </message>
     <message>
         <source>The translation provider is rate-limited.</source>
@@ -238,6 +250,10 @@
     <message>
         <source>Translate (Ctrl+Enter)</source>
         <translation>Перекласти (Ctrl+Enter)</translation>
+    </message>
+    <message>
+        <source>Add DeepL API key…</source>
+        <translation>Додати ключ DeepL API…</translation>
     </message>
     <message>
         <source>Translation progress</source>

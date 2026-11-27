@@ -32,6 +32,9 @@ def test_report_keeps_safe_rotated_logs_and_only_attributes_matching_dlx(tmp_pat
     )
     log_path.write_text(
         f"{log_prefix}DLX stopped (pid 12)\n"
+        f"{log_prefix}Translation failed for chunk 1 (DlxAuthError)\n"
+        f"{log_prefix}Translation failed for chunk 2 (DlxForbiddenError)\n"
+        f"{log_prefix}Translation failed for chunk 3 (DlxForbiddenError) PRIVATE_PAYLOAD\n"
         f"{log_prefix}DLX stopped (pid 13) PRIVATE_PAYLOAD\n"
         "continuation PRIVATE_PAYLOAD\n",
         encoding="utf-8",
@@ -58,7 +61,9 @@ def test_report_keeps_safe_rotated_logs_and_only_attributes_matching_dlx(tmp_pat
     assert f"Bundled DLX SHA-256: {digest}" in result
     assert "DeepL API key: not set" in result
     assert result.index("(pid 10)") < result.index("(pid 11)") < result.index("(pid 12)")
-    assert result.count("[redacted]") == 2
+    assert "Translation failed for chunk 1 (DlxAuthError)" in result
+    assert "Translation failed for chunk 2 (DlxForbiddenError)" in result
+    assert result.count("[redacted]") == 3
     assert "PRIVATE_PAYLOAD" not in result
 
     replacement = b"synthetic replacement binary"

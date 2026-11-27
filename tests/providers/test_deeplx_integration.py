@@ -13,8 +13,9 @@ import pytest
 from dlx_tray.core.chunker import HARD_MAX_UNITS, utf16_len
 from dlx_tray.core.diagnostics import DiagnosticTimeline, LocalCache, SharedResult
 from dlx_tray.core.models import (
-    AuthError,
     Chunk,
+    DlxAuthError,
+    DlxForbiddenError,
     Formality,
     Language,
     ProviderUnavailableError,
@@ -841,7 +842,8 @@ def test_retries_scripted_failure(
 
 
 @pytest.mark.parametrize(
-    ("step", "error"), [("401", AuthError), ("403", AuthError), ("413", TextTooLongError)]
+    ("step", "error"),
+    [("401", DlxAuthError), ("403", DlxForbiddenError), ("413", TextTooLongError)],
 )
 def test_job_does_not_retry_scripted_client_errors(
     fake_dlx: FakeDLXFactory, step: str, error: type[TranslationError]

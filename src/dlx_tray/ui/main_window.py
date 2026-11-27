@@ -141,6 +141,7 @@ class MainWindow(QMainWindow):
         self._history_limit = 1
         self._translation_unavailable_reason = translation_unavailable_reason
         self._translation_requires_settings = False
+        self._can_add_api_key = False
         self._thread: QThread | None = None
         self._worker: TranslationWorker | FileIOWorker | None = None
         self._file: SourceFile | None = None
@@ -199,6 +200,11 @@ class MainWindow(QMainWindow):
         self._rate_limit_status.setObjectName("rate_limit_status")
         self._rate_limit_status.hide()
         self.statusBar().addPermanentWidget(self._rate_limit_status)
+        self._add_api_key_button = QPushButton(self.tr("Add DeepL API key…"))
+        self._add_api_key_button.setObjectName("add_api_key")
+        self._add_api_key_button.hide()
+        self._add_api_key_button.clicked.connect(self._open_key_settings)
+        self.statusBar().addPermanentWidget(self._add_api_key_button)
         self._dlx_rate_limited = False
         self._retry_waits: dict[int, tuple[float, type[TranslationError]]] = {}
         self._retry_timer = QTimer(self)
@@ -502,10 +508,14 @@ class MainWindow(QMainWindow):
         chunk_size: int | None = None,
         formality: Formality | None = None,
         requires_settings: bool = False,
+        can_add_api_key: bool = False,
     ) -> None:
         """Show the startup outcome and enable translation when a job is available."""
         self._job = job
         self._translation_requires_settings = requires_settings
+        self._can_add_api_key = can_add_api_key
+        if not can_add_api_key:
+            self._add_api_key_button.hide()
         self._translation_unavailable_reason = status if job is None else None
         self._dlx_status.setText(status)
         self._dlx_status.show()
@@ -719,6 +729,7 @@ class MainWindow(QMainWindow):
 
     def _set_input_locked(self, locked: bool) -> None:
         self.settings_action.setEnabled(not locked)
+        self._add_api_key_button.setEnabled(not locked)
         self.history_action.setEnabled(not locked and self._history_path is not None)
         self.open_file_action.setEnabled(not locked)
         self.close_file_action.setEnabled(not locked and self._file is not None)
@@ -808,8 +819,14 @@ class MainWindow(QMainWindow):
 
     def _reset_retry_status(self) -> None:
         self._dlx_rate_limited = False
+        self._add_api_key_button.hide()
         self._retry_waits.clear()
         self._update_retry_status()
+
+    @Slot()
+    def _open_key_settings(self) -> None:
+        self._add_api_key_button.hide()
+        self.settings_requested.emit()
 
     def _append_result(self, text: str) -> None:
         if len(text) > self._rendered_chars:
@@ -900,6 +917,13 @@ class MainWindow(QMainWindow):
     def _worker_stopped(self) -> None:
         thread = self._thread
         assert thread is not None
+        if (
+            isinstance(self._worker, TranslationWorker)
+            and self._dlx_rate_limited
+            and self._can_add_api_key
+            and not self._close_pending
+        ):
+            self._add_api_key_button.show()
         thread.wait()
         thread.deleteLater()
         self._thread = None
