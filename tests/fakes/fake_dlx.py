@@ -123,7 +123,7 @@ class _Handler(BaseHTTPRequestHandler):
         if not texts or (isinstance(text, str) and not text.strip()):
             self._error(404, "No text to translate")
             return
-        units = sum(utf16_len(item) for item in texts)
+        units = sum(utf16_len(item) for item in texts if item.strip())
         if units > HARD_MAX_UNITS:
             self._error(
                 413,

@@ -45,7 +45,7 @@ class FakeTranslator:
         return [TranslationResult(text.upper(), Language.EN, self.name) for text in texts]
 
 
-def test_streams_chunks_with_original_layout_and_pauses_between_requests() -> None:
+def test_streams_chunks_with_original_layout_without_a_default_pause() -> None:
     translator = FakeTranslator()
     waits: list[tuple[float, int]] = []
     progress: list[tuple[int, int, str]] = []
@@ -73,7 +73,7 @@ def test_streams_chunks_with_original_layout_and_pauses_between_requests() -> No
         (["one"], Language.AUTO, Language.UK, Formality.MORE),
         (["two"], Language.AUTO, Language.UK, Formality.MORE),
     ]
-    assert waits == [(2.5, 1)]
+    assert waits == []
     assert progress == [(1, 2, "\t ONE\r\n\r\n"), (2, 2, "\t ONE\r\n\r\nTWO  ")]
     assert result == JobResult("\t ONE\r\n\r\nTWO  ", Language.EN, chunk_providers=("fake", "fake"))
 
@@ -115,7 +115,7 @@ def test_cancel_during_inter_request_wait_keeps_completed_chunk() -> None:
         cancel.set()
         return False
 
-    job = TranslationJob(translator=translator, max_units=3, sleep=sleep)
+    job = TranslationJob(translator=translator, max_units=3, request_delay=2.5, sleep=sleep)
     result = job.run("one two", Language.AUTO, Language.UK)
 
     assert result == JobResult("ONE ", Language.EN, cancelled=True, chunk_providers=("fake",))

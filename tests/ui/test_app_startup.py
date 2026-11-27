@@ -627,7 +627,9 @@ def test_settings_save_applies_to_next_job_and_reloads(
         assert official.translate.call_count == 2
 
     with fake_dlx(["429"]) as server:
-        settings = Settings.model_validate({"deeplx_url": server.url, "deeplx_token": server.token})
+        settings = Settings.model_validate(
+            {"deeplx_url": server.url, "deeplx_token": server.token, "request_delay": 2.5}
+        )
         run_window(settings, check)
 
     assert vault._set_password.call_args_list == [

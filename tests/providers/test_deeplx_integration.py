@@ -7,6 +7,7 @@ from threading import Event
 import httpx
 import pytest
 
+from dlx_tray.core.chunker import HARD_MAX_UNITS
 from dlx_tray.core.models import (
     AuthError,
     Chunk,
@@ -80,7 +81,7 @@ def test_job_retries_only_the_failed_chunk(
             on_progress=on_progress,
         )
 
-    assert waits == [2.5, backoff]
+    assert waits == [backoff]
     assert retries == [(1, backoff, error)]
     assert progress == [(1, 2, "[UK] Hello\r\n"), (2, 2, "[UK] Hello\r\n[UK] dlroW")]
     assert result == JobResult(
@@ -145,6 +146,17 @@ def test_scripted_client_errors(
         pytest.raises(error),
     ):
         translator.translate(["Hello"], Language.EN, Language.UK)
+
+
+def test_batch_at_limit_with_blank_entry(fake_dlx: FakeDLXFactory) -> None:
+    text = "a" * HARD_MAX_UNITS
+    blank = " " * (HARD_MAX_UNITS + 1)
+    with fake_dlx([]) as server, DeeplxTranslator(server.url, server.token) as translator:
+        result = translator.translate([text, blank], Language.EN, Language.UK)
+    assert result == [
+        TranslationResult(f"[UK] {text}", Language.EN, "dlx"),
+        TranslationResult(blank, Language.EN, "dlx"),
+    ]
 
 
 def test_cooldown_doubles_across_jobs_and_resets_on_success(

@@ -236,17 +236,15 @@ def test_malformed_success_is_unavailable(
         translate(dlx, "Hello")
 
 
-def test_batch_over_limit_is_refused_locally(mock: respx.MockRouter, dlx: DeeplxTranslator) -> None:
-    route = mock.post(URL)
+def test_dlx_applies_the_batch_size_limit(mock: respx.MockRouter, dlx: DeeplxTranslator) -> None:
+    route = mock.post(URL).mock(
+        return_value=httpx.Response(413, json={"message": "DLX counted 1502 UTF-16 units"})
+    )
     half = "\U0001f600" * (HARD_MAX_UNITS // 4)  # emoji cost 2 UTF-16 units each
-    with pytest.raises(TextTooLongError, match="1502"):
-        dlx.translate([half, half, "ab"], Language.AUTO, Language.UK)
-    assert not route.called
-
-
-def test_batch_at_limit_is_sent(mock: respx.MockRouter, dlx: DeeplxTranslator) -> None:
-    mock.post(URL).mock(return_value=ok(["x"]))
-    assert translate(dlx, "a" * HARD_MAX_UNITS) == ["x"]
+    batch = [half, half, "ab"]
+    with pytest.raises(TextTooLongError, match="DLX counted 1502 UTF-16 units"):
+        dlx.translate(batch, Language.AUTO, Language.UK)
+    assert json.loads(route.calls.last.request.content)["text"] == batch
 
 
 @pytest.mark.parametrize(
