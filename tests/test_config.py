@@ -109,6 +109,34 @@ def test_migration_uses_json_and_preserves_override_precedence(
     assert Settings.load(path, env_file=None, migrate=True).request_delay == 0
 
 
+@pytest.mark.parametrize("saved_delay", [0, 2.5])
+def test_failed_migration_uses_migrated_delay_and_can_be_persisted_later(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, saved_delay: float
+) -> None:
+    path = tmp_path / "settings.json"
+    legacy = '{"request_delay": 2.5, "theme": "dark"}'
+    path.write_text(legacy, encoding="utf-8")
+
+    def fail_replace(source: Path, target: Path) -> Path:
+        raise PermissionError("destination is read-only")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "replace", fail_replace)
+        settings = Settings.load(path, migrate=True)
+        assert settings.request_delay == 0
+        assert settings.migration_error == "PermissionError"
+        assert path.read_text(encoding="utf-8") == legacy
+
+    updated = settings.model_copy(update={"request_delay": saved_delay, "history_enabled": False})
+    updated.save(path, changes_from=settings)
+    restarted = Settings.load(path, migrate=True)
+    assert restarted.request_delay == saved_delay
+    assert restarted.theme == "dark"
+    assert not restarted.history_enabled
+    assert restarted.migration_error is None
+    assert json.loads(path.read_text(encoding="utf-8"))["settings_version"] == 1
+
+
 def test_save_preserves_preferences_shadowed_by_overrides(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

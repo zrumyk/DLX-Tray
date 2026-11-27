@@ -345,4 +345,6 @@ def run(argv: list[str]) -> int:
                 QCoreApplication.translate("Startup", "Could not open the application log."),
             )
         log.info("Starting DLX Tray %s", __version__)
+        if settings.migration_error is not None:
+            log.warning("Could not persist settings migration (%s)", settings.migration_error)
         return _run_window(app, settings, stack)

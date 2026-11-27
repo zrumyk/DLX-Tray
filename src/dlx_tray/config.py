@@ -68,6 +68,13 @@ def _write_preferences(path: Path, data: dict[str, object]) -> None:
             temporary.unlink(missing_ok=True)
 
 
+def _migrate_unversioned_preferences(data: dict[str, object]) -> None:
+    if "settings_version" not in data:
+        data["settings_version"] = _SETTINGS_VERSION
+        if data.get("request_delay") == _LEGACY_REQUEST_DELAY:
+            data["request_delay"] = DEFAULT_REQUEST_DELAY
+
+
 class Settings(BaseSettings):
     """Effective preferences, with environment and dotenv taking priority over JSON."""
 
@@ -99,6 +106,7 @@ class Settings(BaseSettings):
     log_level: LogLevel = Field(default="INFO", exclude=True)
 
     _overridden_preferences: set[str] = PrivateAttr(default_factory=set)
+    _migration_error: str | None = PrivateAttr(default=None)
 
     @classmethod
     def settings_customise_sources(
@@ -149,6 +157,11 @@ class Settings(BaseSettings):
     def is_overridden(self, name: str) -> bool:
         return name in self._overridden_preferences
 
+    @property
+    def migration_error(self) -> str | None:
+        """Return the error type if startup could not persist a migration."""
+        return self._migration_error
+
     @classmethod
     def load(
         cls,
@@ -167,16 +180,20 @@ class Settings(BaseSettings):
         overrides.pop("settings_version", None)
         data = _read_preferences(path)
         if migrate and "settings_version" not in data:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            with file_lock(path.with_name(f"{path.name}.lock")):
-                data = _read_preferences(path)
-                if "settings_version" not in data:
-                    data["settings_version"] = _SETTINGS_VERSION
-                    if data.get("request_delay") == _LEGACY_REQUEST_DELAY:
-                        data["request_delay"] = DEFAULT_REQUEST_DELAY
-                    settings = cls._with_overrides(data, overrides)
-                    _write_preferences(path, data)
-                    return settings
+            try:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                with file_lock(path.with_name(f"{path.name}.lock")):
+                    data = _read_preferences(path)
+                    if "settings_version" not in data:
+                        _migrate_unversioned_preferences(data)
+                        settings = cls._with_overrides(data, overrides)
+                        _write_preferences(path, data)
+                        return settings
+            except OSError as exc:
+                _migrate_unversioned_preferences(data)
+                settings = cls._with_overrides(data, overrides)
+                settings._migration_error = type(exc).__name__
+                return settings
         return cls._with_overrides(data, overrides)
 
     @classmethod
@@ -199,8 +216,11 @@ class Settings(BaseSettings):
                 before = changes_from.model_dump(mode="json")
                 preserve.update(name for name, value in saved.items() if before[name] == value)
                 saved = {name: value for name, value in saved.items() if name not in preserve}
-            if preserve:
+            if preserve or self._migration_error is not None:
                 existing = _read_preferences(path)
+                if self._migration_error is not None:
+                    _migrate_unversioned_preferences(existing)
+                    saved["settings_version"] = existing["settings_version"]
                 saved.update({name: existing[name] for name in preserve & existing.keys()})
 
             _write_preferences(path, saved)
