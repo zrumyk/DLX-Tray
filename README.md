@@ -1,16 +1,16 @@
 # DLX Tray
 
-A free desktop translator for Windows, in development. It is designed to translate long texts
+A free desktop translator for Windows. It is designed to translate long texts
 in chunks using a bundled [DLX](https://github.com/OwO-Network/DLX) (formerly DeepLX) server.
 
-> **Windows installer:** v0.9.0 is available on the Releases page. The updated bundled DLX is
-> available when you [build from source](#build-from-source) on `main`.
+> **Windows installer:** Download the latest published Setup from the
+> [Releases](https://github.com/zrumyk/DLX-Tray/releases) page.
 
 ![DLX Tray showing English input and Ukrainian output side by side](.github/screenshots/translation.png)
 
 The screenshot uses an example translation from a local test server.
 
-## Available in v0.9.0
+## Available in v1.0.0
 
 - Install for the current Windows user without administrator rights, with a Start menu shortcut
   and an optional desktop shortcut.
@@ -33,12 +33,14 @@ The screenshot uses an example translation from a local test server.
 - Save, test, or remove your DeepL API key in Settings.
 - Choose Light, Dark, or Follow Windows. Theme changes apply immediately.
 - Restore the window's size, position, maximized state, and last languages when the app starts.
+- Open Help → About DLX Tray to see the app version and license notices.
+- Copy a Markdown diagnostics report from About or the translation error dialog.
 - Apply development overrides and write rotating diagnostic logs.
 
 ## Install
 
 1. On Windows 10 version 1809 or later or Windows 11 x64, download
-   `DLX-Tray-Setup-0.9.0.exe` from the [Releases](https://github.com/zrumyk/DLX-Tray/releases) page.
+   the latest `DLX-Tray-Setup-X.Y.Z.exe` from the [Releases](https://github.com/zrumyk/DLX-Tray/releases) page.
 2. Run Setup for your Windows account. Select the desktop shortcut during setup if you want one.
 3. Open **DLX Tray** from Start and wait for **DLX ready**. Enter text, select a target language,
    and choose **Translate** or press **Ctrl+Enter**.
@@ -84,7 +86,7 @@ uv run dlx-tray
 To package the app from source, run `.\scripts\build.ps1` in PowerShell. Open
 `dist/DLX Tray/DLX Tray.exe` and keep the entire `dist/DLX Tray` folder together when moving it.
 
-The build on `main` uses the [DLX fork at `177f235`](https://github.com/zrumyk/DLX/commit/177f2355274295a6bee35feaccc27fe06fbd1fa1).
+The v1.0.0 build uses the [DLX fork at `177f235`](https://github.com/zrumyk/DLX/commit/177f2355274295a6bee35feaccc27fe06fbd1fa1).
 On 27 November 2026, a locally built installer translated **Hello** to **Привіт** in a clean
 Windows Sandbox. Tray showed **Provider: DLX** and completed the translation in one request
 with no API key or external server configured. Long-file translation and export were tested
@@ -125,8 +127,9 @@ precedence over `.env`. If the effective override is missing or blank, the app u
 | 0.6.0 | `.txt` / `.docx` / `.pdf` files (completed) |
 | 0.7.0 | Translation history (completed) |
 | 0.8.0 | Ukrainian and English UI (completed) |
-| 0.9.0 | Installer and GitHub Releases (current) |
-| 1.0.0 | First stable release |
+| 0.9.0 | Installer and GitHub Releases (completed) |
+| 1.0.0 | First stable release with bundled DLX, About and diagnostics |
+| 1.1.0 | Provider selection and visible retry waits (planned) |
 | 2.0.0 | System tray icon and global hotkey to translate selected text |
 
 See [CHANGELOG.md](CHANGELOG.md) for what changed in each version.
