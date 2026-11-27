@@ -10,8 +10,8 @@ from itertools import accumulate
 
 from dlx_tray.core.models import Chunk
 
-DEFAULT_MAX_UNITS = 1400
 HARD_MAX_UNITS = 1500
+DEFAULT_MAX_UNITS = HARD_MAX_UNITS
 MIN_MAX_UNITS = 2  # every code point (an astral one costs 2 units) must fit into a chunk
 
 _PARAGRAPH, _LINE, _SENTENCE, _SPACE = range(4)

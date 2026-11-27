@@ -58,7 +58,7 @@ class TestValidation:
             split("hello", max_units)
 
     def test_defaults(self) -> None:
-        assert DEFAULT_MAX_UNITS == 1400
+        assert DEFAULT_MAX_UNITS == 1500
         assert HARD_MAX_UNITS == 1500
         split("x", HARD_MAX_UNITS)
         split("x", 2)
