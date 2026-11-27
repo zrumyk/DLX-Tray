@@ -58,6 +58,8 @@ class RequestStartClock:
                 if dispatch.cancel.is_set():
                     raise TranslationCancelledError("cancelled before provider start")
                 dispatch.on_start()
+                if dispatch.cancel.is_set():
+                    raise TranslationCancelledError("cancelled before provider start")
                 self._last_start = self._monotonic()
             return pause
 

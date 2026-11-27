@@ -69,6 +69,7 @@ def ordered_attempts[T](
 ) -> Generator[tuple[T, TranslationResult | None]]:
     pending: deque[_Pending[T]] = deque()
     leaders: set[Future[TranslationResult]] = set()
+    resolved_failures: dict[Future[TranslationResult], TranslationResult | None] = {}
     changed = Condition()
     stopped = _StopSignal(dispatch.cancel)
     started = Event()
@@ -131,6 +132,15 @@ def ordered_attempts[T](
             if not first:
                 return retry()
             first = False
+            if future in resolved_failures:
+                assert shared is not None
+                shared.flights.release(shared.key, shared.segment, future)
+                recovered = resolved_failures[future]
+                if recovered is None:
+                    return retry()
+                if on_shared is not None:
+                    on_shared(recovered.provider)
+                return recovered
             try:
                 result = future.result()
             except TranslationCancelledError:
@@ -148,7 +158,10 @@ def ordered_attempts[T](
             return result
 
         # The caller resolves failures on its own thread, in input order.
-        return resolve(entry.work.item, get)
+        result = resolve(entry.work.item, get)
+        if shared is not None and entry.failed():
+            resolved_failures[future] = result
+        return result
 
     inputs = enumerate(work)
     exhausted = False
@@ -166,15 +179,18 @@ def ordered_attempts[T](
                         if item.attempt is None:
                             with changed:
                                 pending.append(_Pending(index, item, None))
-                            break
+                            if len(pending) == 1 or dispatch.cancel.is_set():
+                                break
+                            continue
                         shared = item.shared
                         future, leader = (
                             shared.flights.claim(shared.key, shared.segment)
                             if shared is not None
                             else (Future(), True)
                         )
+                        entry = _Pending(index, item, future, not leader)
                         with changed:
-                            pending.append(_Pending(index, item, future, not leader))
+                            pending.append(entry)
                         if leader:
                             started = Event()
                             leaders.add(future)
@@ -186,7 +202,11 @@ def ordered_attempts[T](
                                 dispatch_for(index, started),
                             )
                             break
-                        if future.done() or dispatch.cancel.is_set():
+                        if (
+                            dispatch.cancel.is_set()
+                            or entry.failed()
+                            or (len(pending) == 1 and future.done())
+                        ):
                             break
                     else:
                         exhausted = True

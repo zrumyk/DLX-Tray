@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from threading import Event
 from typing import TYPE_CHECKING
 
@@ -22,7 +23,7 @@ from dlx_tray.core.models import (
     TranslationResult,
 )
 from dlx_tray.core.pipeline import FailureAction, JobResult, TranslationJob
-from dlx_tray.core.retry import RetryPolicy, call_with_retry
+from dlx_tray.core.retry import RequestDispatch, RetryPolicy, call_with_retry
 from dlx_tray.core.single_flight import SingleFlight
 from dlx_tray.providers import deeplx
 from dlx_tray.providers.deeplx import DeeplxTranslator
@@ -262,6 +263,116 @@ def test_parallel_dlx_reopens_with_one_probe_after_a_429(
             release_second.set()
         assert recovered.result(5).text == "[UK] Probe\n\n[UK] Second\n\n[UK] Third"
     assert sorted(starts) == ["Limited", "Old", "Probe", "Second", "Third"]
+
+
+@pytest.mark.parametrize("action", [FailureAction.SKIP, FailureAction.CONTINUE])
+def test_parallel_duplicate_reuses_the_resolved_attempt(
+    fake_dlx: FakeDLXFactory, action: FailureAction
+) -> None:
+    late_started = Event()
+    starts: list[str] = []
+    failures: list[str] = []
+
+    def receive(texts: list[str], step: str) -> str:
+        (text,) = texts
+        starts.append(text)
+        if text == "Late":
+            late_started.set()
+        if text == "Twin" and starts.count("Twin") == 1:
+            assert late_started.wait(5)
+            return "401"
+        return step
+
+    def decide(chunk: Chunk, _error: TranslationError) -> FailureAction:
+        failures.append(chunk.text)
+        return action
+
+    with fake_dlx([]) as server, DeeplxTranslator(server.url, server.token) as translator:
+        server.on_request = receive
+        result = TranslationJob(
+            translator=translator, concurrency=2, max_units=4, flights=SingleFlight()
+        ).run("Twin Twin Late", Language.EN, Language.UK, on_failure=decide)
+    prefix = "Twin" if action is FailureAction.SKIP else "[UK] Twin"
+    assert result.text == f"{prefix} [UK] Twin [UK] Late"
+    assert failures == ["Twin"]
+    assert sorted(starts) == ["Late", "Twin", "Twin"]
+
+
+def test_parallel_skip_releases_a_paced_request_after_cooldown(
+    fake_dlx: FakeDLXFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pacing, deciding, release_pacing, second_checked, first_checked = (Event() for _ in range(5))
+    now = 100.0
+    monkeypatch.setattr(deeplx, "monotonic", lambda: now)
+    original_start = DeeplxTranslator._start
+
+    def observe_start(translator: DeeplxTranslator, dispatch: RequestDispatch) -> int:
+        if first_checked.is_set():
+            guard = dispatch.may_start
+
+            def observe_guard() -> bool:
+                if deciding.is_set():
+                    second_checked.set()
+                return guard()
+
+            dispatch = replace(dispatch, may_start=observe_guard)
+        first_checked.set()
+        return original_start(translator, dispatch)
+
+    monkeypatch.setattr(DeeplxTranslator, "_start", observe_start)
+
+    def receive(texts: list[str], step: str) -> str:
+        if texts == ["First"]:
+            assert pacing.wait(5)
+            return "429-retry-after"
+        return step
+
+    def wait_for_pacing(seconds: float, cancel: Event) -> bool:
+        nonlocal now
+        pacing.set()
+        assert release_pacing.wait(5)
+        now += seconds
+        return not cancel.is_set()
+
+    failures: list[str] = []
+
+    def skip(chunk: Chunk, _error: TranslationError) -> FailureAction:
+        nonlocal now
+        failures.append(chunk.text)
+        if chunk.text == "First":
+            deciding.set()
+            release_pacing.set()
+            assert second_checked.wait(5)
+            now += 9
+        return FailureAction.SKIP
+
+    with fake_dlx([]) as server, DeeplxTranslator(server.url, server.token) as translator:
+        server.on_request = receive
+        result = TranslationJob(
+            translator=translator,
+            concurrency=2,
+            flights=SingleFlight(),
+            request_delay=0.5,
+            sleep=wait_for_pacing,
+            retry_policy=RetryPolicy(max_attempts=1),
+        ).run("First\n\nSecond", Language.EN, Language.UK, on_failure=skip)
+    assert failures == ["First"]
+    assert result.text == "First\n\n[UK] Second"
+
+
+def test_parallel_last_in_flight_success_completes_the_job(fake_dlx: FakeDLXFactory) -> None:
+    cancel = Event()
+
+    def receive(_texts: list[str], step: str) -> str:
+        cancel.set()
+        return step
+
+    with fake_dlx([]) as server, DeeplxTranslator(server.url, server.token) as translator:
+        server.on_request = receive
+        result = TranslationJob(translator=translator, concurrency=2).run(
+            "Finished", Language.EN, Language.UK, cancel=cancel
+        )
+    assert result == JobResult("[UK] Finished", Language.EN, chunk_providers=("dlx",))
 
 
 @pytest.mark.parametrize(

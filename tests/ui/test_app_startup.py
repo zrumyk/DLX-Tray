@@ -7,8 +7,10 @@ from itertools import pairwise
 from pathlib import Path
 from threading import Event
 from time import monotonic
+from typing import Any
 from unittest.mock import ANY, Mock, call
 
+import httpx
 import pytest
 import requests
 from keyring.errors import KeyringError
@@ -840,14 +842,23 @@ def test_dlx_streams_only_the_contiguous_prefix_with_two_workers(
     run_window: Callable[[Settings, Callable[[MainWindow, QLabel], None]], None],
     qtbot: QtBot,
     fake_dlx: FakeDLXFactory,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     first_started, release_first, third_started = Event(), Event(), Event()
-    starts: list[tuple[str, float]] = []
+    starts: list[float] = []
+    received: list[str] = []
     delay = 0.15
+    send = httpx.Client.send
+
+    def record_start(client: httpx.Client, request: httpx.Request, **kwargs: Any) -> httpx.Response:
+        starts.append(monotonic())
+        return send(client, request, **kwargs)
+
+    monkeypatch.setattr(httpx.Client, "send", record_start)
 
     def receive(texts: list[str], step: str) -> str:
         (text,) = texts
-        starts.append((text, monotonic()))
+        received.append(text)
         if text == "First":
             first_started.set()
             assert release_first.wait(5)
@@ -877,10 +888,9 @@ def test_dlx_streams_only_the_contiguous_prefix_with_two_workers(
             ),
             check,
         )
-    assert [text for text, _ in starts] == ["First", "Second", "Third"]
-    assert all(
-        next_start - start >= delay - 0.025 for (_, start), (_, next_start) in pairwise(starts)
-    )
+    assert sorted(received) == ["First", "Second", "Third"]
+    assert len(starts) == 3
+    assert all(later - earlier >= delay - 0.005 for earlier, later in pairwise(starts))
 
 
 def test_cache_reopens_and_can_be_disabled_and_cleared_from_settings(

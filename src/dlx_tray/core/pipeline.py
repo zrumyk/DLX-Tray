@@ -229,7 +229,7 @@ class TranslationJob:
 
         def report(processed: int) -> None:
             if on_progress is not None:
-                on_progress(processed, total, "".join(parts))
+                on_progress(processed, total, "".join(parts) if file_segments is None else "")
 
         if file_segments is not None:
             segments = [Chunk(content, "", index) for index, content in enumerate(file_segments)]
@@ -339,7 +339,7 @@ class TranslationJob:
                 tasks = plan(scopes)
                 results = (
                     ordered_attempts(tasks, dispatch, resolve, on_provider)
-                    if concurrency == 2
+                    if concurrency == 2 and total
                     else serial(tasks)
                 )
                 scopes.callback(results.close)
@@ -364,7 +364,7 @@ class TranslationJob:
                     if piece.last:
                         finish_segment(piece)
         except TranslationCancelledError:
-            cancelled = True
+            cancelled = processed < total
         except TranslationError as exc:
             failure = exc
         return JobResult("".join(parts), detected_source, cancelled, failure, tuple(providers))

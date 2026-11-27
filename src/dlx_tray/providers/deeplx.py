@@ -144,12 +144,15 @@ class DeeplxTranslator:
             with self._dispatch:
                 if dispatch.cancel.is_set():
                     raise TranslationCancelledError("cancelled before DLX dispatch")
+                if not dispatch.may_start():
+                    self._dispatch.wait(0.05)
+                    continue
                 now = monotonic()
                 remaining = self._blocked_until - now
                 if remaining > 0:
                     raise RateLimitedError("DLX is in rate-limit cooldown", retry_after=remaining)
-                limit = 1 if self._recovering else dispatch.concurrency
-                if self._active >= limit or not dispatch.may_start():
+                limit = 2 if dispatch.concurrency == 2 and not self._recovering else 1
+                if self._active >= limit:
                     self._dispatch.wait(0.05)
                     continue
                 pause = (dispatch.clock or self.start_clock).reserve(dispatch)
