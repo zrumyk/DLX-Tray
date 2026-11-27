@@ -217,7 +217,7 @@ def test_copy_diagnostics_redacts_secrets_and_keeps_error_dialog_open(
             monkeypatch.setenv("DLX_DEEPLX_URL", f"{server.url}?trace={query_marker}")
             monkeypatch.setenv("DLX_DEEPLX_TOKEN", server.token)
             monkeypatch.setenv("DLX_DEEPL_API_KEY", key_marker)
-            monkeypatch.setenv("DLX_CHUNK_SIZE", "200")
+            monkeypatch.setenv("DLX_CHUNK_SIZE", "751")
             monkeypatch.setenv("DLX_REQUEST_DELAY", "0.2")
             monkeypatch.setenv("DLX_RETRIES", "0")
             run_window(Settings.load(env_file=None), check)
@@ -802,10 +802,10 @@ def test_settings_save_applies_to_next_job_and_reloads(
         assert not window.settings_action.isEnabled()
         qtbot.waitUntil(window.settings_action.isEnabled)
         assert window.result_editor.toPlainText() == source
-        assert official.translate.call_count == 2
-        assert all(
-            call.args[3] == Formality.PREFER_MORE for call in official.translate.call_args_list
-        )
+        official.translate.assert_called_once()
+        texts, _, _, formality = official.translate.call_args.args
+        assert len(texts) == 2 and all(len(text) <= 200 for text in texts)
+        assert formality == Formality.PREFER_MORE
 
         assert "saved-key" not in path.read_text(encoding="utf-8")
         persisted = Settings.load(path, env_file=None)
@@ -828,7 +828,8 @@ def test_settings_save_applies_to_next_job_and_reloads(
         window.translate_button.click()
         qtbot.waitUntil(window.settings_action.isEnabled)
         assert window.result_editor.toPlainText() == source
-        assert rotated_official.translate.call_count == 2
+        rotated_official.translate.assert_called_once()
+        assert rotated_official.translate.call_args.args[0] == texts
 
         def clear(dialog: SettingsDialog) -> None:
             assert dialog.api_key.text() == "rotated-key:fx"
@@ -840,7 +841,7 @@ def test_settings_save_applies_to_next_job_and_reloads(
         window.translate_button.click()
         qtbot.waitUntil(window.settings_action.isEnabled)
         assert window.result_editor.toPlainText().startswith("[UK]")
-        assert official.translate.call_count == 2
+        official.translate.assert_called_once()
 
     with fake_dlx(["429"]) as server:
         settings = Settings.model_validate(
@@ -897,11 +898,13 @@ def test_settings_save_reports_storage_failures(
         qtbot.waitUntil(window.translate_button.isEnabled)
 
     with fake_dlx([]) as server:
-        requests_sent = Mock(wraps=server.next_step)
-        monkeypatch.setattr(server, "next_step", requests_sent)
+        requests_sent = Mock(side_effect=lambda _texts, step: step)
+        server.on_request = requests_sent
         settings = Settings.model_validate({"deeplx_url": server.url, "deeplx_token": server.token})
         run_window(settings, check)
-        assert requests_sent.call_count == (1 if settings_fail else 2)
+        requests_sent.assert_called_once_with(
+            ["a" * 201] if settings_fail else ["a" * 200, "a"], "ok"
+        )
 
     if settings_fail:
         write_key.assert_not_called()

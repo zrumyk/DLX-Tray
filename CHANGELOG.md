@@ -17,6 +17,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Set Concurrent DLX requests to 1 in Settings to translate sequentially.
 - Show paragraph or file-segment progress while streaming completed chunks.
 - Use up to 1500 UTF-16 units per DLX request by default. Saved chunk sizes still apply.
+- With a chunk size of 750 UTF-16 units or less, send two adjacent chunks that need
+  translation in one DLX request when possible.
 - Retry temporary translation failures after about two seconds. Server-specified rate-limit
   waits still apply.
 
