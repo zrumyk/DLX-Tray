@@ -2,6 +2,25 @@
 <!DOCTYPE TS>
 <TS version="2.1" language="uk" sourcelanguage="en">
 <context>
+    <name>AboutDialog</name>
+    <message>
+        <source>About DLX Tray</source>
+        <translation>Про DLX Tray</translation>
+    </message>
+    <message>
+        <source>DLX Tray: MIT License</source>
+        <translation>DLX Tray: ліцензія MIT</translation>
+    </message>
+    <message>
+        <source>Bundled DLX: MIT License</source>
+        <translation>Комплектний DLX: ліцензія MIT</translation>
+    </message>
+    <message>
+        <source>Qt and PySide6: GNU Lesser General Public License, version 3 (LGPLv3).</source>
+        <translation>Qt і PySide6: Мала загальна публічна ліцензія GNU, версія 3 (LGPLv3).</translation>
+    </message>
+</context>
+<context>
     <name>ErrorDialog</name>
     <message>
         <source>Translation paused</source>
@@ -140,6 +159,14 @@
     <message>
         <source>&amp;Settings…</source>
         <translation>&amp;Налаштування…</translation>
+    </message>
+    <message>
+        <source>Hel&amp;p</source>
+        <translation>&amp;Довідка</translation>
+    </message>
+    <message>
+        <source>&amp;About DLX Tray…</source>
+        <translation>&amp;Про DLX Tray…</translation>
     </message>
     <message>
         <source>Source language</source>
