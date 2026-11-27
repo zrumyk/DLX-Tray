@@ -33,7 +33,7 @@ def test_missing_file_uses_defaults(
     settings = Settings.load()
     assert settings.source_lang is Language.AUTO
     assert settings.target_lang is Language.UK
-    assert settings.chunk_size == 1400
+    assert settings.chunk_size == 1500
     assert settings.request_delay == 0
     assert settings.retries == 3
     assert RetryPolicy(max_attempts=settings.max_attempts).max_attempts == 4
@@ -66,7 +66,7 @@ def test_load_applies_environment_then_dotenv_then_json(
 def test_frozen_app_ignores_dotenv(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     (tmp_path / ".env").write_text("DLX_CHUNK_SIZE=300\n", encoding="utf-8")
     monkeypatch.setattr(config.sys, "frozen", True, raising=False)
-    assert Settings.load().chunk_size == 1400
+    assert Settings.load().chunk_size == 1500
 
 
 @pytest.mark.parametrize(

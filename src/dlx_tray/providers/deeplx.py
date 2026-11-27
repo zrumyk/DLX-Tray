@@ -11,6 +11,7 @@ from typing import Any, Literal, Self
 
 import httpx
 
+from dlx_tray.core.chunker import HARD_MAX_UNITS, utf16_len
 from dlx_tray.core.diagnostics import DiagnosticTimeline, ProviderAttempt
 from dlx_tray.core.models import (
     AuthError,
@@ -32,6 +33,11 @@ DEFAULT_TIMEOUT = 30.0
 PROVIDER_NAME = "dlx"
 _INITIAL_COOLDOWN = 15.0
 _MAX_COOLDOWN = 120.0
+# Match Go's strings.TrimSpace, which uses the Unicode White_Space property.
+_DLX_WHITESPACE = (
+    "\t\n\v\f\r \x85\xa0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a"
+    "\u2028\u2029\u202f\u205f\u3000"
+)
 
 
 class DeeplxTranslator:
@@ -110,17 +116,23 @@ class DeeplxTranslator:
             raise ValueError(f"{target.value!r} is not a valid target language")
         if not source.can_be_source:
             raise ValueError(f"{source.value!r} is not a valid source language")
+        batch = list(texts)
+        units = sum(utf16_len(text) for text in batch if text.strip(_DLX_WHITESPACE))
+        if units > HARD_MAX_UNITS:
+            raise TextTooLongError(
+                f"DLX request has {units} UTF-16 units. The limit is {HARD_MAX_UNITS}."
+            )
         payload = {
-            "text": list(texts),
+            "text": batch,
             "source_lang": source.value,
             "target_lang": target.value,
         }
-        log.debug("DLX request: %d texts, %s -> %s", len(texts), source, target)
+        log.debug("DLX request: %d texts, %s -> %s", len(batch), source, target)
         if dispatch is None:
             dispatch = RequestDispatch(Event(), 0, 1, event_sleep)
         generation = self._start(dispatch)
         try:
-            results = self._request(payload, len(texts))
+            results = self._request(payload, len(batch))
         except RateLimitedError as error:
             with self._dispatch:
                 cooldown = max(minimum_cooldown, error.retry_after or self._next_cooldown)
@@ -232,7 +244,7 @@ def _status_error(response: httpx.Response, body: Any) -> TranslationError:
     status = response.status_code
     message = _message(body, f"HTTP {status}")
     too_large = status == httpx.codes.REQUEST_ENTITY_TOO_LARGE
-    # A 413 means a chunk over the limit slipped past the chunker: a bug, hence ERROR.
+    # A 413 means the server rejected a request that passed local validation.
     log.log(logging.ERROR if too_large else logging.WARNING, "DLX answered HTTP %d", status)
     if status in (httpx.codes.UNAUTHORIZED, httpx.codes.FORBIDDEN):
         return AuthError(f"DLX rejected the token: {message}")

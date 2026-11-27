@@ -21,6 +21,7 @@ from pydantic_settings import (
 
 from dlx_tray import APP_NAME
 from dlx_tray._file_lock import file_lock
+from dlx_tray.core.chunker import DEFAULT_MAX_UNITS, HARD_MAX_UNITS
 from dlx_tray.core.models import Formality, Language
 from dlx_tray.core.retry import DEFAULT_REQUEST_DELAY
 
@@ -90,7 +91,7 @@ class Settings(BaseSettings):
     source_lang: Language = Language.AUTO
     target_lang: Language = Language.UK
     window_geometry: str | None = None
-    chunk_size: int = Field(default=1400, ge=200, le=1500)
+    chunk_size: int = Field(default=DEFAULT_MAX_UNITS, ge=200, le=HARD_MAX_UNITS)
     request_delay: float = Field(default=DEFAULT_REQUEST_DELAY, ge=0, le=10)
     dlx_concurrency: int = Field(default=2, ge=1, le=2)
     retries: int = Field(default=3, ge=0)

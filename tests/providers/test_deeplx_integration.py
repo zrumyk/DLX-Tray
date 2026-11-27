@@ -524,14 +524,45 @@ def test_job_does_not_retry_scripted_client_errors(
 
 
 def test_batch_at_limit_with_blank_entry(fake_dlx: FakeDLXFactory) -> None:
-    text = "a" * HARD_MAX_UNITS
-    blank = " " * (HARD_MAX_UNITS + 1)
+    text = "\U0001f600" * (HARD_MAX_UNITS // 4)
+    blank = "\u2003" * (HARD_MAX_UNITS + 1)
     with fake_dlx([]) as server, DeeplxTranslator(server.url, server.token) as translator:
-        result = translator.translate([text, blank], Language.EN, Language.UK)
+        result = translator.translate([text, blank, text], Language.EN, Language.UK)
     assert result == [
         TranslationResult(f"[UK] {text}", Language.EN, "dlx"),
         TranslationResult(blank, Language.EN, "dlx"),
+        TranslationResult(f"[UK] {text}", Language.EN, "dlx"),
     ]
+
+
+@pytest.mark.parametrize("file_mode", [False, True], ids=["editor", "file"])
+def test_job_sends_exact_limit_and_splits_long_segments(
+    fake_dlx: FakeDLXFactory, file_mode: bool
+) -> None:
+    exact = "\U0001f600" * (HARD_MAX_UNITS // 2)
+    extra = "\U0001f642" * (HARD_MAX_UNITS // 2)
+    text = f"{exact}\n\n{extra}x"
+    requests: list[list[str]] = []
+    translations: list[str] = []
+
+    def record(texts: list[str], step: str) -> str:
+        requests.append(texts)
+        return step
+
+    with fake_dlx([]) as server, DeeplxTranslator(server.url, server.token) as translator:
+        server.on_request = record
+        result = TranslationJob(translator=translator, flights=SingleFlight()).run(
+            "" if file_mode else text,
+            Language.EN,
+            Language.UK,
+            file_segments=[exact, f"{extra}x"] if file_mode else None,
+            on_segment=translations.append if file_mode else None,
+        )
+
+    assert requests == [[exact], [extra], ["x"]]
+    assert result.error is None
+    rendered = "\n\n".join(translations) if file_mode else result.text
+    assert rendered == f"[UK] {exact}\n\n[UK] {extra}[UK] x"
 
 
 def test_cooldown_doubles_across_jobs_and_resets_on_success(
