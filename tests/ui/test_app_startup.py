@@ -199,6 +199,7 @@ def test_copy_diagnostics_redacts_secrets_and_keeps_error_dialog_open(
         qtbot.waitUntil(lambda: isinstance(QApplication.activeModalWidget(), ErrorDialog))
         dialog = QApplication.activeModalWidget()
         assert isinstance(dialog, ErrorDialog)
+        assert dialog.heading.text() == "Translation failed in paragraph 1 of 1."
         assert "HTTP 403" in copy(dialog)
         dialog.cancel_button.click()
         qtbot.waitUntil(window.translate_button.isEnabled)

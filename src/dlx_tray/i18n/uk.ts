@@ -46,6 +46,14 @@
         <translation>Не вдалося перекласти фрагмент {number} із {total}.</translation>
     </message>
     <message>
+        <source>Translation failed in paragraph {number} of {total}.</source>
+        <translation>Помилка перекладу в абзаці {number} із {total}.</translation>
+    </message>
+    <message>
+        <source>Translation failed in file segment {number} of {total}.</source>
+        <translation>Помилка перекладу в сегменті файлу {number} із {total}.</translation>
+    </message>
+    <message>
         <source>Continue retries this chunk. Skip keeps its original text. Cancel stops and keeps the result so far.</source>
         <translation>«Продовжити» повторює спробу перекладу цього фрагмента. «Пропустити» залишає його початковий текст. «Скасувати» зупиняє переклад і зберігає вже перекладений текст.</translation>
     </message>

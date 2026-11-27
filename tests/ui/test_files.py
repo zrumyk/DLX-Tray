@@ -255,12 +255,14 @@ def test_pdf_exports_and_scanned_file_error_preserves_current_result(
     assert [paragraph.text for paragraph in Document(str(docx)).paragraphs] == paragraphs
 
 
+@pytest.mark.parametrize("segmented", [False, True])
 def test_file_failure_dialog_uses_document_progress_and_cancel_preserves_preview(
     qtbot: QtBot,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     fake_dlx: FakeDLXFactory,
     file_window: Callable[[TranslationJob], MainWindow],
+    segmented: bool,
 ) -> None:
     source = tmp_path / "chapters.docx"
     document = Document()
@@ -271,14 +273,19 @@ def test_file_failure_dialog_uses_document_progress_and_cancel_preserves_preview
         fake_dlx(["ok", "401"]) as server,
         DeeplxTranslator(server.url, server.token) as translator,
     ):
-        window = file_window(TranslationJob(translator=translator, request_delay=0))
+        cache = TranslationCache(tmp_path / "cache.db") if segmented else None
+        window = file_window(TranslationJob(translator=translator, request_delay=0, cache=cache))
         _open(window, qtbot, monkeypatch, source)
         window.translate_button.click()
         qtbot.waitUntil(lambda: window.findChild(ErrorDialog) is not None)
         dialog = window.findChild(ErrorDialog)
         assert dialog is not None
-        assert dialog.heading.text() == "Could not translate chunk 2 of 2."
-        assert window.progress_label.text() == "File translation · Chunk 1 of 2"
+        if segmented:
+            assert dialog.heading.text() == "Translation failed in file segment 2 of 2."
+            assert window.progress_label.text() == "File translation · Segments completed 1 of 2"
+        else:
+            assert dialog.heading.text() == "Could not translate chunk 2 of 2."
+            assert window.progress_label.text() == "File translation · Chunk 1 of 2"
         dialog.cancel_button.click()
         qtbot.waitUntil(window.translate_button.isEnabled)
         assert window.result_editor.toPlainText() == "[UK] First"

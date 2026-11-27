@@ -1,5 +1,7 @@
 """Ask how to handle a chunk that could not be translated."""
 
+from typing import Literal
+
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QDialog,
@@ -20,12 +22,20 @@ from dlx_tray.core.models import (
 )
 from dlx_tray.core.pipeline import FailureAction
 
+type FailureLocation = Literal["chunk", "paragraph", "segment"]
+
 
 class ErrorDialog(QDialog):
     diagnostics_requested = Signal()
 
     def __init__(
-        self, chunk_number: int, total: int, error: TranslationError, parent: QWidget
+        self,
+        number: int,
+        total: int,
+        error: TranslationError,
+        parent: QWidget,
+        *,
+        location: FailureLocation = "chunk",
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle(self.tr("Translation paused"))
@@ -42,8 +52,13 @@ class ErrorDialog(QDialog):
         body.addWidget(icon, alignment=Qt.AlignmentFlag.AlignTop)
         labels = QVBoxLayout()
         body.addLayout(labels)
-        heading = self.tr("Could not translate chunk {number} of {total}.")
-        self.heading = QLabel(heading.format(number=chunk_number, total=total))
+        if location == "paragraph":
+            heading = self.tr("Translation failed in paragraph {number} of {total}.")
+        elif location == "segment":
+            heading = self.tr("Translation failed in file segment {number} of {total}.")
+        else:
+            heading = self.tr("Could not translate chunk {number} of {total}.")
+        self.heading = QLabel(heading.format(number=number, total=total))
         labels.addWidget(self.heading)
         choices = self.tr(
             "Continue retries this chunk. Skip keeps its original text. "
