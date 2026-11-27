@@ -19,6 +19,21 @@
         <source>Qt and PySide6: GNU Lesser General Public License, version 3 (LGPLv3).</source>
         <translation>Qt і PySide6: Мала загальна публічна ліцензія GNU, версія 3 (LGPLv3).</translation>
     </message>
+    <message>
+        <source>Copy diagnostics</source>
+        <translation>Копіювати діагностику</translation>
+    </message>
+</context>
+<context>
+    <name>Diagnostics</name>
+    <message>
+        <source>Could not copy diagnostics.</source>
+        <translation>Не вдалося скопіювати діагностику.</translation>
+    </message>
+    <message>
+        <source>Diagnostics copied.</source>
+        <translation>Діагностику скопійовано.</translation>
+    </message>
 </context>
 <context>
     <name>ErrorDialog</name>
@@ -45,6 +60,10 @@
     <message>
         <source>Cancel</source>
         <translation>Скасувати</translation>
+    </message>
+    <message>
+        <source>Copy diagnostics</source>
+        <translation>Копіювати діагностику</translation>
     </message>
     <message>
         <source>The translation provider rejected its credentials.</source>

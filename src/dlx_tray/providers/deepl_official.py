@@ -5,9 +5,11 @@ from __future__ import annotations
 import logging
 from collections.abc import Sequence
 from http import HTTPStatus
+from time import monotonic
 
 import deepl
 
+from dlx_tray.core.diagnostics import DiagnosticTimeline, ProviderAttempt
 from dlx_tray.core.models import (
     AuthError,
     Formality,
@@ -28,8 +30,15 @@ DEFAULT_TIMEOUT = 30.0
 class DeepLOfficialTranslator:
     """Use the SDK's key-based Free/Pro routing and let the job handle retries."""
 
-    def __init__(self, api_key: str, *, timeout: float = DEFAULT_TIMEOUT) -> None:
+    def __init__(
+        self,
+        api_key: str,
+        *,
+        timeout: float = DEFAULT_TIMEOUT,
+        diagnostics: DiagnosticTimeline | None = None,
+    ) -> None:
         self._client = deepl.DeepLClient(api_key, max_retries=0, timeout_s=timeout)
+        self._diagnostics = diagnostics
 
     @property
     def name(self) -> str:
@@ -60,6 +69,8 @@ class DeepLOfficialTranslator:
         if not source.can_be_source:
             raise ValueError(f"{source.value!r} is not a valid source language")
 
+        started = monotonic()
+        status = None
         try:
             results = self._client.translate_text(
                 list(texts),
@@ -69,6 +80,7 @@ class DeepLOfficialTranslator:
             )
         except deepl.DeepLException as exc:
             # SDK error details can contain the response body.
+            status = exc.http_status_code
             log.warning(
                 "DeepL translation failed: %s (HTTP %s)", type(exc).__name__, exc.http_status_code
             )
@@ -79,6 +91,12 @@ class DeepLOfficialTranslator:
             raise ProviderUnavailableError(
                 "DeepL returned a malformed translation response"
             ) from None
+        finally:
+            # The SDK exposes an HTTP status on errors, but not on a successful result.
+            if self._diagnostics is not None:
+                self._diagnostics.append(
+                    ProviderAttempt(PROVIDER_NAME, monotonic() - started, status)
+                )
 
         if (
             not isinstance(results, list)

@@ -5,15 +5,16 @@ from collections.abc import Callable
 from contextlib import ExitStack, nullcontext
 from pathlib import Path
 from threading import Event
-from unittest.mock import Mock, call
+from unittest.mock import ANY, Mock, call
 
 import pytest
+import requests
 from keyring.errors import KeyringError
 from PySide6.QtCore import QRect, QSize, Qt, QTimer
 from PySide6.QtGui import QShortcut
 from PySide6.QtWidgets import QApplication, QDialogButtonBox, QLabel
 from pytestqt.qtbot import QtBot
-from tests.fakes.fake_dlx import FakeDLXFactory
+from tests.fakes.fake_dlx import FakeDLXFactory, running_fake_dlx
 
 from dlx_tray import app, config, secrets
 from dlx_tray.config import Settings, Theme
@@ -21,6 +22,8 @@ from dlx_tray.core.models import Formality, Language, ProviderUnavailableError, 
 from dlx_tray.providers import fallback
 from dlx_tray.services.deeplx_process import DLXProcess
 from dlx_tray.services.history import HistoryStore
+from dlx_tray.ui.about_dialog import AboutDialog
+from dlx_tray.ui.error_dialog import ErrorDialog
 from dlx_tray.ui.history_dialog import HistoryDialog
 from dlx_tray.ui.main_window import MainWindow
 from dlx_tray.ui.settings_dialog import SettingsDialog
@@ -89,6 +92,103 @@ def test_startup_loads_the_window_icon(qapp: QApplication, monkeypatch: pytest.M
         assert app.run([]) == 0
     finally:
         qapp.setWindowIcon(previous_icon)
+
+
+def test_copy_diagnostics_redacts_secrets_and_keeps_error_dialog_open(
+    run_window: Callable[[Settings, Callable[[MainWindow, QLabel], None]], None],
+    qtbot: QtBot,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    source_marker = "DIAG_SOURCE_MARKER"
+    translated_marker = "DIAG_TRANSLATION_MARKER"
+    key_marker = "DIAG_KEY_MARKER:fx"
+    token_marker = "DIAG_TOKEN_MARKER"
+    query_marker = "DIAG_QUERY_MARKER"
+    markers = (source_marker, translated_marker, key_marker, token_marker, query_marker)
+    success = requests.Response()
+    success.status_code = 200
+    success._content = json.dumps(
+        {"translations": [{"text": translated_marker, "detected_source_language": "en"}]}
+    ).encode()
+    failure = requests.Response()
+    failure.status_code = 403
+    failure._content = json.dumps({"message": " ".join(markers)}).encode()
+    send = Mock(side_effect=[success, failure])
+    monkeypatch.setattr(requests.Session, "send", send)
+
+    log_dir = tmp_path / "logs"
+    log_dir.mkdir()
+    log_path = log_dir / "dlx-tray.log"
+    log_prefix = "2026-11-27 10:00:00,000 INFO dlx_tray.app "
+    log_path.write_text(
+        "".join(f"{log_prefix}DLX stopped (pid {pid})\n" for pid in range(101))
+        + f"{log_prefix}unexpected payload: {' '.join(markers)}\n",
+        encoding="utf-8",
+    )
+
+    clipboard = QApplication.clipboard()
+    previous_clipboard = clipboard.text()
+
+    def copy(dialog: AboutDialog | ErrorDialog) -> str:
+        clipboard.clear()
+        dialog.diagnostics_button.click()
+        qtbot.waitUntil(lambda: clipboard.text().startswith("## DLX Tray diagnostics"))
+        assert QApplication.activeModalWidget() is dialog
+        report = clipboard.text()
+        for marker in markers:
+            assert marker not in report
+        assert "DLX connection: external" in report
+        assert "DeepL API key: set" in report
+        log_lines = [line for line in report.splitlines() if line.startswith("    ")]
+        assert len(log_lines) == 100
+        assert log_lines[0].endswith("DLX stopped (pid 2)")
+        assert log_lines[-1].endswith("[redacted]")
+        return report
+
+    def check(window: MainWindow, _status: QLabel) -> None:
+        source_text = f"{source_marker} {'a' * 170}\n\n{source_marker} {'b' * 170}"
+        window.source_editor.setPlainText(source_text)
+        window.translate_button.click()
+        qtbot.waitUntil(window.translate_button.isEnabled)
+        assert translated_marker in window.result_editor.toPlainText()
+
+        def check_about() -> None:
+            dialog = QApplication.activeModalWidget()
+            assert isinstance(dialog, AboutDialog)
+            try:
+                report = copy(dialog)
+                assert "Active provider: DeepL API" in report
+                assert "HTTP 200, Retry-After unknown, cache unknown" in report
+                assert "HTTP 429, Retry-After 9 s, cache unknown" in report
+                assert "Tray wait: 0.01 s scheduled" in report
+            finally:
+                dialog.reject()
+
+        QTimer.singleShot(0, check_about)
+        window.about_action.trigger()
+
+        window.source_editor.setPlainText(source_marker)
+        window.translate_button.click()
+        qtbot.waitUntil(lambda: isinstance(QApplication.activeModalWidget(), ErrorDialog))
+        dialog = QApplication.activeModalWidget()
+        assert isinstance(dialog, ErrorDialog)
+        assert "HTTP 403" in copy(dialog)
+        dialog.cancel_button.click()
+        qtbot.waitUntil(window.translate_button.isEnabled)
+        assert send.call_count == 2
+
+    try:
+        with running_fake_dlx(["ok", "429-retry-after"], token=token_marker) as server:
+            monkeypatch.setenv("DLX_DEEPLX_URL", f"{server.url}?trace={query_marker}")
+            monkeypatch.setenv("DLX_DEEPLX_TOKEN", server.token)
+            monkeypatch.setenv("DLX_DEEPL_API_KEY", key_marker)
+            monkeypatch.setenv("DLX_CHUNK_SIZE", "200")
+            monkeypatch.setenv("DLX_REQUEST_DELAY", "0.01")
+            monkeypatch.setenv("DLX_RETRIES", "0")
+            run_window(Settings.load(env_file=None), check)
+    finally:
+        clipboard.setText(previous_clipboard)
 
 
 @pytest.mark.parametrize("maximized", [False, True], ids=["normal", "maximized"])
@@ -351,7 +451,7 @@ def test_uses_official_api_when_dlx_is_unavailable(
         "dotenv": "dotenv-key:fx",
         "vault": "stored-key:fx",
     }
-    official_factory.assert_called_once_with(expected_keys[key_source])
+    official_factory.assert_called_once_with(expected_keys[key_source], diagnostics=ANY)
     official.translate.assert_called_once_with(
         ["Hello"], Language.AUTO, Language.UK, Formality.DEFAULT
     )
@@ -637,7 +737,10 @@ def test_settings_save_applies_to_next_job_and_reloads(
         call("DLX Tray", "deepl_api_key", "rotated-key:fx"),
     ]
     vault.delete_password.assert_called_once_with("DLX Tray", "deepl_api_key")
-    assert official_factory.call_args_list == [call("saved-key:fx"), call("rotated-key:fx")]
+    assert official_factory.call_args_list == [
+        call("saved-key:fx", diagnostics=ANY),
+        call("rotated-key:fx", diagnostics=ANY),
+    ]
 
 
 @pytest.mark.parametrize("settings_fail", [True, False], ids=["json", "credential-manager"])

@@ -45,6 +45,7 @@ try {
         '--copy-metadata', 'dlx-tray'
         '--add-data', "${catalog}:dlx_tray/i18n"
         '--add-data', "${appIcon}:dlx_tray/resources"
+        '--add-data', 'scripts/deeplx.lock.json:dlx_tray/resources'
         'src/dlx_tray/__main__.py'
     )
     # Qt uses the system ICU. Keep unrelated DLLs on the caller's PATH out of the bundle.

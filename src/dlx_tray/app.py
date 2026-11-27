@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import logging
+import sys
+from collections.abc import Callable
 from contextlib import ExitStack
+from functools import partial
 from pathlib import Path
+from threading import Event
 
 from keyring.errors import KeyringError
 from pydantic_settings import SettingsError
@@ -14,16 +18,18 @@ from PySide6.QtWidgets import QApplication, QMessageBox
 
 from dlx_tray import APP_NAME, __version__, config
 from dlx_tray.config import Settings
+from dlx_tray.core.diagnostics import DiagnosticTimeline, DLXConnection, TrayWait
 from dlx_tray.core.models import ProviderUnavailableError
 from dlx_tray.core.pipeline import TranslationJob
-from dlx_tray.core.retry import RetryPolicy
+from dlx_tray.core.retry import RetryPolicy, event_sleep
 from dlx_tray.logging_setup import file_logging
 from dlx_tray.providers.base import Translator
 from dlx_tray.providers.deepl_official import DeepLOfficialTranslator
 from dlx_tray.providers.deeplx import DeeplxTranslator
 from dlx_tray.providers.fallback import FallbackTranslator
 from dlx_tray.secrets import delete_deepl_api_key, get_deepl_api_key, set_deepl_api_key
-from dlx_tray.services.deeplx_process import DLXProcess
+from dlx_tray.services.deeplx_process import DLXProcess, resolve_binary
+from dlx_tray.services.diagnostics import markdown_report
 from dlx_tray.ui.localization import interface_language
 from dlx_tray.ui.main_window import MainWindow
 from dlx_tray.ui.settings_dialog import SettingsDialog
@@ -52,6 +58,19 @@ class _DLXStartup(QThread):
             log.warning("DLX startup failed: %s", exc)
         else:
             self.ready = True
+
+
+class _DiagnosticsExport(QThread):
+    def __init__(self, collect: Callable[[], str]) -> None:
+        super().__init__()
+        self._collect = collect
+        self.report: str | None = None
+
+    def run(self) -> None:
+        try:
+            self.report = self._collect()
+        except Exception as exc:
+            log.warning("Could not collect diagnostics (%s)", type(exc).__name__)
 
 
 def _check_deepl_api_key(key: str) -> None:
@@ -85,14 +104,62 @@ def _run_window(app: QApplication, settings: Settings, stack: ExitStack) -> int:
             if not geometry_restored:
                 log.warning("Qt could not restore the saved window geometry")
 
+    diagnostics = DiagnosticTimeline()
+    export: _DiagnosticsExport | None = None
     override = settings.deepl_api_key
     override_key = (override.get_secret_value().strip() or None) if override else None
     api_key = get_deepl_api_key(override_key)
-    official = DeepLOfficialTranslator(api_key) if api_key else None
+    official = DeepLOfficialTranslator(api_key, diagnostics=diagnostics) if api_key else None
     dlx: DeeplxTranslator | None = None
     translator: Translator | None = None
     status = QCoreApplication.translate("Startup", "Starting DLX…")
+    dlx_connection: DLXConnection = "starting"
     starting = settings.deeplx_url is None
+
+    def copy_diagnostics() -> None:
+        nonlocal export
+        if export is not None:
+            return
+        if getattr(sys, "frozen", False):
+            lock_path = Path(__file__).with_name("resources") / "deeplx.lock.json"
+        else:
+            lock_path = Path(__file__).resolve().parents[2] / "scripts" / "deeplx.lock.json"
+        collect = partial(
+            markdown_report,
+            binary=resolve_binary(),
+            dlx_lock=lock_path,
+            log_path=config.app_data_dir() / "logs" / "dlx-tray.log",
+            provider=window.diagnostic_provider,
+            dlx_status=dlx_connection,
+            rate_limited=window.diagnostic_rate_limited,
+            has_key=bool(api_key),
+            chunk_size=settings.chunk_size,
+            request_delay=settings.request_delay,
+            retries=settings.retries,
+            events=diagnostics.snapshot(),
+        )
+
+        def finish_export() -> None:
+            nonlocal export
+            assert export is not None
+            if export.report is None:
+                message = QCoreApplication.translate("Diagnostics", "Could not copy diagnostics.")
+            else:
+                app.clipboard().setText(export.report)
+                message = QCoreApplication.translate("Diagnostics", "Diagnostics copied.")
+            window.statusBar().showMessage(message, 5000)
+            export.deleteLater()
+            export = None
+
+        export = _DiagnosticsExport(collect)
+        export.finished.connect(finish_export, Qt.ConnectionType.QueuedConnection)
+        export.start()
+
+    window.diagnostics_requested.connect(copy_diagnostics)
+
+    def wait_for_request(seconds: float, cancel: Event) -> bool:
+        diagnostics.append(TrayWait(seconds))
+        return event_sleep(seconds, cancel)
 
     def close_official() -> None:
         if official is not None:
@@ -107,6 +174,7 @@ def _run_window(app: QApplication, settings: Settings, stack: ExitStack) -> int:
                 max_units=settings.chunk_size,
                 request_delay=settings.request_delay,
                 retry_policy=RetryPolicy(max_attempts=settings.max_attempts),
+                sleep=wait_for_request,
             )
             if translator is not None
             else None
@@ -153,7 +221,11 @@ def _run_window(app: QApplication, settings: Settings, stack: ExitStack) -> int:
             else:
                 close_official()
                 api_key = key
-                official = DeepLOfficialTranslator(key) if key is not None else None
+                official = (
+                    DeepLOfficialTranslator(key, diagnostics=diagnostics)
+                    if key is not None
+                    else None
+                )
                 if isinstance(translator, FallbackTranslator) and official is not None:
                     translator.replace_secondary(official)
                 else:
@@ -181,8 +253,11 @@ def _run_window(app: QApplication, settings: Settings, stack: ExitStack) -> int:
     startup = None
     if settings.deeplx_url is not None:
         token = settings.deeplx_token.get_secret_value() if settings.deeplx_token else ""
-        dlx = stack.enter_context(DeeplxTranslator(str(settings.deeplx_url), token))
+        dlx = stack.enter_context(
+            DeeplxTranslator(str(settings.deeplx_url), token, diagnostics=diagnostics)
+        )
         status = QCoreApplication.translate("Startup", "Using external DLX server")
+        dlx_connection = "external"
         refresh_provider()
     else:
         process = DLXProcess()
@@ -190,15 +265,19 @@ def _run_window(app: QApplication, settings: Settings, stack: ExitStack) -> int:
         startup = _DLXStartup(process)
 
         def startup_finished() -> None:
-            nonlocal dlx, status, starting
+            nonlocal dlx, dlx_connection, status, starting
             if not window.isVisible():
                 return
             starting = False
             if startup.ready:
-                dlx = stack.enter_context(DeeplxTranslator(process.base_url, process.token))
+                dlx = stack.enter_context(
+                    DeeplxTranslator(process.base_url, process.token, diagnostics=diagnostics)
+                )
                 status = QCoreApplication.translate("Startup", "DLX ready")
+                dlx_connection = "ready"
             else:
                 status = QCoreApplication.translate("Startup", "DLX unavailable")
+                dlx_connection = "unavailable"
             refresh_provider()
             refresh_job()
 
@@ -217,6 +296,8 @@ def _run_window(app: QApplication, settings: Settings, stack: ExitStack) -> int:
         window.stop_translation()
         if startup is not None:
             startup.wait()
+        if export is not None:
+            export.wait()
 
     updated = settings.model_copy()
     updated.source_lang, updated.target_lang = window.selected_languages

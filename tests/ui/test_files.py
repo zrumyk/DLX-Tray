@@ -221,7 +221,7 @@ def test_file_failure_dialog_uses_document_progress_and_cancel_preserves_preview
         qtbot.waitUntil(lambda: window.findChild(ErrorDialog) is not None)
         dialog = window.findChild(ErrorDialog)
         assert dialog is not None
-        assert dialog.text() == "Could not translate chunk 2 of 2."
+        assert dialog.heading.text() == "Could not translate chunk 2 of 2."
         assert window.progress_label.text() == "File translation · Chunk 1 of 2"
         dialog.cancel_button.click()
         qtbot.waitUntil(window.translate_button.isEnabled)
