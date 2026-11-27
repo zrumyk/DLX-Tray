@@ -15,6 +15,9 @@ from PySide6.QtWidgets import (
 
 from dlx_tray.core.models import (
     AuthError,
+    DlxAuthError,
+    DlxForbiddenError,
+    LocalCooldownError,
     ProviderUnavailableError,
     RateLimitedError,
     TextTooLongError,
@@ -98,8 +101,16 @@ class ErrorDialog(QDialog):
         self.accept()
 
     def _reason(self, error: TranslationError) -> str:
+        if isinstance(error, DlxAuthError):
+            return self.tr("DLX authentication failed (HTTP 401). Check the DLX access token.")
+        if isinstance(error, DlxForbiddenError):
+            return self.tr(
+                "DLX returned HTTP 403. The server or an upstream service denied access."
+            )
         if isinstance(error, AuthError):
             return self.tr("The translation provider rejected its credentials.")
+        if isinstance(error, LocalCooldownError):
+            return self.tr("Tray paused DLX requests after a rate limit.")
         if isinstance(error, RateLimitedError):
             return self.tr("The translation provider is rate-limited.")
         if isinstance(error, ProviderUnavailableError):

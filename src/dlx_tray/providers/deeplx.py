@@ -14,7 +14,8 @@ import httpx
 from dlx_tray.core.chunker import HARD_MAX_UNITS, utf16_len
 from dlx_tray.core.diagnostics import DiagnosticTimeline, ProviderAttempt
 from dlx_tray.core.models import (
-    AuthError,
+    DlxAuthError,
+    DlxForbiddenError,
     Formality,
     Language,
     LocalCooldownError,
@@ -243,17 +244,19 @@ def _message(body: Any, fallback: str) -> str:
 
 def _status_error(response: httpx.Response, body: Any) -> TranslationError:
     status = response.status_code
-    message = _message(body, f"HTTP {status}")
     too_large = status == httpx.codes.REQUEST_ENTITY_TOO_LARGE
     # A 413 means the server rejected a request that passed local validation.
     log.log(logging.ERROR if too_large else logging.WARNING, "DLX answered HTTP %d", status)
-    if status in (httpx.codes.UNAUTHORIZED, httpx.codes.FORBIDDEN):
-        return AuthError(f"DLX rejected the token: {message}")
-    if too_large:
-        return TextTooLongError(message)
+    if status == httpx.codes.UNAUTHORIZED:
+        return DlxAuthError("DLX authentication failed (HTTP 401)")
+    if status == httpx.codes.FORBIDDEN:
+        return DlxForbiddenError("Access to the translation request was denied (HTTP 403)")
     if status == httpx.codes.TOO_MANY_REQUESTS:
         retry_after = parse_retry_after(response.headers.get("Retry-After"))
-        return RateLimitedError(message, retry_after=retry_after)
+        return RateLimitedError("The DLX request was rate-limited (HTTP 429)", retry_after)
+    message = _message(body, f"HTTP {status}")
+    if too_large:
+        return TextTooLongError(message)
     if status >= httpx.codes.INTERNAL_SERVER_ERROR:
         return ProviderUnavailableError(message)
     return TranslationError(message)

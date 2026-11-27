@@ -135,7 +135,15 @@ class TextTooLongError(TranslationError):
 
 
 class AuthError(TranslationError):
-    """The provider rejected the credentials (HTTP 401/403)."""
+    """The provider reported an authentication failure."""
+
+
+class DlxAuthError(AuthError):
+    """DLX returned HTTP 401."""
+
+
+class DlxForbiddenError(TranslationError):
+    """DLX returned HTTP 403, which may have originated upstream."""
 
 
 class TranslationCancelledError(Exception):

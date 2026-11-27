@@ -395,6 +395,7 @@ class TranslationJob:
                         shared_result,
                         can_pair=can_pair,
                         batch=batch if batching else None,
+                        wait_for_first_result=file_segments is not None,
                     )
                     if (concurrency == 2 or batching) and total
                     else serial(tasks)

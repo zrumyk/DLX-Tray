@@ -29,6 +29,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   waits still apply.
 
 ### Fixed
+- Distinguish DLX authentication failures from ambiguous access denials and report rate limits
+  without guessing their cause. After a DLX rate limit, open Settings from the status bar
+  to add a DeepL API key for future jobs.
 - Upgrade unversioned settings that still use the old 2.5-second request delay to the
   current zero-second default. A 2.5-second delay saved after the upgrade is kept.
 

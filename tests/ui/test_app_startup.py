@@ -17,12 +17,19 @@ import requests
 from keyring.errors import KeyringError
 from PySide6.QtCore import QRect, QSize, Qt, QTimer
 from PySide6.QtGui import QShortcut
-from PySide6.QtWidgets import QApplication, QDialogButtonBox, QLabel, QMessageBox
+from PySide6.QtWidgets import (
+    QApplication,
+    QDialogButtonBox,
+    QFileDialog,
+    QLabel,
+    QMessageBox,
+    QPushButton,
+)
 from pytestqt.qtbot import QtBot
 from tests.fakes.fake_dlx import FakeDLXFactory, running_fake_dlx
 
 from dlx_tray import app, config, secrets
-from dlx_tray.config import Settings, Theme
+from dlx_tray.config import Settings, Theme, UiLanguage
 from dlx_tray.core.chunker import paragraphs
 from dlx_tray.core.models import Formality, Language, ProviderUnavailableError, TranslationResult
 from dlx_tray.core.retry import RequestDispatch
@@ -33,6 +40,7 @@ from dlx_tray.services.history import HistoryStore
 from dlx_tray.ui.about_dialog import AboutDialog
 from dlx_tray.ui.error_dialog import ErrorDialog
 from dlx_tray.ui.history_dialog import HistoryDialog
+from dlx_tray.ui.localization import interface_language
 from dlx_tray.ui.main_window import MainWindow
 from dlx_tray.ui.settings_dialog import SettingsDialog
 
@@ -491,6 +499,131 @@ def test_external_dlx_skips_bundled_process(
     process_factory.assert_not_called()
 
 
+@pytest.mark.parametrize(
+    ("status", "language", "reason"),
+    [
+        (401, "en", "DLX authentication failed (HTTP 401). Check the DLX access token."),
+        (
+            401,
+            "uk",
+            "Не вдалося пройти автентифікацію DLX (HTTP 401). Перевірте токен доступу DLX.",  # noqa: RUF001
+        ),
+        (403, "en", "DLX returned HTTP 403. The server or an upstream service denied access."),
+        (
+            403,
+            "uk",
+            "DLX повернув HTTP 403. Доступ заборонив сервер DLX або "  # noqa: RUF001
+            "сервіс, до якого він звертається.",
+        ),
+    ],
+)
+def test_dlx_access_failure_reason(
+    run_window: Callable[[Settings, Callable[[MainWindow, QLabel], None]], None],
+    qtbot: QtBot,
+    qapp: QApplication,
+    fake_dlx: FakeDLXFactory,
+    status: int,
+    language: UiLanguage,
+    reason: str,
+) -> None:
+    def check(window: MainWindow, _status: QLabel) -> None:
+        window.source_editor.setPlainText("Hello")
+        qtbot.waitUntil(window.translate_button.isEnabled)
+        window.translate_button.click()
+        qtbot.waitUntil(lambda: isinstance(QApplication.activeModalWidget(), ErrorDialog))
+        dialog = QApplication.activeModalWidget()
+        assert isinstance(dialog, ErrorDialog)
+        assert dialog.detail.text().splitlines()[0] == reason
+        dialog.cancel_button.click()
+        qtbot.waitUntil(window.translate_button.isEnabled)
+
+    with fake_dlx(["403"]) as server, interface_language(qapp, language):
+        settings = Settings.model_validate(
+            {
+                "deeplx_url": server.url,
+                "deeplx_token": "wrong" if status == 401 else server.token,
+                "ui_language": language,
+            }
+        )
+        run_window(settings, check)
+
+
+@pytest.mark.parametrize(
+    ("language", "countdown", "offer_text"),
+    [
+        ("en", "Rate limited. Retrying in {seconds} s.", "Add DeepL API key…"),
+        (
+            "uk",
+            "Досягнуто ліміту запитів. Повторна спроба через {seconds} \u0441.",
+            "Додати ключ DeepL API…",
+        ),
+    ],
+)
+def test_first_file_request_rate_limit_offers_key_settings(
+    run_window: Callable[[Settings, Callable[[MainWindow, QLabel], None]], None],
+    qtbot: QtBot,
+    qapp: QApplication,
+    fake_dlx: FakeDLXFactory,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    language: UiLanguage,
+    countdown: str,
+    offer_text: str,
+) -> None:
+    source = tmp_path / "large.txt"
+    blocks = [f"{index:02d}" + "a" * 1498 for index in range(40)]
+    source.write_text("".join(blocks), encoding="utf-8")
+    monkeypatch.setattr(QFileDialog, "getOpenFileName", lambda *_: (str(source), ""))
+    requests: list[list[str]] = []
+    opened_settings: list[bool] = []
+
+    def record(texts: list[str], step: str) -> str:
+        requests.append(texts)
+        return step
+
+    def close_key_settings() -> None:
+        dialog = QApplication.activeModalWidget()
+        assert isinstance(dialog, SettingsDialog)
+        try:
+            opened_settings.append(dialog.focusWidget() is dialog.api_key)
+        finally:
+            dialog.reject()
+
+    def check(window: MainWindow, _status: QLabel) -> None:
+        warning = window.findChild(QLabel, "rate_limit_status")
+        offer = window.findChild(QPushButton, "add_api_key")
+        assert warning is not None and offer is not None
+        window.open_file_action.trigger()
+        qtbot.waitUntil(window.translate_button.isEnabled)
+        window.translate_button.click()
+        qtbot.waitUntil(lambda: warning.text() == countdown.format(seconds=9))
+        assert warning.isVisible() and not offer.isVisible()
+        assert requests == [[blocks[0]]]
+        window.cancel_button.click()
+        qtbot.waitUntil(window.translate_button.isEnabled)
+        assert requests == [[blocks[0]]]
+        assert QApplication.activeModalWidget() is None
+        assert offer.isVisible() and offer.text() == offer_text
+        QTimer.singleShot(0, close_key_settings)
+        offer.click()
+        assert opened_settings == [True]
+        assert not offer.isVisible()
+
+    with fake_dlx(["429-retry-after"]) as server, interface_language(qapp, language):
+        server.on_request = record
+        settings = Settings.model_validate(
+            {
+                "deeplx_url": server.url,
+                "deeplx_token": server.token,
+                "chunk_size": 1500,
+                "request_delay": 0,
+                "dlx_concurrency": 2,
+                "ui_language": language,
+            }
+        )
+        run_window(settings, check)
+
+
 @pytest.mark.parametrize("startup_fails", [False, True], ids=["runtime-429", "startup-failure"])
 @pytest.mark.parametrize("key_source", ["environment", "dotenv", "vault"])
 def test_uses_official_api_when_dlx_is_unavailable(
@@ -542,6 +675,8 @@ def test_uses_official_api_when_dlx_is_unavailable(
             allow_response.set()
         qtbot.waitUntil(window.translate_button.isEnabled)
         assert window.result_editor.toPlainText() == "Привіт"
+        offer = window.findChild(QPushButton, "add_api_key")
+        assert offer is not None and not offer.isVisible()
         assert status.text() == (
             "DLX unavailable" if startup_fails else "Using external DLX server"
         )

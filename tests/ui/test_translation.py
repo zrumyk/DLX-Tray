@@ -149,7 +149,7 @@ def test_auto_detect_swap_uses_only_the_current_translation(
             assert not window.detected_language.isVisible()
             assert not window.swap_button.isEnabled()
             dialog = _wait_for_failure_dialog(qtbot, window)
-            assert "rejected its credentials" in dialog.detail.text()
+            assert "DLX authentication failed (HTTP 401)." in dialog.detail.text()
             dialog.cancel_button.click()
             qtbot.waitUntil(window.translate_button.isEnabled)
             assert window.statusBar().currentMessage() == "Translation cancelled."
