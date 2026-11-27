@@ -35,6 +35,10 @@ class FallbackTranslator:
         with self._lock:
             self._secondary = secondary
 
+    def provider_names(self) -> tuple[str, str]:
+        with self._lock:
+            return self._primary.name, self._secondary.name
+
     def translate(
         self,
         texts: Sequence[str],

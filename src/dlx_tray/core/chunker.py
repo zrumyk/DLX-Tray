@@ -31,6 +31,31 @@ def utf16_len(text: str) -> int:
     return len(text.encode("utf-16-le", "surrogatepass")) // 2
 
 
+def paragraphs(text: str) -> list[Chunk]:
+    """Separate paragraphs without consuming their original blank-line separators."""
+    pieces: list[Chunk] = []
+    start = 0
+    for match in _WHITESPACE.finditer(text):
+        if match.start() > start and _line_break_count(match.group()) >= 2:
+            pieces.append(Chunk(text[start : match.start()], match.group(), len(pieces)))
+            start = match.end()
+    if start < len(text):
+        pieces.append(Chunk(text[start:], "", len(pieces)))
+    return pieces
+
+
+def split_segment(text: str, max_units: int) -> list[Chunk]:
+    """Keep a segment intact unless its translatable text exceeds the request limit."""
+    content = text.strip()
+    if utf16_len(content) > max_units:
+        return split(text, max_units)
+    start = len(text) - len(text.lstrip())
+    pieces = [Chunk("", text[:start], 0)] if start else []
+    if content:
+        pieces.append(Chunk(content, text[start + len(content) :], len(pieces)))
+    return pieces
+
+
 def split(text: str, max_units: int = DEFAULT_MAX_UNITS) -> list[Chunk]:
     """Split ``text`` into chunks of at most ``max_units`` UTF-16 units each.
 
@@ -116,7 +141,7 @@ def _boundaries(text: str) -> tuple[list[list[int]], list[list[int]]]:
 
 
 def _rank(text: str, run: str, start: int) -> int:
-    line_breaks = run.count("\n") + run.count("\r") - run.count("\r\n")
+    line_breaks = _line_break_count(run)
     if line_breaks >= 2:
         return _PARAGRAPH
     if line_breaks == 1:
@@ -125,6 +150,10 @@ def _rank(text: str, run: str, start: int) -> int:
     while i > 0 and text[i] in _CLOSERS:
         i -= 1
     return _SENTENCE if text[i] in _SENTENCE_END else _SPACE
+
+
+def _line_break_count(run: str) -> int:
+    return run.count("\n") + run.count("\r") - run.count("\r\n")
 
 
 def _best_boundary(

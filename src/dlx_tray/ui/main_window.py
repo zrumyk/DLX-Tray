@@ -50,7 +50,7 @@ from dlx_tray.providers.deepl_official import PROVIDER_NAME as DEEPL_NAME
 from dlx_tray.providers.deeplx import PROVIDER_NAME as DLX_NAME
 from dlx_tray.services.history import HistoryStore
 from dlx_tray.ui.about_dialog import AboutDialog
-from dlx_tray.ui.error_dialog import ErrorDialog
+from dlx_tray.ui.error_dialog import ErrorDialog, FailureLocation
 from dlx_tray.ui.history_dialog import HistoryDialog
 from dlx_tray.ui.workers import FileIOWorker, FileJobResult, TranslationWorker
 
@@ -564,18 +564,25 @@ class MainWindow(QMainWindow):
         self.counter.setToolTip(self.tr("Characters are counted in UTF-16 code units."))
         text = _editor_text(self.source_editor)
         chars = chunker.utf16_len(text)
-        self._chunk_count = sum(
-            chunk.translatable for chunk in chunker.split(text, self._chunk_size)
-        )
-        label = self.tr("{chars} characters · {chunks} chunks")
-        self.counter.setText(label.format(chars=chars, chunks=self._chunk_count))
+        if self._job is not None and self._job.uses_segments:
+            self._progress_total = sum(
+                bool(segment.text.strip()) for segment in chunker.paragraphs(text)
+            )
+            label = self.tr("{chars} characters · Paragraphs: {paragraphs}")
+            self.counter.setText(label.format(chars=chars, paragraphs=self._progress_total))
+        else:
+            self._progress_total = sum(
+                chunk.translatable for chunk in chunker.split(text, self._chunk_size)
+            )
+            label = self.tr("{chars} characters · {chunks} chunks")
+            self.counter.setText(label.format(chars=chars, chunks=self._progress_total))
         self._update_translate()
 
     def _update_translate(self) -> None:
         enabled = (
             self._translation_unavailable_reason is None
             and self._thread is None
-            and (self._file is not None or self._chunk_count > 0)
+            and (self._file is not None or self._progress_total > 0)
         )
         self.translate_button.setEnabled(enabled)
         self._translate_shortcut.setEnabled(enabled)
@@ -665,7 +672,7 @@ class MainWindow(QMainWindow):
         self.statusBar().clearMessage()
         self._provider_status.hide()
         self._rate_limit_status.hide()
-        self.progress_bar.setRange(0, 0 if self._file is not None else self._chunk_count)
+        self.progress_bar.setRange(0, 0 if self._file is not None else self._progress_total)
         self.progress_bar.setValue(0)
         self.progress_label.setText(
             self.tr("Preparing file translation…")
@@ -707,11 +714,18 @@ class MainWindow(QMainWindow):
         self.progress_bar.setMaximum(total)
         self.progress_bar.setValue(processed)
         if self.cancel_button.isEnabled():
-            label = (
-                self.tr("File translation · Chunk {processed} of {total}")
-                if self._file is not None
-                else self.tr("Chunk {processed} of {total}")
-            )
+            if self._job is not None and self._job.uses_segments:
+                label = (
+                    self.tr("File translation · Segments completed {processed} of {total}")
+                    if self._file is not None
+                    else self.tr("Paragraphs completed {processed} of {total}")
+                )
+            else:
+                label = (
+                    self.tr("File translation · Chunk {processed} of {total}")
+                    if self._file is not None
+                    else self.tr("Chunk {processed} of {total}")
+                )
             self.progress_label.setText(label.format(processed=processed, total=total))
         self._append_result(text)
 
@@ -792,8 +806,15 @@ class MainWindow(QMainWindow):
     def _show_chunk_failure(self, error: TranslationError) -> None:
         if not isinstance(self._worker, TranslationWorker) or not self.cancel_button.isEnabled():
             return
+        location: FailureLocation = "chunk"
+        if self._job is not None and self._job.uses_segments:
+            location = "segment" if self._file is not None else "paragraph"
         dialog = ErrorDialog(
-            self.progress_bar.value() + 1, self.progress_bar.maximum(), error, self
+            self.progress_bar.value() + 1,
+            self.progress_bar.maximum(),
+            error,
+            self,
+            location=location,
         )
         self._error_dialog = dialog
         dialog.diagnostics_requested.connect(self.diagnostics_requested)

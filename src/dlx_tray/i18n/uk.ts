@@ -46,6 +46,14 @@
         <translation>Не вдалося перекласти фрагмент {number} із {total}.</translation>
     </message>
     <message>
+        <source>Translation failed in paragraph {number} of {total}.</source>
+        <translation>Помилка перекладу в абзаці {number} із {total}.</translation>
+    </message>
+    <message>
+        <source>Translation failed in file segment {number} of {total}.</source>
+        <translation>Помилка перекладу в сегменті файлу {number} із {total}.</translation>
+    </message>
+    <message>
         <source>Continue retries this chunk. Skip keeps its original text. Cancel stops and keeps the result so far.</source>
         <translation>«Продовжити» повторює спробу перекладу цього фрагмента. «Пропустити» залишає його початковий текст. «Скасувати» зупиняє переклад і зберігає вже перекладений текст.</translation>
     </message>
@@ -480,6 +488,18 @@
         <translation>Символів: {chars} · Фрагментів: {chunks}</translation>
     </message>
     <message>
+        <source>{chars} characters · Paragraphs: {paragraphs}</source>
+        <translation>Символів: {chars} · Абзаців: {paragraphs}</translation>
+    </message>
+    <message>
+        <source>File translation · Segments completed {processed} of {total}</source>
+        <translation>Переклад файлу · Оброблено сегментів {processed} з {total}</translation>
+    </message>
+    <message>
+        <source>Paragraphs completed {processed} of {total}</source>
+        <translation>Оброблено абзаців {processed} з {total}</translation>
+    </message>
+    <message>
         <source>Close the file to swap languages and texts.</source>
         <translation>Закрийте файл, щоб поміняти місцями мови й тексти.</translation>
     </message>
@@ -641,6 +661,30 @@
     <message>
         <source>&amp;History entry limit</source>
         <translation>&amp;Ліміт записів в історії</translation>
+    </message>
+    <message>
+        <source>Enable translation c&amp;ache</source>
+        <translation>Зберігати &amp;кеш перекладів</translation>
+    </message>
+    <message>
+        <source>Clear translation cache</source>
+        <translation>Очистити кеш перекладів</translation>
+    </message>
+    <message>
+        <source>Remove all cached translations?</source>
+        <translation>Видалити всі переклади з кешу?</translation>
+    </message>
+    <message>
+        <source>Clearing the translation cache…</source>
+        <translation>Очищення кешу перекладів…</translation>
+    </message>
+    <message>
+        <source>Translation cache cleared.</source>
+        <translation>Кеш перекладів очищено.</translation>
+    </message>
+    <message>
+        <source>Could not clear the translation cache.</source>
+        <translation>Не вдалося очистити кеш перекладів.</translation>
     </message>
     <message>
         <source>DeepL API key</source>

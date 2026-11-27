@@ -52,7 +52,7 @@ def test_key_check_runs_in_background(
         assert dialog.isVisible()
     finally:
         release.set()
-        dialog.wait_for_key_check()
+        dialog.wait_for_operation()
 
     qtbot.waitUntil(dialog.buttons.isEnabled)
     assert dialog.key_status.text() == message
@@ -83,7 +83,7 @@ def test_override_and_invalid_values(
         dialog.test_button.click()
         qtbot.waitUntil(dialog.buttons.isEnabled)
     finally:
-        dialog.wait_for_key_check()
+        dialog.wait_for_operation()
     check.assert_called_once_with("override-key")
 
     save_button = dialog.buttons.button(QDialogButtonBox.StandardButton.Save)
