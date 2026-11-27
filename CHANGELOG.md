@@ -6,6 +6,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- Open Help → About DLX Tray to see the installed version and the DLX and Qt license notices.
+
 ### Changed
 - Update bundled DLX for translation without an API key. A short English-to-Ukrainian
   translation passed through the installed Windows app.

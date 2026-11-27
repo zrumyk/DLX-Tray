@@ -48,6 +48,7 @@ from dlx_tray.fileio.translation import (
 from dlx_tray.providers.deepl_official import PROVIDER_NAME as DEEPL_NAME
 from dlx_tray.providers.deeplx import PROVIDER_NAME as DLX_NAME
 from dlx_tray.services.history import HistoryStore
+from dlx_tray.ui.about_dialog import AboutDialog
 from dlx_tray.ui.error_dialog import ErrorDialog
 from dlx_tray.ui.history_dialog import HistoryDialog
 from dlx_tray.ui.workers import FileIOWorker, FileJobResult, TranslationWorker
@@ -119,6 +120,9 @@ class MainWindow(QMainWindow):
         self.history_action.triggered.connect(self._show_history)
         self.settings_action = self.menuBar().addAction(self.tr("&Settings…"))
         self.settings_action.triggered.connect(self.settings_requested)
+        help_menu = self.menuBar().addMenu(self.tr("Hel&p"))
+        self.about_action = help_menu.addAction(self.tr("&About DLX Tray…"))
+        self.about_action.triggered.connect(self._show_about)
         self._chunk_size = translation_job.max_units if translation_job else chunk_size
         self._job = translation_job
         self._formality = formality
@@ -241,6 +245,10 @@ class MainWindow(QMainWindow):
         self._history_enabled = enabled
         self._history_limit = limit
         self.history_action.setEnabled(self._thread is None)
+
+    @Slot()
+    def _show_about(self) -> None:
+        AboutDialog(self).exec()
 
     @Slot()
     def _show_history(self) -> None:
