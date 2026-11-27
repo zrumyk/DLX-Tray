@@ -5,9 +5,10 @@ from __future__ import annotations
 from functools import partial
 from math import ceil
 from pathlib import Path
+from time import monotonic
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QCollator, QLocale, Qt, QThread, Signal, Slot
+from PySide6.QtCore import QCollator, QLocale, Qt, QThread, QTimer, Signal, Slot
 from PySide6.QtGui import (
     QCloseEvent,
     QDragEnterEvent,
@@ -37,7 +38,13 @@ from PySide6.QtWidgets import (
 from dlx_tray import APP_NAME, __version__
 from dlx_tray.core import chunker
 from dlx_tray.core.diagnostics import DiagnosticProvider
-from dlx_tray.core.models import Formality, Language, TranslationError
+from dlx_tray.core.models import (
+    Formality,
+    Language,
+    LocalCooldownError,
+    RateLimitedError,
+    TranslationError,
+)
 from dlx_tray.core.pipeline import JobResult, TranslationJob
 from dlx_tray.fileio.pdf_io import NoTextLayerError
 from dlx_tray.fileio.translation import (
@@ -192,6 +199,11 @@ class MainWindow(QMainWindow):
         self._rate_limit_status.setObjectName("rate_limit_status")
         self._rate_limit_status.hide()
         self.statusBar().addPermanentWidget(self._rate_limit_status)
+        self._dlx_rate_limited = False
+        self._retry_waits: dict[int, tuple[float, type[TranslationError]]] = {}
+        self._retry_timer = QTimer(self)
+        self._retry_timer.setInterval(100)
+        self._retry_timer.timeout.connect(self._update_retry_status)
 
         languages = QHBoxLayout()
         source_controls = QHBoxLayout()
@@ -267,7 +279,7 @@ class MainWindow(QMainWindow):
 
     @property
     def diagnostic_rate_limited(self) -> bool:
-        return not self._rate_limit_status.isHidden()
+        return self._dlx_rate_limited
 
     @Slot()
     def _show_history(self) -> None:
@@ -296,7 +308,7 @@ class MainWindow(QMainWindow):
         self.source_editor.setPlainText(entry.source_text)
         self.result_editor.setPlainText(entry.target_text)
         self._provider_status.hide()
-        self._rate_limit_status.hide()
+        self._reset_retry_status()
         self.statusBar().showMessage(self.tr("Opened translation from history."))
         self.source_editor.setFocus()
 
@@ -362,7 +374,7 @@ class MainWindow(QMainWindow):
         self.source_editor.setPlainText(source.assemble(source.segments))
         self.result_editor.clear()
         self._provider_status.hide()
-        self._rate_limit_status.hide()
+        self._reset_retry_status()
         self.statusBar().clearMessage()
 
     @Slot(object)
@@ -391,7 +403,7 @@ class MainWindow(QMainWindow):
         self._update_copy()
         self._clear_detected_source()
         self._provider_status.hide()
-        self._rate_limit_status.hide()
+        self._reset_retry_status()
         self.statusBar().clearMessage()
         self._set_input_locked(False)
         self.source_editor.setFocus()
@@ -665,6 +677,8 @@ class MainWindow(QMainWindow):
         worker.progress.connect(self._show_progress)
         worker.provider_changed.connect(self._show_provider)
         worker.dlx_rate_limited.connect(self._show_dlx_rate_limit)
+        worker.retry_wait_started.connect(self._start_retry_wait)
+        worker.retry_wait_finished.connect(self._finish_retry_wait)
         worker.chunk_failed.connect(self._show_chunk_failure)
         worker.finished.connect(self._show_finished)
         worker.failed.connect(self._show_failure)
@@ -677,7 +691,7 @@ class MainWindow(QMainWindow):
         self.result_editor.clear()
         self.statusBar().clearMessage()
         self._provider_status.hide()
-        self._rate_limit_status.hide()
+        self._reset_retry_status()
         self.progress_bar.setRange(0, 0 if self._file is not None else self._progress_total)
         self.progress_bar.setValue(0)
         self.progress_label.setText(
@@ -748,18 +762,54 @@ class MainWindow(QMainWindow):
             self.tr("Provider: {name}").format(name=names.get(provider, provider))
         )
         self._provider_status.show()
-        if not self._rate_limit_status.isHidden():
-            self._show_dlx_rate_limit(0.0)
 
-    @Slot(float)
-    def _show_dlx_rate_limit(self, retry_delay: float) -> None:
-        warning = self.tr("DLX rate limit reached.")
-        if retry_delay > 0:
-            warning = self.tr("DLX rate limit reached. Retrying in {seconds} s.").format(
-                seconds=ceil(retry_delay)
-            )
+    @Slot()
+    def _show_dlx_rate_limit(self) -> None:
+        if self.cancel_button.isEnabled():
+            self._dlx_rate_limited = True
+            self._update_retry_status()
+
+    @Slot(object, float, object)
+    def _start_retry_wait(
+        self, caller: int, deadline: float, error_type: type[TranslationError]
+    ) -> None:
+        if self.cancel_button.isEnabled():
+            self._retry_waits[caller] = (deadline, error_type)
+            self._update_retry_status()
+
+    @Slot(object)
+    def _finish_retry_wait(self, caller: int) -> None:
+        self._retry_waits.pop(caller, None)
+        self._update_retry_status()
+
+    @Slot()
+    def _update_retry_status(self) -> None:
+        now = monotonic()
+        self._retry_waits = {
+            caller: wait for caller, wait in self._retry_waits.items() if wait[0] > now
+        }
+        if self._retry_waits:
+            # Show the next retry when two request threads are waiting.
+            deadline, error_type = min(self._retry_waits.values(), key=lambda wait: wait[0])
+            if issubclass(error_type, LocalCooldownError):
+                warning = self.tr("Tray cooldown. Retrying in {seconds} s.")
+            elif issubclass(error_type, RateLimitedError):
+                warning = self.tr("Rate limited. Retrying in {seconds} s.")
+            else:
+                warning = self.tr("Retrying in {seconds} s.")
+            warning = warning.format(seconds=ceil(deadline - now))
+            if not self._retry_timer.isActive():
+                self._retry_timer.start()
+        else:
+            self._retry_timer.stop()
+            warning = self.tr("DLX rate limit reached.") if self._dlx_rate_limited else ""
         self._rate_limit_status.setText(warning)
-        self._rate_limit_status.show()
+        self._rate_limit_status.setVisible(bool(warning))
+
+    def _reset_retry_status(self) -> None:
+        self._dlx_rate_limited = False
+        self._retry_waits.clear()
+        self._update_retry_status()
 
     def _append_result(self, text: str) -> None:
         if len(text) > self._rendered_chars:
@@ -840,6 +890,8 @@ class MainWindow(QMainWindow):
     def _cancel_translation(self) -> None:
         if isinstance(self._worker, TranslationWorker) and self._worker.cancel():
             self.cancel_button.setEnabled(False)
+            self._retry_waits.clear()
+            self._update_retry_status()
             self.progress_label.setText(self.tr("Cancelling…"))
             if self._error_dialog is not None:
                 self._error_dialog.reject()
@@ -853,8 +905,8 @@ class MainWindow(QMainWindow):
         self._thread = None
         self._worker = None
         self._progress_row.hide()
-        if not self._rate_limit_status.isHidden():
-            self._show_dlx_rate_limit(0.0)
+        self._retry_waits.clear()
+        self._update_retry_status()
         self._set_input_locked(False)
         if self._close_pending:
             self.close()

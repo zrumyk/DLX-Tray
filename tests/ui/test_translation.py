@@ -10,6 +10,7 @@ from PySide6.QtWidgets import QApplication, QLabel
 from pytestqt.qtbot import QtBot
 from tests.fakes.fake_dlx import FakeDLXFactory
 
+from dlx_tray.config import UiLanguage
 from dlx_tray.core import chunker
 from dlx_tray.core.models import Formality, Language, TranslationResult
 from dlx_tray.core.pipeline import TranslationJob
@@ -18,6 +19,7 @@ from dlx_tray.providers.deeplx import DeeplxTranslator
 from dlx_tray.services.history import HistoryStore
 from dlx_tray.ui import main_window
 from dlx_tray.ui.error_dialog import ErrorDialog
+from dlx_tray.ui.localization import interface_language
 from dlx_tray.ui.main_window import MainWindow
 
 
@@ -181,30 +183,37 @@ def test_large_translation_with_loopback_server(
         assert window.result_editor.toPlainText() == expected
 
 
+@pytest.mark.parametrize(("response", "delay"), [("429", 15), ("429-retry-after", 9)])
+@pytest.mark.parametrize("language", ["en", "uk"])
 def test_cancel_interrupts_retry_and_keeps_streamed_text(
     qtbot: QtBot,
     translation_window: Callable[[TranslationJob], MainWindow],
     fake_dlx: FakeDLXFactory,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    qapp: QApplication,
+    response: str,
+    delay: int,
+    language: UiLanguage,
 ) -> None:
     now = 100.0
     first = "first" + "a" * 746
     second = "second" + "b" * 745
     third = "third" + "c" * 746
     monkeypatch.setattr("dlx_tray.providers.deeplx.monotonic", lambda: now)
-    waiting = Event()
+    requests: list[list[str]] = []
 
-    def sleep(seconds: float, cancel: Event) -> bool:
-        assert seconds == 9.0
-        waiting.set()
-        return not cancel.wait(seconds)
+    def record(texts: list[str], step: str) -> str:
+        requests.append(texts)
+        return step
 
     with (
-        fake_dlx(["ok", "429-retry-after"]) as server,
+        interface_language(qapp, language),
+        fake_dlx(["ok", response]) as server,
         DeeplxTranslator(server.url, server.token) as translator,
     ):
-        job = TranslationJob(translator=translator, max_units=751, request_delay=0, sleep=sleep)
+        server.on_request = record
+        job = TranslationJob(translator=translator, max_units=751, request_delay=0)
         window = translation_window(job)
         path = tmp_path / "history.sqlite3"
         window.set_history(path, enabled=True, limit=2)
@@ -214,12 +223,21 @@ def test_cancel_interrupts_retry_and_keeps_streamed_text(
         assert provider is not None and warning is not None
         assert not provider.isVisible() and not warning.isVisible()
         window.translate_button.click()
-        qtbot.waitUntil(waiting.is_set)
         qtbot.waitUntil(lambda: window.progress_bar.value() == 1)
-        qtbot.waitUntil(lambda: warning.text() == "DLX rate limit reached. Retrying in 9 s.")
+        countdown = (
+            "Досягнуто ліміту запитів. Повторна спроба через {seconds} \u0441."
+            if language == "uk"
+            else "Rate limited. Retrying in {seconds} s."
+        )
+        qtbot.waitUntil(lambda: warning.text() == countdown.format(seconds=delay))
+        qtbot.waitUntil(lambda: warning.text() == countdown.format(seconds=delay - 1))
         assert warning.isVisible()
-        assert provider.isVisible() and provider.text() == "Provider: DLX"
-        assert window.progress_label.text() == "Chunk 1 of 3"
+        assert provider.isVisible() and provider.text() == window.tr("Provider: {name}").format(
+            name="DLX"
+        )
+        assert window.progress_label.text() == window.tr("Chunk {processed} of {total}").format(
+            processed=1, total=3
+        )
         assert window.progress_bar.maximum() == 3
         assert window.result_editor.document().toRawText() == f" [EN] {first}\u00a0\u2029\u2029"
         assert not window.translate_button.isEnabled()
@@ -227,21 +245,33 @@ def test_cancel_interrupts_retry_and_keeps_streamed_text(
         assert window.source_editor.isReadOnly()
 
         qtbot.mouseClick(window.cancel_button, Qt.MouseButton.LeftButton)
-        assert window.progress_label.text() == "Cancelling…"
+        assert window.progress_label.text() == window.tr("Cancelling…")
         qtbot.waitUntil(window.translate_button.isEnabled)
-        assert window.statusBar().currentMessage() == "Translation cancelled."
+        assert window.statusBar().currentMessage() == window.tr("Translation cancelled.")
         assert not path.exists()
-        assert warning.isVisible() and warning.text() == "DLX rate limit reached."
+        assert warning.isVisible() and warning.text() == window.tr("DLX rate limit reached.")
+        assert requests == [[first], [second]]
         window.copy_button.click()
         assert QApplication.clipboard().text() == f" [EN] {first}\u00a0\n\n"
         assert window.swap_button.isEnabled()
         assert not window.source_editor.isReadOnly()
 
-        now += 9.0
         window.source_editor.setPlainText("fresh")
         window.translate_button.click()
+        local_countdown = (
+            "Пауза в DLX Tray. Повторна спроба через {seconds} \u0441."
+            if language == "uk"
+            else "Tray cooldown. Retrying in {seconds} s."
+        )
+        qtbot.waitUntil(lambda: warning.text() == local_countdown.format(seconds=delay))
+        window.cancel_button.click()
         qtbot.waitUntil(window.translate_button.isEnabled)
-        assert window.statusBar().currentMessage() == "Translation complete."
+        assert requests == [[first], [second]]
+
+        now += delay
+        window.translate_button.click()
+        qtbot.waitUntil(window.translate_button.isEnabled)
+        assert window.statusBar().currentMessage() == window.tr("Translation complete.")
         assert window.result_editor.toPlainText() == "[EN] fresh"
         assert not warning.isVisible()
 

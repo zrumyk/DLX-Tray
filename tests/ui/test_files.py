@@ -9,7 +9,7 @@ import pytest
 from docx import Document
 from PySide6.QtCore import QMimeData, QPoint, QPointF, Qt, QUrl
 from PySide6.QtGui import QDragEnterEvent, QDropEvent, QTextCursor
-from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox
+from PySide6.QtWidgets import QApplication, QFileDialog, QLabel, QMessageBox
 from pytestqt.qtbot import QtBot
 from tests.conftest import FIXTURES_DIR
 from tests.fakes.fake_dlx import FakeDLXFactory
@@ -404,6 +404,45 @@ def test_file_failure_dialog_uses_document_progress_and_cancel_preserves_preview
         assert window.result_editor.toPlainText() == "[UK] First"
         assert not window.save_file_action.isEnabled()
         assert window.statusBar().currentMessage() == "Translation cancelled."
+
+
+def test_cancel_during_retry_preserves_file_preview(
+    qtbot: QtBot,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    fake_dlx: FakeDLXFactory,
+    file_window: Callable[[TranslationJob], MainWindow],
+) -> None:
+    source = tmp_path / "chapters.docx"
+    document = Document()
+    document.add_paragraph("First")
+    document.add_paragraph("Second")
+    document.save(str(source))
+    requests: list[list[str]] = []
+
+    def record(texts: list[str], step: str) -> str:
+        requests.append(texts)
+        return step
+
+    with (
+        fake_dlx(["ok", "429-retry-after"]) as server,
+        DeeplxTranslator(server.url, server.token) as translator,
+    ):
+        server.on_request = record
+        cache = TranslationCache(tmp_path / "cache.db")
+        window = file_window(TranslationJob(translator=translator, request_delay=0, cache=cache))
+        _open(window, qtbot, monkeypatch, source)
+        warning = window.findChild(QLabel, "rate_limit_status")
+        assert warning is not None
+        window.translate_button.click()
+        qtbot.waitUntil(lambda: warning.text() == "Rate limited. Retrying in 9 s.")
+        window.cancel_button.click()
+        qtbot.waitUntil(window.translate_button.isEnabled)
+        assert window.result_editor.toPlainText() == "[UK] First"
+        assert window.progress_bar.value() == 1
+        assert not window.save_file_action.isEnabled()
+        assert window.statusBar().currentMessage() == "Translation cancelled."
+        assert requests == [["First"], ["Second"]]
 
 
 def test_file_mode_preserves_text_and_confirms_discard(

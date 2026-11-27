@@ -122,6 +122,10 @@ class RateLimitedError(TranslationError):
         self.retry_after = retry_after
 
 
+class LocalCooldownError(RateLimitedError):
+    """Tray deferred the request because its provider cooldown is still active."""
+
+
 class ProviderUnavailableError(TranslationError):
     """The provider is unreachable or failed upstream (connection error, HTTP 503)."""
 

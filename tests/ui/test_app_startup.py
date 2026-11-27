@@ -505,9 +505,12 @@ def test_uses_official_api_when_dlx_is_unavailable(
 ) -> None:
     official = Mock(spec=app.DeepLOfficialTranslator)
     official.name = "deepl"
+    allow_response = Event()
 
     def translate(*_args: object, dispatch: RequestDispatch) -> list[TranslationResult]:
         dispatch.on_start()
+        if not allow_response.wait(5):
+            raise TimeoutError("Test did not release the official provider")
         return [TranslationResult("Привіт", Language.EN, "deepl")]
 
     official.translate.side_effect = translate
@@ -524,19 +527,24 @@ def test_uses_official_api_when_dlx_is_unavailable(
     def check(window: MainWindow, status: QLabel) -> None:
         window.source_editor.setPlainText("Hello")
         qtbot.waitUntil(window.translate_button.isEnabled)
+        provider = window.findChild(QLabel, "provider_status")
+        warning = window.findChild(QLabel, "rate_limit_status")
+        assert provider is not None and warning is not None
         window.translate_button.click()
+        try:
+            qtbot.waitUntil(lambda: provider.text() == "Provider: DeepL API")
+            assert provider.isVisible()
+            assert warning.isVisible() == (not startup_fails)
+            assert not window._retry_timer.isActive()
+            if not startup_fails:
+                assert warning.text() == "DLX rate limit reached."
+        finally:
+            allow_response.set()
         qtbot.waitUntil(window.translate_button.isEnabled)
         assert window.result_editor.toPlainText() == "Привіт"
         assert status.text() == (
             "DLX unavailable" if startup_fails else "Using external DLX server"
         )
-        provider = window.findChild(QLabel, "provider_status")
-        warning = window.findChild(QLabel, "rate_limit_status")
-        assert provider is not None and provider.isVisible()
-        assert provider.text() == "Provider: DeepL API"
-        assert warning is not None and warning.isVisible() == (not startup_fails)
-        if not startup_fails:
-            assert warning.text() == "DLX rate limit reached."
         official.close.assert_not_called()
 
     with fake_dlx(["429"]) as server:
