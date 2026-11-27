@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-11-28
+
 ### Added
 - The Windows build can optionally start in the notification area when you sign in.
 - Select text in another application and press Ctrl+C twice to translate it in a popup.
@@ -40,6 +42,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   to add a DeepL API key for future jobs.
 - Upgrade unversioned settings that still use the old 2.5-second request delay to the
   current zero-second default. A 2.5-second delay saved after the upgrade is kept.
+
+### Known issues
+- Long-file translation through the live bundled provider remains unverified. Long-file
+  translation and export were exercised with a scripted loopback server.
 
 ## [1.0.0] - 2026-11-27
 
@@ -215,7 +221,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   pre-commit hooks and CI on Windows.
 - Script to download the pinned DLX v1.3.1 binary with SHA-256 verification.
 
-[Unreleased]: https://github.com/zrumyk/DLX-Tray/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/zrumyk/DLX-Tray/compare/v2.0.0...HEAD
+[2.0.0]: https://github.com/zrumyk/DLX-Tray/compare/v1.0.0...v2.0.0
 [1.0.0]: https://github.com/zrumyk/DLX-Tray/compare/v0.9.0...v1.0.0
 [0.9.0]: https://github.com/zrumyk/DLX-Tray/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/zrumyk/DLX-Tray/compare/v0.7.0...v0.8.0
