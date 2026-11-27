@@ -76,7 +76,7 @@ def run_window(
 
 def test_startup_loads_the_window_icon(qapp: QApplication, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(app, "QApplication", lambda _argv: qapp)
-    monkeypatch.setattr(Settings, "load", lambda: Settings())
+    monkeypatch.setattr(Settings, "load", lambda *, migrate: Settings())
     monkeypatch.setattr(app, "file_logging", lambda _level: nullcontext())
 
     def check_icon(application: QApplication, _settings: Settings, _stack: ExitStack) -> int:
@@ -92,6 +92,30 @@ def test_startup_loads_the_window_icon(qapp: QApplication, monkeypatch: pytest.M
         assert app.run([]) == 0
     finally:
         qapp.setWindowIcon(previous_icon)
+
+
+def test_startup_migrates_request_delay_before_opening_the_window(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(app, "QApplication", lambda _argv: qapp)
+    monkeypatch.setattr(config, "app_data_dir", lambda: tmp_path)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("DLX_REQUEST_DELAY", raising=False)
+    path = tmp_path / "settings.json"
+    path.write_text('{"request_delay": 2.5, "ui_language": "en"}', encoding="utf-8")
+    observed_delays: list[float] = []
+
+    def check_settings(_app: QApplication, settings: Settings, _stack: ExitStack) -> int:
+        observed_delays.append(settings.request_delay)
+        assert json.loads(path.read_text(encoding="utf-8"))["settings_version"] == 1
+        if len(observed_delays) == 1:
+            settings.model_copy(update={"request_delay": 2.5}).save(changes_from=settings)
+        return 0
+
+    monkeypatch.setattr(app, "_run_window", check_settings)
+    for _ in range(2):
+        assert app.run([]) == 0
+    assert observed_delays == [0, 2.5]
 
 
 def test_copy_diagnostics_redacts_secrets_and_keeps_error_dialog_open(

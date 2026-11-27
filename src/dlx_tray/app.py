@@ -319,7 +319,7 @@ def run(argv: list[str]) -> int:
     app.setWindowIcon(QIcon(str(Path(__file__).with_name("resources") / "dlx-tray.ico")))
 
     try:
-        settings = Settings.load()
+        settings = Settings.load(migrate=True)
     except (OSError, ValueError, SettingsError):
         QMessageBox.critical(
             None,
@@ -345,4 +345,6 @@ def run(argv: list[str]) -> int:
                 QCoreApplication.translate("Startup", "Could not open the application log."),
             )
         log.info("Starting DLX Tray %s", __version__)
+        if settings.migration_error is not None:
+            log.warning("Could not persist settings migration (%s)", settings.migration_error)
         return _run_window(app, settings, stack)

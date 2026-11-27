@@ -28,6 +28,9 @@ type UiLanguage = Literal["en", "uk"]
 type Theme = Literal["system", "light", "dark"]
 type LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR"]
 
+_SETTINGS_VERSION = 1
+_LEGACY_REQUEST_DELAY = 2.5
+
 
 def app_data_dir() -> Path:
     if appdata := os.getenv("APPDATA"):
@@ -51,6 +54,27 @@ def _read_preferences(path: Path) -> dict[str, object]:
     return data
 
 
+def _write_preferences(path: Path, data: dict[str, object]) -> None:
+    temporary: Path | None = None
+    try:
+        with NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=path.parent, delete=False
+        ) as stream:
+            temporary = Path(stream.name)
+            stream.write(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+        temporary.replace(path)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
+def _migrate_unversioned_preferences(data: dict[str, object]) -> None:
+    if "settings_version" not in data:
+        data["settings_version"] = _SETTINGS_VERSION
+        if data.get("request_delay") == _LEGACY_REQUEST_DELAY:
+            data["request_delay"] = DEFAULT_REQUEST_DELAY
+
+
 class Settings(BaseSettings):
     """Effective preferences, with environment and dotenv taking priority over JSON."""
 
@@ -62,6 +86,7 @@ class Settings(BaseSettings):
         hide_input_in_errors=True,
     )
 
+    settings_version: int = Field(default=_SETTINGS_VERSION, ge=1)
     source_lang: Language = Language.AUTO
     target_lang: Language = Language.UK
     window_geometry: str | None = None
@@ -81,6 +106,7 @@ class Settings(BaseSettings):
     log_level: LogLevel = Field(default="INFO", exclude=True)
 
     _overridden_preferences: set[str] = PrivateAttr(default_factory=set)
+    _migration_error: str | None = PrivateAttr(default=None)
 
     @classmethod
     def settings_customise_sources(
@@ -131,18 +157,49 @@ class Settings(BaseSettings):
     def is_overridden(self, name: str) -> bool:
         return name in self._overridden_preferences
 
+    @property
+    def migration_error(self) -> str | None:
+        """Return the error type if startup could not persist a migration."""
+        return self._migration_error
+
     @classmethod
-    def load(cls, path: Path | None = None, *, env_file: Path | None = Path(".env")) -> Self:
+    def load(
+        cls,
+        path: Path | None = None,
+        *,
+        env_file: Path | None = Path(".env"),
+        migrate: bool = False,
+    ) -> Self:
         if path is None:
             path = app_data_dir() / "settings.json"
-        data = _read_preferences(path)
-        preference_fields = {name for name, field in cls.model_fields.items() if not field.exclude}
-        preferences = {name: data[name] for name in preference_fields & data.keys()}
         dotenv = DotEnvSettingsSource(
             cls, env_file=None if getattr(sys, "frozen", False) else env_file
         )
         # Match declared DLX_* fields only, just as for the process environment.
         overrides = EnvSettingsSource.__call__(dotenv) | EnvSettingsSource(cls)()
+        overrides.pop("settings_version", None)
+        data = _read_preferences(path)
+        if migrate and "settings_version" not in data:
+            try:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                with file_lock(path.with_name(f"{path.name}.lock")):
+                    data = _read_preferences(path)
+                    if "settings_version" not in data:
+                        _migrate_unversioned_preferences(data)
+                        settings = cls._with_overrides(data, overrides)
+                        _write_preferences(path, data)
+                        return settings
+            except OSError as exc:
+                _migrate_unversioned_preferences(data)
+                settings = cls._with_overrides(data, overrides)
+                settings._migration_error = type(exc).__name__
+                return settings
+        return cls._with_overrides(data, overrides)
+
+    @classmethod
+    def _with_overrides(cls, data: dict[str, object], overrides: dict[str, object]) -> Self:
+        preference_fields = {name for name, field in cls.model_fields.items() if not field.exclude}
+        preferences = {name: data[name] for name in preference_fields & data.keys()}
         settings = cls.model_validate(preferences | overrides)
         settings._overridden_preferences = preference_fields & overrides.keys()
         return settings
@@ -159,18 +216,11 @@ class Settings(BaseSettings):
                 before = changes_from.model_dump(mode="json")
                 preserve.update(name for name, value in saved.items() if before[name] == value)
                 saved = {name: value for name, value in saved.items() if name not in preserve}
-            if preserve:
+            if preserve or self._migration_error is not None:
                 existing = _read_preferences(path)
+                if self._migration_error is not None:
+                    _migrate_unversioned_preferences(existing)
+                    saved["settings_version"] = existing["settings_version"]
                 saved.update({name: existing[name] for name in preserve & existing.keys()})
 
-            temporary: Path | None = None
-            try:
-                with NamedTemporaryFile(
-                    mode="w", encoding="utf-8", dir=path.parent, delete=False
-                ) as stream:
-                    temporary = Path(stream.name)
-                    stream.write(json.dumps(saved, indent=2, ensure_ascii=False) + "\n")
-                temporary.replace(path)
-            finally:
-                if temporary is not None:
-                    temporary.unlink(missing_ok=True)
+            _write_preferences(path, saved)
