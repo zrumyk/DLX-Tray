@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Sequence
-from threading import Lock
+from threading import Condition, Event
 from time import monotonic
 from types import TracebackType
 from typing import Any, Literal, Self
@@ -19,9 +19,11 @@ from dlx_tray.core.models import (
     ProviderUnavailableError,
     RateLimitedError,
     TextTooLongError,
+    TranslationCancelledError,
     TranslationError,
     TranslationResult,
 )
+from dlx_tray.core.retry import DispatchTicket, RequestDispatch, RequestStartClock, event_sleep
 from dlx_tray.providers.base import parse_retry_after
 
 log = logging.getLogger(__name__)
@@ -61,8 +63,13 @@ class DeeplxTranslator:
         self._timeout = timeout
         self._diagnostics = diagnostics
         self._owns_client = client is None
-        self._request_lock = Lock()
+        self._dispatch = Condition()
+        self._active = 0
+        self.start_clock = RequestStartClock(lambda: monotonic())
+        self._cooldown_generation = 0
+        self._recovering = False
         self._blocked_until = 0.0
+        self._cooldown_origin: DispatchTicket | None = None
         self._next_cooldown = _INITIAL_COOLDOWN
         # trust_env=False: on Windows httpx would pick up the system proxy from the registry and
         # send loopback requests (and the token) through it.
@@ -93,6 +100,9 @@ class DeeplxTranslator:
         source: Language,
         target: Language,
         formality: Formality = Formality.DEFAULT,
+        *,
+        dispatch: RequestDispatch | None = None,
+        minimum_cooldown: float = 0.0,
     ) -> list[TranslationResult]:
         if not texts:
             return []
@@ -106,11 +116,56 @@ class DeeplxTranslator:
             "target_lang": target.value,
         }
         log.debug("DLX request: %d texts, %s -> %s", len(texts), source, target)
-        with self._request_lock:
-            remaining = self._blocked_until - monotonic()
-            if remaining > 0:
-                raise RateLimitedError("DLX is in rate-limit cooldown", retry_after=remaining)
-            return self._request(payload, len(texts))
+        if dispatch is None:
+            dispatch = RequestDispatch(Event(), 0, 1, event_sleep)
+        generation = self._start(dispatch)
+        try:
+            results = self._request(payload, len(texts))
+        except RateLimitedError as error:
+            with self._dispatch:
+                cooldown = max(minimum_cooldown, error.retry_after or self._next_cooldown)
+                self._blocked_until = max(self._blocked_until, monotonic() + cooldown)
+                self._cooldown_origin = dispatch.ticket
+                self._cooldown_generation += 1
+                self._recovering = True
+                self._next_cooldown = min(self._next_cooldown * 2, _MAX_COOLDOWN)
+            raise RateLimitedError(str(error), retry_after=cooldown) from error
+        else:
+            with self._dispatch:
+                if generation == self._cooldown_generation:
+                    self._recovering = False
+                    self._next_cooldown = _INITIAL_COOLDOWN
+            return results
+        finally:
+            with self._dispatch:
+                self._active -= 1
+                self._dispatch.notify_all()
+
+    def _start(self, dispatch: RequestDispatch) -> int:
+        while True:
+            with self._dispatch:
+                if dispatch.cancel.is_set():
+                    raise TranslationCancelledError("cancelled before DLX dispatch")
+                if not dispatch.may_start():
+                    self._dispatch.wait(0.05)
+                    continue
+                now = monotonic()
+                remaining = self._blocked_until - now
+                if remaining > 0:
+                    if not dispatch.may_observe_cooldown(self._cooldown_origin):
+                        self._dispatch.wait(0.05)
+                        continue
+                    raise RateLimitedError("DLX is in rate-limit cooldown", retry_after=remaining)
+                limit = 2 if dispatch.concurrency == 2 and not self._recovering else 1
+                if self._active >= limit:
+                    self._dispatch.wait(0.05)
+                    continue
+                pause = (dispatch.clock or self.start_clock).reserve(dispatch)
+                if pause <= 0:
+                    self._active += 1
+                    return self._cooldown_generation
+            if not dispatch.sleep(pause, dispatch.cancel):
+                raise TranslationCancelledError("cancelled during DLX pacing")
 
     def _request(self, payload: dict[str, list[str] | str], count: int) -> list[TranslationResult]:
         started = monotonic()
@@ -129,18 +184,11 @@ class DeeplxTranslator:
             if self._diagnostics is not None:
                 self._record_attempt(started, response)
 
+        assert response is not None
         body = _json_or_none(response)
         if response.status_code != httpx.codes.OK:
-            error = _status_error(response, body)
-            if isinstance(error, RateLimitedError):
-                delay = error.retry_after or self._next_cooldown
-                self._blocked_until = monotonic() + delay
-                self._next_cooldown = min(self._next_cooldown * 2, _MAX_COOLDOWN)
-                raise RateLimitedError(str(error), retry_after=delay)
-            raise error
-        results = _parse_success(body, count)
-        self._next_cooldown = _INITIAL_COOLDOWN
-        return results
+            raise _status_error(response, body)
+        return _parse_success(body, count)
 
     def _record_attempt(self, started: float, response: httpx.Response | None) -> None:
         assert self._diagnostics is not None

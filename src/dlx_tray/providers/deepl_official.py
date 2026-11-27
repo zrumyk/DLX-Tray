@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Sequence
 from http import HTTPStatus
+from threading import Condition, Event
 from time import monotonic
 
 import deepl
@@ -17,9 +18,11 @@ from dlx_tray.core.models import (
     ProviderUnavailableError,
     RateLimitedError,
     TextTooLongError,
+    TranslationCancelledError,
     TranslationError,
     TranslationResult,
 )
+from dlx_tray.core.retry import RequestDispatch, RequestStartClock, event_sleep
 
 log = logging.getLogger(__name__)
 
@@ -39,6 +42,9 @@ class DeepLOfficialTranslator:
     ) -> None:
         self._client = deepl.DeepLClient(api_key, max_retries=0, timeout_s=timeout)
         self._diagnostics = diagnostics
+        self._dispatch = Condition()
+        self._active = False
+        self._start_clock = RequestStartClock(lambda: monotonic())
 
     @property
     def name(self) -> str:
@@ -61,6 +67,8 @@ class DeepLOfficialTranslator:
         source: Language,
         target: Language,
         formality: Formality = Formality.DEFAULT,
+        *,
+        dispatch: RequestDispatch | None = None,
     ) -> list[TranslationResult]:
         if not texts:
             return []
@@ -69,6 +77,34 @@ class DeepLOfficialTranslator:
         if not source.can_be_source:
             raise ValueError(f"{source.value!r} is not a valid source language")
 
+        if dispatch is None:
+            dispatch = RequestDispatch(Event(), 0, 1, event_sleep)
+        self._start(dispatch)
+        try:
+            return self._request(texts, source, target, formality)
+        finally:
+            with self._dispatch:
+                self._active = False
+                self._dispatch.notify_all()
+
+    def _start(self, dispatch: RequestDispatch) -> None:
+        while True:
+            with self._dispatch:
+                if dispatch.cancel.is_set():
+                    raise TranslationCancelledError("cancelled before official DeepL dispatch")
+                if self._active or not dispatch.may_start():
+                    self._dispatch.wait(0.05)
+                    continue
+                pause = (dispatch.clock or self._start_clock).reserve(dispatch)
+                if pause <= 0:
+                    self._active = True
+                    return
+            if not dispatch.sleep(pause, dispatch.cancel):
+                raise TranslationCancelledError("cancelled during official DeepL pacing")
+
+    def _request(
+        self, texts: Sequence[str], source: Language, target: Language, formality: Formality
+    ) -> list[TranslationResult]:
         started = monotonic()
         status = None
         try:

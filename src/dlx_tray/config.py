@@ -92,6 +92,7 @@ class Settings(BaseSettings):
     window_geometry: str | None = None
     chunk_size: int = Field(default=1400, ge=200, le=1500)
     request_delay: float = Field(default=DEFAULT_REQUEST_DELAY, ge=0, le=10)
+    dlx_concurrency: int = Field(default=2, ge=1, le=2)
     retries: int = Field(default=3, ge=0)
     formality: Formality = Formality.DEFAULT
     history_enabled: bool = True

@@ -187,10 +187,10 @@ class TranslationWorker(QObject):
         )
 
     def _translate_file(self, source: SourceFile) -> FileJobResult:
+        if self._job.uses_segments:
+            return self._translate_file_segments(source)
         counts = [
-            int(bool(text.strip()))
-            if self._job.uses_segments
-            else sum(chunk.translatable for chunk in chunker.split(text, self._job.max_units))
+            sum(chunk.translatable for chunk in chunker.split(text, self._job.max_units))
             for text in source.segments
         ]
         total = sum(counts)
@@ -223,3 +223,32 @@ class TranslationWorker(QObject):
         cancelled = error is None and (self._cancel.is_set() or offset < total)
         preview = JobResult("\n\n".join(translations), detected, cancelled, error, tuple(providers))
         return FileJobResult(preview, None if cancelled or error else tuple(translations))
+
+    def _translate_file_segments(self, source: SourceFile) -> FileJobResult:
+        translations: list[str] = []
+        total = sum(bool(text.strip()) for text in source.segments)
+        self.progress.emit(0, total, "")
+
+        def report(processed: int, total: int, _text: str) -> None:
+            self.progress.emit(processed, total, "")
+
+        preview = self._job.run(
+            "",
+            self._source,
+            self._target,
+            self._formality,
+            file_segments=source.segments,
+            on_segment=translations.append,
+            cancel=self._cancel,
+            on_progress=report,
+            on_failure=self._ask_about_failure,
+            on_retry=self._report_retry,
+            on_provider=self.provider_changed.emit,
+            on_rate_limit=self._report_rate_limit,
+        )
+        partial = preview.text[sum(map(len, translations)) :]
+        preview_text = "\n\n".join([*translations, partial] if partial else translations)
+        preview = replace(preview, text=preview_text)
+        return FileJobResult(
+            preview, None if preview.cancelled or preview.error else tuple(translations)
+        )

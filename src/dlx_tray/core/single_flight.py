@@ -71,29 +71,37 @@ class SingleFlight:
         while True:
             if cancel.is_set():
                 raise TranslationCancelledError("cancelled before shared translation")
-            future = self.reserve(key, segment)
-            # Future.set_running_or_notify_cancel() expects one caller. Guard the claim.
-            with self._lock:
-                leader = not (future.running() or future.done())
-                if leader:
-                    future.set_running_or_notify_cancel()
+            future, leader = self.claim(key, segment)
             try:
                 if leader:
-                    return self._lead(key, future, work), True
+                    return self.complete(key, future, work), True
                 return self._await(future, cancel), False
             except TranslationCancelledError:
                 if leader or cancel.is_set():
                     raise
-                with self._lock:
-                    del segment.chunks[key]
+                self.release(key, segment, future)
             except TranslationError:
                 # A user's Continue gets a fresh attempt without hiding this failure
                 # from the overlapping callers who reserved it.
-                with self._lock:
-                    del segment.chunks[key]
+                self.release(key, segment, future)
                 raise
 
-    def _lead(
+    def claim(self, key: bytes, segment: SegmentFlights) -> tuple[Future[TranslationResult], bool]:
+        future = self.reserve(key, segment)
+        with self._lock:
+            leader = not (future.running() or future.done())
+            if leader:
+                future.set_running_or_notify_cancel()
+        return future, leader
+
+    def release(
+        self, key: bytes, segment: SegmentFlights, future: Future[TranslationResult]
+    ) -> None:
+        with self._lock:
+            if segment.chunks.get(key) is future:
+                del segment.chunks[key]
+
+    def complete(
         self, key: bytes, future: Future[TranslationResult], work: Callable[[], TranslationResult]
     ) -> TranslationResult:
         try:
