@@ -6,6 +6,7 @@ from collections import deque
 from collections.abc import Callable, Generator, Iterator, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, replace
+from itertools import chain
 from threading import Condition, Event
 from time import monotonic
 
@@ -29,6 +30,7 @@ class Work[T]:
     item: T
     attempt: Attempt | None = None
     shared: SharedAttempt | None = None
+    pair_with_next: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -140,14 +142,16 @@ def ordered_attempts[T](
                 results = (first.attempt(request),)
             outcomes = tuple(zip(entries, results, strict=True))
         except BaseException as exc:
-            for entry in entries:
-                future = entry.future
-                assert future is not None
-                shared = entry.work.shared
-                if shared is None:
-                    future.set_exception(exc)
-                else:
-                    shared.flights.fail(shared.key, future, exc)
+            # Resolve no member of a failed batch until every member can block later starts.
+            with changed:
+                for entry in entries:
+                    future = entry.future
+                    assert future is not None
+                    shared = entry.work.shared
+                    if shared is None:
+                        future.set_exception(exc)
+                    else:
+                        shared.flights.fail(shared.key, future, exc)
         else:
             for entry, result in outcomes:
                 assert entry.future is not None
@@ -237,7 +241,7 @@ def ordered_attempts[T](
                             if len(pending) == 1 or dispatch.cancel.is_set():
                                 break
                             continue
-                        if batch is not None:
+                        if batch is not None and item.pair_with_next:
                             lookahead = next(inputs, None)
                         pairable = (
                             lookahead is not None
@@ -266,7 +270,8 @@ def ordered_attempts[T](
                             )
                             break
                         if (
-                            dispatch.cancel.is_set()
+                            dispatch.concurrency == 1
+                            or dispatch.cancel.is_set()
                             or entry.failed()
                             or (len(pending) == 1 and future.done())
                         ):
@@ -277,7 +282,9 @@ def ordered_attempts[T](
                     continue
                 head = pending[0]
                 future = head.future
-                if future is None or future.done():
+                with changed:
+                    ready = future is None or future.done()
+                if ready:
                     result = None if future is None else result_for(head)
                     with changed:
                         pending.popleft()
@@ -288,9 +295,14 @@ def ordered_attempts[T](
                     )
                 else:
                     with changed:
-                        if not future.done():
+                        if future is not None and not future.done():
                             changed.wait(0.01)
             if stopped.is_set():
+                # Retain untouched whitespace and file segments up to the next request.
+                for _, item in chain((lookahead,) if lookahead is not None else (), inputs):
+                    if item.attempt is not None:
+                        break
+                    yield item.item, None
                 raise TranslationCancelledError("cancelled before all chunks were processed")
         finally:
             stopped.set()

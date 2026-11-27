@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import replace
 from threading import Event
 from typing import TYPE_CHECKING
@@ -33,6 +33,8 @@ from tests.fakes.fake_dlx import FakeDLXFactory
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from dlx_tray.core.single_flight import SegmentFlights
 
 
 def test_parallel_cache_hits_and_followers_leave_room_for_distinct_misses(
@@ -584,6 +586,211 @@ def test_neighbour_with_in_flight_batch_result_is_not_requested_again(
         assert overlap.result(5).text == "[UK] Other [UK] World"
 
     assert requests == [["Hello", "World"], ["Other"]]
+
+
+@pytest.mark.parametrize("shared", [False, True])
+def test_serial_repeated_segment_hits_cache_before_pairing(
+    fake_dlx: FakeDLXFactory, tmp_path: Path, shared: bool
+) -> None:
+    requests: list[list[str]] = []
+    timeline = DiagnosticTimeline()
+
+    def receive(texts: list[str], step: str) -> str:
+        requests.append(texts)
+        return step
+
+    with fake_dlx([]) as server, DeeplxTranslator(server.url, server.token) as translator:
+        server.on_request = receive
+        result = TranslationJob(
+            translator=translator,
+            max_units=750,
+            cache=TranslationCache(tmp_path / "cache.db"),
+            flights=SingleFlight() if shared else None,
+            diagnostics=timeline,
+        ).run("Alpha\n\nAlpha\n\nBeta", Language.EN, Language.UK)
+
+    assert requests == [["Alpha"], ["Beta"]]
+    assert result.text == "[UK] Alpha\n\n[UK] Alpha\n\n[UK] Beta"
+    assert timeline.snapshot().events == (LocalCache(False), LocalCache(True), LocalCache(False))
+
+
+@pytest.mark.parametrize("concurrency", [1, 2])
+def test_cancel_after_last_request_preserves_trailing_blank_file_segments(
+    fake_dlx: FakeDLXFactory, concurrency: int
+) -> None:
+    completed: list[str] = []
+    cancel = Event()
+    with fake_dlx([]) as server, DeeplxTranslator(server.url, server.token) as translator:
+        result = TranslationJob(
+            translator=translator, max_units=750, concurrency=concurrency, flights=SingleFlight()
+        ).run(
+            "",
+            Language.EN,
+            Language.UK,
+            cancel=cancel,
+            file_segments=("Alpha", "  ", "\n"),
+            on_segment=completed.append,
+            on_progress=lambda *_update: cancel.set(),
+        )
+
+    assert completed == ["[UK] Alpha", "  ", "\n"]
+    assert result == JobResult("[UK] Alpha  \n", Language.EN, chunk_providers=("dlx",))
+
+
+def test_serial_batching_waits_for_an_earlier_pending_follower(
+    fake_dlx: FakeDLXFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    retry_waiting, release_retry, follower_claimed, later_started = (Event() for _ in range(4))
+    flights = SingleFlight()
+    claim = flights.claim
+
+    def observe_claim(
+        key: bytes, segment: SegmentFlights
+    ) -> tuple[Future[TranslationResult], bool]:
+        future, leader = claim(key, segment)
+        if not leader:
+            follower_claimed.set()
+        return future, leader
+
+    def receive(texts: list[str], step: str) -> str:
+        if texts == ["Alpha"]:
+            return "503"
+        later_started.set()
+        return step
+
+    def sleep(seconds: float, cancel: Event) -> bool:
+        assert seconds > 0
+        retry_waiting.set()
+        assert release_retry.wait(5)
+        return not cancel.is_set()
+
+    monkeypatch.setattr(flights, "claim", observe_claim)
+    with (
+        fake_dlx([]) as server,
+        DeeplxTranslator(server.url, server.token) as translator,
+        ThreadPoolExecutor(2) as jobs,
+    ):
+        server.on_request = receive
+        job = TranslationJob(
+            translator=translator,
+            max_units=750,
+            flights=flights,
+            retry_policy=RetryPolicy(max_attempts=2),
+            sleep=sleep,
+        )
+        leader = jobs.submit(job.run, "Alpha", Language.EN, Language.UK)
+        try:
+            assert retry_waiting.wait(5)
+            follower = jobs.submit(job.run, "Alpha\n\nBeta\n\nGamma", Language.EN, Language.UK)
+            assert follower_claimed.wait(5)
+            assert not later_started.wait(0.2)
+        finally:
+            release_retry.set()
+        for future in (leader, follower):
+            result = future.result(5)
+            assert isinstance(result.error, ProviderUnavailableError) and result.text == ""
+        assert not later_started.is_set()
+
+
+@pytest.mark.parametrize("count_segments", [False, True])
+def test_batch_streams_both_chunks_with_or_without_segment_progress(
+    fake_dlx: FakeDLXFactory, count_segments: bool
+) -> None:
+    first, second = "A" * 700, "B" * 700
+    updates: list[tuple[int, int, str]] = []
+    with (
+        fake_dlx(["ok", "403"]) as server,
+        DeeplxTranslator(server.url, server.token) as translator,
+    ):
+        result = TranslationJob(
+            translator=translator, max_units=700, flights=SingleFlight() if count_segments else None
+        ).run(
+            f"{first}\r\n{second}",
+            Language.EN,
+            Language.UK,
+            on_progress=lambda *update: updates.append(update),
+        )
+        assert server.next_step() == "403"
+
+    prefix = f"[UK] {first}\r\n"
+    expected = f"{prefix}[UK] {second}"
+    counts = ((0, 1), (1, 1)) if count_segments else ((1, 2), (2, 2))
+    assert updates == [(*counts[0], prefix), (*counts[1], expected)]
+    assert result.text == expected
+
+
+def test_batch_failure_is_ready_before_first_chunk_can_be_skipped(
+    fake_dlx: FakeDLXFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pacing, release_pacing, publishing_second, release_failure, skipped = (
+        Event() for _ in range(5)
+    )
+    now = 100.0
+    monkeypatch.setattr(deeplx, "monotonic", lambda: now)
+    flights = SingleFlight()
+    fail = flights.fail
+    beta_key = translation_key(repr(("dlx",)), Language.EN, Language.UK, Formality.DEFAULT, "Beta")
+    requests: list[list[str]] = []
+
+    def pause_second(key: bytes, future: Future[TranslationResult], error: BaseException) -> None:
+        if key == beta_key:
+            publishing_second.set()
+            assert release_failure.wait(5)
+        fail(key, future, error)
+
+    def receive(texts: list[str], step: str) -> str:
+        requests.append(texts)
+        if texts == ["Alpha", "Beta"]:
+            assert pacing.wait(5)
+            return "401"
+        return step
+
+    def sleep(seconds: float, cancel: Event) -> bool:
+        nonlocal now
+        pacing.set()
+        assert release_pacing.wait(5)
+        now += seconds
+        return not cancel.is_set()
+
+    def decide(chunk: Chunk, _error: TranslationError) -> FailureAction:
+        if chunk.text == "Alpha":
+            skipped.set()
+            return FailureAction.SKIP
+        return FailureAction.CANCEL
+
+    monkeypatch.setattr(flights, "fail", pause_second)
+    with (
+        fake_dlx([]) as server,
+        DeeplxTranslator(server.url, server.token) as translator,
+        ThreadPoolExecutor() as executor,
+    ):
+        server.on_request = receive
+        job = TranslationJob(
+            translator=translator,
+            concurrency=2,
+            max_units=750,
+            flights=flights,
+            request_delay=0.5,
+            sleep=sleep,
+        )
+        result = executor.submit(
+            job.run,
+            "Alpha\n\nBeta\n\nGamma",
+            Language.EN,
+            Language.UK,
+            on_failure=decide,
+            on_progress=lambda *_update: release_pacing.set(),
+        )
+        try:
+            assert publishing_second.wait(5)
+            assert not skipped.wait(0.2)
+        finally:
+            release_failure.set()
+            release_pacing.set()
+        outcome = result.result(5)
+
+    assert requests == [["Alpha", "Beta"]]
+    assert outcome.cancelled and outcome.text == "Alpha\n\n"
 
 
 @pytest.mark.parametrize(

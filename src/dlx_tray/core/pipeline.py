@@ -166,6 +166,7 @@ class TranslationJob:
             pacing_sleep = partial(diagnostics.wait, sleep=self.sleep, kind="pacing")
             retry_sleep = partial(diagnostics.wait, sleep=self.sleep, kind="retry")
         dispatch = RequestDispatch(cancel, self.request_delay, concurrency, pacing_sleep)
+        batching = dlx and self.max_units <= chunker.HARD_MAX_UNITS // 2
         provider_names = (
             translator.provider_names()
             if isinstance(translator, FallbackTranslator)
@@ -283,7 +284,7 @@ class TranslationJob:
         flights = self.flights
 
         def plan(scopes: ExitStack) -> Iterator[Work[_Piece]]:
-            for segment in segments:
+            for segment_index, segment in enumerate(segments):
                 group = _Segment(segment)
                 if not segment.text.strip():
                     blank = Chunk("", segment.text + segment.separator, segment.index)
@@ -307,6 +308,14 @@ class TranslationJob:
                 if hit is not None:
                     yield Work(_Piece(segment, group, first=True, last=True, cached=hit))
                     continue
+                # Let a serial job store this segment before looking up its adjacent copy.
+                next_segment_can_hit_cache = (
+                    batching
+                    and concurrency == 1
+                    and cache is not None
+                    and segment_index + 1 < len(segments)
+                    and segments[segment_index + 1].text == segment.text
+                )
                 chunks = (
                     legacy_chunks
                     if legacy_chunks is not None
@@ -338,7 +347,12 @@ class TranslationJob:
                     ) -> TranslationResult:
                         return attempt(piece, control)
 
-                    yield Work(piece, translate, reservation)
+                    yield Work(
+                        piece,
+                        translate,
+                        reservation,
+                        pair_with_next=not (piece.last and next_segment_can_hit_cache),
+                    )
 
         def finish_segment(piece: _Piece) -> None:
             group = piece.segment
@@ -368,7 +382,6 @@ class TranslationJob:
 
         failure: TranslationError | None = None
         cancelled = False
-        batching = dlx and self.max_units <= chunker.HARD_MAX_UNITS // 2
         try:
             with ExitStack() as scopes:
                 tasks = plan(scopes)
