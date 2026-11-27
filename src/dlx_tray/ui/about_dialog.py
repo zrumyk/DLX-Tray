@@ -39,3 +39,5 @@ class AboutDialog(QDialog):
         )
         self.diagnostics_button.clicked.connect(self.diagnostics_requested)
         layout.addWidget(buttons)
+        self.diagnostics_feedback = QLabel()
+        layout.addWidget(self.diagnostics_feedback)

@@ -111,7 +111,7 @@ def markdown_report(
         f"- Python version: {platform.python_version()}",
         f"- Active provider: {provider_name}",
         f"- DLX connection: {dlx_status}",
-        f"- DLX rate-limited: {'yes' if rate_limited else 'no'}",
+        f"- DLX rate-limit warning shown: {'yes' if rate_limited else 'no'}",
         f"- DeepL API key: {'set' if has_key else 'not set'}",
         f"- Chunk size: {chunk_size} UTF-16 units",
         f"- Request delay: {request_delay:g} s",

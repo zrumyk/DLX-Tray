@@ -147,7 +147,7 @@ def _run_window(app: QApplication, settings: Settings, stack: ExitStack) -> int:
             else:
                 app.clipboard().setText(export.report)
                 message = QCoreApplication.translate("Diagnostics", "Diagnostics copied.")
-            window.statusBar().showMessage(message, 5000)
+            window.diagnostics_finished.emit(message)
             export.deleteLater()
             export = None
 

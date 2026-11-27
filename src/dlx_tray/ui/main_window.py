@@ -95,6 +95,7 @@ class MainWindow(QMainWindow):
     translation_requested = Signal(str, object, object)
     settings_requested = Signal()
     diagnostics_requested = Signal()
+    diagnostics_finished = Signal(str)
 
     def __init__(
         self,
@@ -253,6 +254,7 @@ class MainWindow(QMainWindow):
     def _show_about(self) -> None:
         dialog = AboutDialog(self)
         dialog.diagnostics_requested.connect(self.diagnostics_requested)
+        self.diagnostics_finished.connect(dialog.diagnostics_feedback.setText)
         try:
             dialog.exec()
         finally:
@@ -795,6 +797,7 @@ class MainWindow(QMainWindow):
         )
         self._error_dialog = dialog
         dialog.diagnostics_requested.connect(self.diagnostics_requested)
+        self.diagnostics_finished.connect(dialog.diagnostics_feedback.setText)
         dialog.finished.connect(self._answer_chunk_failure)
         dialog.show()
 

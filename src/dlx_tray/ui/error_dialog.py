@@ -66,13 +66,17 @@ class ErrorDialog(QDialog):
         self.diagnostics_button = buttons.addButton(
             self.tr("Copy diagnostics"), QDialogButtonBox.ButtonRole.HelpRole
         )
+        layout.addWidget(buttons)
+        for button in (self.continue_button, self.skip_button, self.diagnostics_button):
+            button.setAutoDefault(False)
         self.cancel_button.setDefault(True)
         self.cancel_button.setFocus()
         self.continue_button.clicked.connect(lambda: self._choose(FailureAction.CONTINUE))
         self.skip_button.clicked.connect(lambda: self._choose(FailureAction.SKIP))
         buttons.rejected.connect(self.reject)
         self.diagnostics_button.clicked.connect(self.diagnostics_requested)
-        layout.addWidget(buttons)
+        self.diagnostics_feedback = QLabel()
+        layout.addWidget(self.diagnostics_feedback)
 
     def _choose(self, action: FailureAction) -> None:
         self.action = action

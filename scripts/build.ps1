@@ -23,7 +23,8 @@ try {
     $workDir = (New-Item -Path 'build/pyinstaller' -ItemType Directory -Force).FullName
     $buildLock = [System.IO.File]::Open((Join-Path $workDir 'build.lock'), 'OpenOrCreate', 'Write', 'None')
     $env:UV_PROJECT_ENVIRONMENT = Join-Path $workDir '.venv'
-    $dlxLock = Get-Content -LiteralPath 'scripts/deeplx.lock.json' -Raw | ConvertFrom-Json
+    $dlxLockPath = (Get-Item -LiteralPath 'scripts/deeplx.lock.json').FullName
+    $dlxLock = Get-Content -LiteralPath $dlxLockPath -Raw | ConvertFrom-Json
     Invoke-BuildTool python scripts/fetch_deeplx.py
 
     $catalog = Join-Path $workDir 'uk.qm'
@@ -45,7 +46,7 @@ try {
         '--copy-metadata', 'dlx-tray'
         '--add-data', "${catalog}:dlx_tray/i18n"
         '--add-data', "${appIcon}:dlx_tray/resources"
-        '--add-data', 'scripts/deeplx.lock.json:dlx_tray/resources'
+        '--add-data', "${dlxLockPath}:dlx_tray/resources"
         'src/dlx_tray/__main__.py'
     )
     # Qt uses the system ICU. Keep unrelated DLLs on the caller's PATH out of the bundle.

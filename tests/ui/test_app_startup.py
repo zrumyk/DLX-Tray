@@ -135,6 +135,7 @@ def test_copy_diagnostics_redacts_secrets_and_keeps_error_dialog_open(
         dialog.diagnostics_button.click()
         qtbot.waitUntil(lambda: clipboard.text().startswith("## DLX Tray diagnostics"))
         assert QApplication.activeModalWidget() is dialog
+        assert dialog.diagnostics_feedback.text() == "Diagnostics copied."
         report = clipboard.text()
         for marker in markers:
             assert marker not in report

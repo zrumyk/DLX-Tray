@@ -257,6 +257,7 @@ def _wait_for_failure_dialog(qtbot: QtBot, window: MainWindow) -> ErrorDialog:
         ("continue", "[EN] first [EN] txen [EN] last"),
         ("skip", "[EN] first next [EN] tsal"),
         ("cancel", "[EN] first "),
+        ("return", "[EN] first "),
         ("escape", "[EN] first "),
         ("dismiss", "[EN] first "),
         ("close window", "[EN] first "),
@@ -297,6 +298,9 @@ def test_chunk_failure_actions(
             dialog.skip_button.click()
         elif action == "cancel":
             dialog.cancel_button.click()
+        elif action == "return":
+            assert dialog.cancel_button.isDefault()
+            qtbot.keyClick(dialog, Qt.Key.Key_Return)
         elif action == "escape":
             qtbot.keyClick(dialog, Qt.Key.Key_Escape)
         elif action == "dismiss":
