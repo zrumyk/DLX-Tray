@@ -137,7 +137,7 @@ def _run_window(
         )
 
     window.enable_tray(app.windowIcon(), cooldown_deadline)
-    hotkey = SelectionHotkey()
+    hotkey = SelectionHotkey(window)
     popup: SelectionPopup | None = None
 
     def configure_hotkey() -> None:

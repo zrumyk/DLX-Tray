@@ -153,17 +153,27 @@ def copy_selection() -> bool:
 class Capture:
     window: int
     sequence: int
-    copy: bool
+    input_serial: int
+    clipboard_updates: int
+    copy: bool = False
 
 
 class KeyboardHook:
-    def __init__(self, shortcut: str, activate: Callable[[Capture], None]) -> None:
+    def __init__(
+        self,
+        shortcut: str,
+        activate: Callable[[Capture], None],
+        clipboard_updates: Callable[[], int],
+    ) -> None:
         self._double_copy = shortcut == DEFAULT_SELECTION_HOTKEY
         self._key = ord("C" if self._double_copy else shortcut[-1])
         self._activate = activate
+        self._clipboard_updates = clipboard_updates
         self._pressed = False
         self._consumed = False
-        self._first: tuple[int, int] | None = None
+        self._first: tuple[int, int, int, int] | None = None
+        self.input_serial = 0
+        self._paused = False
         self._ready = Event()
         self._thread_id = 0
         self._thread = Thread(target=self._run, name="DLX selection hotkey", daemon=True)
@@ -172,6 +182,12 @@ class KeyboardHook:
         self._thread.start()
         self._ready.wait()
         return bool(self._thread_id)
+
+    def set_paused(self, paused: bool) -> None:
+        self._paused = paused
+        if paused:
+            self._first = None
+            self.input_serial += 1
 
     def stop(self) -> None:
         if self._thread_id and not _user32.PostThreadMessageW(self._thread_id, _QUIT, 0, 0):
@@ -214,6 +230,7 @@ class KeyboardHook:
     def _on_key(self, event: _KeyboardEvent) -> bool:
         if event.vk != self._key:
             if not event.flags & _KEY_UP and event.vk not in _MODIFIER_KEYS:
+                self.input_serial += 1
                 self._first = None
             return False
         if event.flags & _KEY_UP:
@@ -223,8 +240,10 @@ class KeyboardHook:
         if self._pressed:
             return self._consumed
         self._pressed = True
+        self.input_serial += 1
         if (
-            not _down(_CTRL)
+            self._paused
+            or not _down(_CTRL)
             or _down(_SHIFT) == self._double_copy
             or any(_down(key) for key in (_ALT, _LEFT_WIN, _RIGHT_WIN))
             or not (window := foreground())
@@ -233,7 +252,9 @@ class KeyboardHook:
             return False
         if not self._double_copy:
             self._consumed = True
-            self._activate(Capture(window, 0, copy=True))
+            self._activate(
+                Capture(window, 0, self.input_serial, self._clipboard_updates(), copy=True)
+            )
         else:
             first = self._first
             if (
@@ -242,7 +263,8 @@ class KeyboardHook:
                 and (event.time - first[1]) % (1 << 32) <= _DOUBLE_COPY_MS
             ):
                 self._first = None
-                self._activate(Capture(window, clipboard_sequence(), copy=False))
+                self._consumed = True
+                self._activate(Capture(window, first[2], self.input_serial, first[3]))
             else:
-                self._first = (window, event.time)
+                self._first = (window, event.time, clipboard_sequence(), self._clipboard_updates())
         return self._consumed

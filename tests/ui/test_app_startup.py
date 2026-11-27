@@ -101,7 +101,7 @@ def test_selection_translates_in_a_popup_and_keeps_main_window_text(
     tmp_path: Path,
 ) -> None:
     hotkey = SelectionHotkey()
-    monkeypatch.setattr(app, "SelectionHotkey", lambda: hotkey)
+    monkeypatch.setattr(app, "SelectionHotkey", lambda _window: hotkey)
 
     def check(window: MainWindow, _status: QLabel) -> None:
         window.source_editor.setPlainText("Main window draft")
