@@ -92,6 +92,11 @@ notification area. Click the DLX Tray icon or launch the app again to reopen the
 The icon's tooltip shows provider status and any known DLX cooldown. Choose **Exit**
 from the icon's menu or **File → Exit** to quit.
 
+Select text in a Windows app and press **Ctrl+C** twice quickly to translate it in a popup.
+The shortcut copies the selection to the clipboard. The popup uses the languages and provider
+selected in DLX Tray and can copy the result. In **Settings → Selection hotkey**, choose
+`Ctrl+Shift` plus a Latin letter (for example, `Ctrl+Shift+Y`) or clear the field to disable it.
+
 To package the app from source, run `.\scripts\build.ps1` in PowerShell. Open
 `dist/DLX Tray/DLX Tray.exe` and keep the entire `dist/DLX Tray` folder together when moving it.
 

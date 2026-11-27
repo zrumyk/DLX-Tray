@@ -7,6 +7,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- Select text in another application and press Ctrl+C twice to translate it in a popup.
+  Change or disable the selection hotkey in Settings.
 - Minimize or close the window to keep translations running in the system tray. The tray icon
   shows provider status and the DLX cooldown. Launching again opens the existing window.
   Choose Exit from the tray or File menu to quit.

@@ -43,6 +43,8 @@ from dlx_tray.ui.error_dialog import ErrorDialog
 from dlx_tray.ui.history_dialog import HistoryDialog
 from dlx_tray.ui.localization import interface_language
 from dlx_tray.ui.main_window import MainWindow
+from dlx_tray.ui.selection_hotkey import SelectionHotkey
+from dlx_tray.ui.selection_popup import SelectionPopup
 from dlx_tray.ui.settings_dialog import SettingsDialog
 
 
@@ -89,6 +91,36 @@ def run_window(
             assert app._run_window(qapp, settings, stack) == 0
 
     return run
+
+
+def test_selection_translates_in_a_popup_and_keeps_main_window_text(
+    run_window: Callable[[Settings, Callable[[MainWindow, QLabel], None]], None],
+    fake_dlx: FakeDLXFactory,
+    qtbot: QtBot,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    hotkey = SelectionHotkey()
+    monkeypatch.setattr(app, "SelectionHotkey", lambda: hotkey)
+
+    def check(window: MainWindow, _status: QLabel) -> None:
+        window.source_editor.setPlainText("Main window draft")
+        hotkey.selection_ready.emit("Text from another application")
+        popup = window.findChild(SelectionPopup)
+        assert popup is not None and popup.isVisible()
+        qtbot.waitUntil(popup.copy_button.isEnabled)
+        assert popup.preview.toPlainText() == "[UK] Text from another application"
+        assert window.source_editor.toPlainText() == "Main window draft"
+        assert not window.result_editor.toPlainText()
+        assert HistoryStore(tmp_path / "history.sqlite3", 500).search("another application")
+        popup.close()
+        qtbot.waitUntil(lambda: not popup.isVisible())
+
+    with fake_dlx(["ok"]) as server:
+        run_window(
+            Settings.model_validate({"deeplx_url": server.url, "deeplx_token": server.token}),
+            check,
+        )
 
 
 def test_startup_loads_the_window_icon(

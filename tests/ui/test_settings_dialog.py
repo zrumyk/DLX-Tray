@@ -92,11 +92,17 @@ def test_override_and_invalid_values(
     save.assert_not_called()
     assert dialog.save_status.text()
     dialog.retries.setText("0")
+    dialog.selection_hotkey.setText("Ctrl+Y")
+    save_button.click()
+    save.assert_not_called()
+    assert dialog.save_status.text()
+    dialog.selection_hotkey.setText("ctrl+shift+y")
     save_button.click()
     assert dialog.result() == QDialog.DialogCode.Accepted
     updated, key = save.call_args.args
     assert updated.chunk_size == 1500
     assert updated.retries == 0
+    assert updated.selection_hotkey == "Ctrl+Shift+Y"
     assert updated.is_overridden("chunk_size")
     assert key == "override-key"
 

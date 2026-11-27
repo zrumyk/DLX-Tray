@@ -12,7 +12,7 @@ from pathlib import Path
 from keyring.errors import KeyringError
 from pydantic_settings import SettingsError
 from PySide6.QtCore import QByteArray, QCoreApplication, QRect, Qt, QThread
-from PySide6.QtGui import QIcon
+from PySide6.QtGui import QCursor, QIcon
 from PySide6.QtNetwork import QLocalServer
 from PySide6.QtWidgets import QApplication, QMessageBox
 
@@ -32,11 +32,15 @@ from dlx_tray.secrets import delete_deepl_api_key, get_deepl_api_key, set_deepl_
 from dlx_tray.services.cache import TranslationCache
 from dlx_tray.services.deeplx_process import DLXProcess, resolve_binary
 from dlx_tray.services.diagnostics import markdown_report
+from dlx_tray.services.history import HistoryStore
 from dlx_tray.ui.localization import interface_language
 from dlx_tray.ui.main_window import MainWindow
+from dlx_tray.ui.selection_hotkey import SelectionHotkey
+from dlx_tray.ui.selection_popup import SelectionPopup
 from dlx_tray.ui.settings_dialog import SettingsDialog
 from dlx_tray.ui.single_instance import single_instance
 from dlx_tray.ui.theme import apply_theme
+from dlx_tray.ui.workers import TranslationWorker
 
 log = logging.getLogger(__name__)
 
@@ -120,6 +124,7 @@ def _run_window(
     dlx: DeeplxTranslator | None = None
     translator: Translator | None = None
     job: TranslationJob | None = None
+    provider_status = ""
     dlx_status = QCoreApplication.translate("Startup", "Starting DLX…")
     dlx_connection: DLXConnection | None = None
     startup: _DLXStartup | None = None
@@ -132,6 +137,45 @@ def _run_window(
         )
 
     window.enable_tray(app.windowIcon(), cooldown_deadline)
+    hotkey = SelectionHotkey()
+    popup: SelectionPopup | None = None
+
+    def configure_hotkey() -> None:
+        if app.platformName() == "windows" and not hotkey.configure(settings.selection_hotkey):
+            window.statusBar().showMessage(
+                QCoreApplication.translate("Startup", "Could not enable the selection hotkey.")
+            )
+
+    def popup_closed() -> None:
+        nonlocal popup
+        popup = None
+
+    def translate_selection(text: str) -> None:
+        nonlocal popup
+        if popup is not None or window.is_closed:
+            return
+        history = partial(HistoryStore, history_path, settings.history_limit)
+        worker = (
+            TranslationWorker(
+                job,
+                text,
+                *window.selected_languages,
+                settings.formality,
+                history if settings.history_enabled else None,
+            )
+            if job is not None
+            else None
+        )
+        popup = SelectionPopup(worker, provider_status, window)
+        popup.finished.connect(popup_closed)
+        if screen := app.screenAt(QCursor.pos()):
+            popup.move(screen.availableGeometry().center() - popup.rect().center())
+        popup.show()
+        popup.raise_()
+        popup.activateWindow()
+
+    hotkey.selection_ready.connect(translate_selection)
+    window.closed.connect(hotkey.stop)
 
     def activate_window() -> None:
         assert server is not None
@@ -196,7 +240,7 @@ def _run_window(
     stack.callback(close_official)
 
     def refresh_job() -> None:
-        nonlocal job
+        nonlocal job, provider_status
         refresh_provider()
         requires_settings = settings.provider_mode == "official_only" and official is None
         if requires_settings:
@@ -205,6 +249,7 @@ def _run_window(
             status = QCoreApplication.translate("Startup", "Using the official DeepL API")
         else:
             status = dlx_status
+        provider_status = status
         job = (
             TranslationJob(
                 translator=translator,
@@ -251,7 +296,10 @@ def _run_window(
 
         if updated.theme != settings.theme:
             apply_theme(app, updated.theme)
+        shortcut_changed = updated.selection_hotkey != settings.selection_hotkey
         settings = updated
+        if shortcut_changed:
+            configure_hotkey()
         window.set_history(
             history_path, enabled=settings.history_enabled, limit=settings.history_limit
         )
@@ -344,16 +392,20 @@ def _run_window(
         start_dlx_if_needed()
         refresh_job()
         window.show()
+        configure_hotkey()
         initial_placement = _window_placement(window)
         if server is not None and server.hasPendingConnections():
             activate_window()
         result = app.exec()
     finally:
+        hotkey.stop()
+        if popup is not None:
+            popup.stop_translation()
         window.hide_tray()
         if server is not None:
             server.close()
             server.newConnection.disconnect(activate_window)
-        # The translator and process remain alive until both workers have stopped.
+        # Keep the providers alive until their workers have stopped.
         window.stop_translation()
         if startup is not None:
             startup.wait()

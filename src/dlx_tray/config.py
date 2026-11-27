@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import locale
 import os
+import re
 import sys
 from pathlib import Path
 from tempfile import NamedTemporaryFile
@@ -30,6 +31,7 @@ type Theme = Literal["system", "light", "dark"]
 type LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR"]
 type ProviderMode = Literal["automatic", "official_only"]
 
+DEFAULT_SELECTION_HOTKEY = "Ctrl+C,C"
 _SETTINGS_VERSION = 1
 _LEGACY_REQUEST_DELAY = 2.5
 
@@ -103,6 +105,7 @@ class Settings(BaseSettings):
     cache_enabled: bool = True
     theme: Theme = "system"
     ui_language: UiLanguage = Field(default_factory=system_ui_language)
+    selection_hotkey: str = DEFAULT_SELECTION_HOTKEY
 
     deepl_api_key: SecretStr | None = Field(default=None, exclude=True, repr=False)
     deeplx_token: SecretStr | None = Field(default=None, exclude=True, repr=False)
@@ -112,6 +115,19 @@ class Settings(BaseSettings):
 
     _overridden_preferences: set[str] = PrivateAttr(default_factory=set)
     _migration_error: str | None = PrivateAttr(default=None)
+
+    @field_validator("selection_hotkey", mode="before")
+    @classmethod
+    def _validate_selection_hotkey(cls, value: object) -> str:
+        if isinstance(value, str):
+            shortcut = value.strip().upper()
+            if shortcut == DEFAULT_SELECTION_HOTKEY.upper():
+                return DEFAULT_SELECTION_HOTKEY
+            if re.fullmatch(r"CTRL\+SHIFT\+[A-Z]", shortcut):
+                return "Ctrl+Shift+" + shortcut[-1]
+            if not shortcut:
+                return ""
+        raise ValueError("invalid selection hotkey")
 
     @classmethod
     def settings_customise_sources(
