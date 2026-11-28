@@ -22,7 +22,8 @@ from pydantic_settings import (
 
 from dlx_tray import APP_NAME
 from dlx_tray._file_lock import file_lock
-from dlx_tray.core.chunker import DEFAULT_MAX_UNITS, DLX_MAX_UNITS
+from dlx_tray.contracts.cloud_v1 import EXTRACT_TERMS_MAX_UNITS
+from dlx_tray.core.chunker import DEFAULT_MAX_UNITS, DLX_MAX_UNITS, MIN_MAX_UNITS
 from dlx_tray.core.models import (
     AnalysisTier,
     Formality,
@@ -108,6 +109,9 @@ class Settings(BaseSettings):
     provider_mode: ProviderMode = "automatic"
     cloud_url: AnyHttpUrl | None = None
     hybrid_dlx_threshold: int = Field(default=DLX_MAX_UNITS, ge=0, le=DLX_MAX_UNITS)
+    term_extraction_budget: int = Field(
+        default=EXTRACT_TERMS_MAX_UNITS, ge=MIN_MAX_UNITS, le=EXTRACT_TERMS_MAX_UNITS
+    )
     chunk_size: int = Field(default=DEFAULT_MAX_UNITS, ge=200, le=DLX_MAX_UNITS)
     request_delay: float = Field(default=DEFAULT_REQUEST_DELAY, ge=0, le=10)
     dlx_concurrency: int = Field(default=2, ge=1, le=2)

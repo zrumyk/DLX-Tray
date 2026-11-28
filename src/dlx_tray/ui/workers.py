@@ -11,8 +11,15 @@ from time import monotonic
 
 from PySide6.QtCore import QObject, Signal, Slot
 
+from dlx_tray.contracts.cloud_v1 import EXTRACT_TERMS_MAX_UNITS
 from dlx_tray.core import chunker
-from dlx_tray.core.models import Chunk, Formality, Language, TranslationError
+from dlx_tray.core.models import (
+    Chunk,
+    Formality,
+    Language,
+    TranslationCancelledError,
+    TranslationError,
+)
 from dlx_tray.core.pipeline import (
     FailureAction,
     JobResult,
@@ -21,8 +28,10 @@ from dlx_tray.core.pipeline import (
     TranslationJob,
 )
 from dlx_tray.fileio.translation import SourceFile
+from dlx_tray.providers.cloud_ai import CloudAiTranslator
 from dlx_tray.providers.deeplx import PROVIDER_NAME as DLX_NAME
 from dlx_tray.services.history import HistoryStore
+from dlx_tray.services.term_extraction import extraction_request
 
 log = logging.getLogger(__name__)
 
@@ -44,6 +53,51 @@ class FileIOWorker(QObject):
             self.failed.emit(type(exc))
         else:
             self.finished.emit(result)
+
+
+class TermExtractionWorker(QObject):
+    finished = Signal(object)
+    failed = Signal(object)
+
+    def __init__(
+        self,
+        cloud: CloudAiTranslator,
+        content: str | SourceFile,
+        source: Language,
+        target: Language,
+        budget: int = EXTRACT_TERMS_MAX_UNITS,
+    ) -> None:
+        super().__init__()
+        self._cloud = cloud
+        self._content = content
+        self._source = source
+        self._target = target
+        self._budget = budget
+        self._cancel = Event()
+
+    def cancel(self) -> bool:
+        self._cancel.set()
+        return True
+
+    @Slot()
+    def run(self) -> None:
+        try:
+            segments = (
+                self._content.segments
+                if isinstance(self._content, SourceFile)
+                else (piece.text for piece in chunker.paragraphs(self._content))
+            )
+            request = extraction_request(
+                segments, self._source, self._target, budget=self._budget, cancel=self._cancel
+            )
+            response = self._cloud.extract_terms(request, cancel=self._cancel)
+        except TranslationCancelledError:
+            self.finished.emit(None)
+        except Exception as exc:
+            log.warning("Term extraction failed (%s)", type(exc).__name__)
+            self.failed.emit(type(exc))
+        else:
+            self.finished.emit(None if self._cancel.is_set() else response)
 
 
 @dataclass(frozen=True, slots=True)

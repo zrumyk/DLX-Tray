@@ -50,7 +50,7 @@ class HybridRouter:
             file
             or utf16_len(text) > self.threshold
             or options.register != StylisticRegister.NEUTRAL
-            or bool(options.style_context or options.glossary)
+            or bool(options.style_context or options.glossary or options.document_glossary)
             or options.include_notes
             or options.analysis_tier == AnalysisTier.DEEP
             or extract_terms

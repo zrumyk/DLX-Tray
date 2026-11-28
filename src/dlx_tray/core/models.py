@@ -124,6 +124,7 @@ class TranslationOptions:
     style_context: str = ""
     glossary: tuple[GlossaryEntry, ...] = ()
     include_notes: bool = False
+    document_glossary: tuple[GlossaryEntry, ...] = ()
 
     def __post_init__(self) -> None:
         style_context = " ".join(self.style_context.split())

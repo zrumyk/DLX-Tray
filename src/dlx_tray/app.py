@@ -22,6 +22,7 @@ from dlx_tray.contracts.cloud_v1 import MeResponse
 from dlx_tray.core.diagnostics import DiagnosticTimeline, DLXConnection
 from dlx_tray.core.models import (
     DEFAULT_TRANSLATION_OPTIONS,
+    GlossaryEntry,
     ProviderUnavailableError,
     TranslationOptions,
 )
@@ -116,14 +117,16 @@ def _run_window(
     start_in_tray: bool = False,
 ) -> int:
     apply_theme(app, settings.theme)
+    data_dir = config.app_data_dir()
     window = MainWindow(
         source=settings.source_lang,
         target=settings.target_lang,
         chunk_size=settings.chunk_size,
         formality=settings.formality,
         ui_language=settings.ui_language,
+        glossary_path=data_dir / "glossaries.sqlite3",
     )
-    history_path = config.app_data_dir() / "history.sqlite3"
+    history_path = data_dir / "history.sqlite3"
     cache = TranslationCache(history_path.with_name("cache.db"))
     flights = SingleFlight()
     window.set_history(history_path, enabled=settings.history_enabled, limit=settings.history_limit)
@@ -289,12 +292,18 @@ def _run_window(
 
     stack.callback(close_retired_providers)
 
-    def select_job(content: str | SourceFile) -> TranslationJob | None:
+    def select_job(
+        content: str | SourceFile,
+        saved_terms: tuple[GlossaryEntry, ...] = (),
+        document_terms: tuple[GlossaryEntry, ...] = (),
+    ) -> TranslationJob | None:
         options = TranslationOptions(
             register=settings.stylistic_register,
             analysis_tier=settings.analysis_tier,
             style_context=settings.style_context,
             include_notes=settings.include_notes,
+            glossary=saved_terms,
+            document_glossary=document_terms,
         )
         router = HybridRouter(
             mode=settings.provider_mode,
@@ -363,6 +372,10 @@ def _run_window(
                 and api_key is None
             ),
             select_job=select_job,
+        )
+        window.set_glossary_provider(
+            cloud if settings.provider_mode in {"automatic", "cloud_only"} else None,
+            settings.term_extraction_budget,
         )
 
     def save_preferences(updated: Settings, key: str | None) -> str | None:

@@ -124,9 +124,16 @@ translation environment for **philology students, literary/academic translators,
    - **Stylistic registers:** Switch between *Neutral*, *Literary (Художній)*, *Academic
      (Академічний)*, *Journalistic (Публіцистичний)*, *Official (Офіційно-діловий)*, and
      *Philological crib / Interlinear literal (Підрядник)*, plus an optional era/domain context hint.
-   - **Document terminology consistency:** Manage local SQLite glossaries with UTF-8 CSV/TSV
-     import/export, and run an optional **Pass-1 AI term extraction** before parallel file
-     translation to review and lock recurring terms and proper names across the whole document.
+   - **Document terminology.** Open **Glossaries → Manage glossaries** to create or exchange
+     local glossaries. CSV and TSV files use UTF-8 and the headers `source_term` and `target_term`.
+     Optional headers are `pos`, `notes`, and `priority`. Choose **Use for translation** to apply
+     a glossary that supports the selected languages. A glossary with automatic source detection
+     can be used with any source language.
+   - **Two-pass translation.** Configure Cloud AI in **Automatic** or **Cloud AI only** mode.
+     Open a file or enter text and choose **Glossaries → Extract document terms**. Pass 1 sends
+     a deduplicated sample to Cloud AI and requires a token with deep analysis access. Edit,
+     add, or remove suggested terms. You can save them to a glossary, then choose **Translate**
+     to apply the reviewed equivalents to the same input in Pass 2.
    - **Philological notes:** Inspect alternative phrasings, idiom/realia explanations, and
      grammatical/syntactic commentary in a collapsible **MainWindow Inspector**, on demand inside
      the **`Ctrl+C,C` Selection Popup**, or optionally exported as native **Word comments** in
@@ -219,6 +226,9 @@ For official DeepL API fallback, save a key in Settings (stored in Windows Crede
 set `DLX_DEEPL_API_KEY` in the process environment or local `.env` during development. Non-empty
 process environment variables take precedence over `.env`; when unset or blank, Tray uses the
 credential stored in Windows Credential Manager.
+
+`DLX_TERM_EXTRACTION_BUDGET` sets the sample limit for Pass 1 in UTF-16 code units. The default
+and maximum are 60,000.
 
 ---
 

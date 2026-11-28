@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QMessageBox,
     QPushButton,
+    QTableWidget,
 )
 from pytestqt.qtbot import QtBot
 from tests.fakes.fake_dlx import FakeDLXFactory, running_fake_dlx
@@ -41,6 +42,7 @@ from dlx_tray.services.deeplx_process import DLXProcess
 from dlx_tray.services.history import HistoryStore
 from dlx_tray.ui.about_dialog import AboutDialog
 from dlx_tray.ui.error_dialog import ErrorDialog
+from dlx_tray.ui.glossary_dialog import DocumentTermReview
 from dlx_tray.ui.history_dialog import HistoryDialog
 from dlx_tray.ui.localization import interface_language
 from dlx_tray.ui.main_window import MainWindow
@@ -122,6 +124,61 @@ def test_selection_translates_in_a_popup_and_keeps_main_window_text(
             Settings.model_validate({"deeplx_url": server.url, "deeplx_token": server.token}),
             check,
         )
+
+
+@respx.mock
+def test_automatic_editor_translation_applies_reviewed_terms(
+    run_window: Callable[[Settings, Callable[[MainWindow, QLabel], None]], None], qtbot: QtBot
+) -> None:
+    extraction = respx.post("https://cloud.example/v1/extract-terms").respond(
+        json={
+            "terms": [
+                {"source_term": "tide", "target_term": "suggestion", "category": "term", "count": 2}
+            ]
+        }
+    )
+    translation = respx.post("https://cloud.example/v1/translate").respond(
+        json={"segments": [{"index": 0, "text": "translated"}, {"index": 1, "text": "second"}]}
+    )
+
+    def check(window: MainWindow, _status: QLabel) -> None:
+        text = "Tide" + " water" * 260 + "\n\ntide again"
+        window.source_editor.setPlainText(text)
+        assert window.extract_terms_action.isEnabled()
+        window.extract_terms_action.trigger()
+
+        def review_open() -> bool:
+            dialog = window.findChild(DocumentTermReview)
+            return dialog is not None and dialog.isVisible()
+
+        qtbot.waitUntil(review_open)
+        dialog = window.findChild(DocumentTermReview)
+        assert dialog is not None and not translation.called
+        table = dialog.findChild(QTableWidget)
+        assert table is not None
+        equivalent = table.item(0, 1)
+        assert equivalent is not None
+        equivalent.setText("reviewed")
+        dialog.accept()
+        qtbot.waitUntil(window.translate_button.isEnabled)
+        assert window.result_editor.toPlainText() == "translated\n\nsecond"
+
+    settings = Settings.model_validate(
+        {
+            "provider_mode": "automatic",
+            "deeplx_url": "http://127.0.0.1:1",
+            "cloud_url": "https://cloud.example",
+            "cloud_api_token": "fixture",
+            "term_extraction_budget": 40,
+            "request_delay": 0,
+        }
+    )
+    run_window(settings, check)
+    passages = json.loads(extraction.calls.last.request.content)["segments"]
+    assert len(passages) == 1 and 0 < len(passages[0]) <= 40
+    assert json.loads(translation.calls.last.request.content)["glossary"] == [
+        {"source_term": "tide", "target_term": "reviewed", "priority": 0}
+    ]
 
 
 def test_startup_loads_the_window_icon(

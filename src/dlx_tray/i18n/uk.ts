@@ -36,6 +36,29 @@
     </message>
 </context>
 <context>
+    <name>DocumentTermReview</name>
+    <message>
+        <source>Review document terms</source>
+        <translation>Перевірка термінів документа</translation>
+    </message>
+    <message>
+        <source>No document terms were found. You can add your own.</source>
+        <translation>Термінів у документі не знайдено. Можна додати власні.</translation>
+    </message>
+    <message>
+        <source>Translate</source>
+        <translation>Перекласти</translation>
+    </message>
+    <message>
+        <source>Save to glossary…</source>
+        <translation>Зберегти до глосарія…</translation>
+    </message>
+    <message>
+        <source>Enter unique source terms, nonempty equivalents, and integer priorities.</source>
+        <translation>Введіть унікальні терміни оригіналу, непорожні відповідники й цілі значення пріоритетів.</translation>
+    </message>
+</context>
+<context>
     <name>ErrorDialog</name>
     <message>
         <source>Translation paused</source>
@@ -112,6 +135,105 @@
     <message>
         <source>The Cloud AI character quota is exhausted.</source>
         <translation>Ліміт символів Cloud AI вичерпано.</translation>
+    </message>
+</context>
+<context>
+    <name>GlossaryManager</name>
+    <message>
+        <source>Glossary Manager</source>
+        <translation>Керування глосаріями</translation>
+    </message>
+    <message>
+        <source>Save reviewed terms</source>
+        <translation>Збереження перевірених термінів</translation>
+    </message>
+    <message>
+        <source>Saved glossaries</source>
+        <translation>Збережені глосарії</translation>
+    </message>
+    <message>
+        <source>Save as new glossary…</source>
+        <translation>Зберегти як новий глосарій…</translation>
+    </message>
+    <message>
+        <source>New…</source>
+        <translation>Створити…</translation>
+    </message>
+    <message>
+        <source>Edit…</source>
+        <translation>Редагувати…</translation>
+    </message>
+    <message>
+        <source>Delete…</source>
+        <translation>Видалити…</translation>
+    </message>
+    <message>
+        <source>Import…</source>
+        <translation>Імпортувати…</translation>
+    </message>
+    <message>
+        <source>Export…</source>
+        <translation>Експортувати…</translation>
+    </message>
+    <message>
+        <source>Merge reviewed terms</source>
+        <translation>Об’єднати перевірені терміни</translation>
+    </message>
+    <message>
+        <source>Use for translation</source>
+        <translation>Використати для перекладу</translation>
+    </message>
+    <message>
+        <source>Close</source>
+        <translation>Закрити</translation>
+    </message>
+    <message>
+        <source>Reviewed equivalents replace matching saved terms.</source>
+        <translation>Перевірені відповідники замінять відповідники тих самих термінів у глосарії.</translation>
+    </message>
+    <message>
+        <source>Working…</source>
+        <translation>Виконується…</translation>
+    </message>
+    <message>
+        <source>The glossary file or its entries are invalid.</source>
+        <translation>Файл глосарія або його записи мають некоректний формат.</translation>
+    </message>
+    <message>
+        <source>Could not complete the glossary operation.</source>
+        <translation>Не вдалося виконати операцію з глосарієм.</translation>
+    </message>
+    <message>
+        <source>{name} ({source} → {target})</source>
+        <translation>{name} ({source} → {target})</translation>
+    </message>
+    <message>
+        <source>Delete glossary “{name}”?</source>
+        <translation>Видалити глосарій «{name}»?</translation>
+    </message>
+    <message>
+        <source>Import glossary</source>
+        <translation>Імпорт глосарія</translation>
+    </message>
+    <message>
+        <source>Glossaries (*.csv *.tsv)</source>
+        <translation>Глосарії (*.csv *.tsv)</translation>
+    </message>
+    <message>
+        <source>CSV glossary (*.csv)</source>
+        <translation>Глосарій CSV (*.csv)</translation>
+    </message>
+    <message>
+        <source>TSV glossary (*.tsv)</source>
+        <translation>Глосарій TSV (*.tsv)</translation>
+    </message>
+    <message>
+        <source>Export glossary</source>
+        <translation>Експорт глосарія</translation>
+    </message>
+    <message>
+        <source>Glossary exported.</source>
+        <translation>Глосарій експортовано.</translation>
     </message>
 </context>
 <context>
@@ -214,6 +336,18 @@
     <message>
         <source>&amp;History…</source>
         <translation>&amp;Історія…</translation>
+    </message>
+    <message>
+        <source>&amp;Glossaries</source>
+        <translation>&amp;Глосарії</translation>
+    </message>
+    <message>
+        <source>Manage glossaries…</source>
+        <translation>Керувати глосаріями…</translation>
+    </message>
+    <message>
+        <source>Extract document terms…</source>
+        <translation>Виділити терміни документа…</translation>
     </message>
     <message>
         <source>&amp;Settings…</source>
@@ -362,6 +496,26 @@
     <message>
         <source>Could not save the translation. Check the destination and try again.</source>
         <translation>Не вдалося зберегти переклад. Перевірте шлях збереження й повторіть спробу.</translation>
+    </message>
+    <message>
+        <source>Extracting document terms…</source>
+        <translation>Виділення термінів документа…</translation>
+    </message>
+    <message>
+        <source>The Cloud AI token needs deep analysis access to extract terms.</source>
+        <translation>Для виділення термінів токену Cloud AI потрібен доступ до глибокого аналізу.</translation>
+    </message>
+    <message>
+        <source>Cloud AI rejected the token. Check it in Settings.</source>
+        <translation>Cloud AI відхилив токен. Перевірте його в налаштуваннях.</translation>
+    </message>
+    <message>
+        <source>The Cloud AI quota has been reached.</source>
+        <translation>Квоту Cloud AI вичерпано.</translation>
+    </message>
+    <message>
+        <source>Could not extract document terms.</source>
+        <translation>Не вдалося виділити терміни документа.</translation>
     </message>
     <message>
         <source>Arabic</source>
@@ -574,6 +728,18 @@
     <message>
         <source>Tray cooldown. Retrying in {seconds} s.</source>
         <translation>Пауза в DLX Tray. Повторна спроба через {seconds} с.</translation>
+    </message>
+    <message>
+        <source>Clear glossary selection</source>
+        <translation>Скасувати вибір глосарія</translation>
+    </message>
+    <message>
+        <source>Clear glossary selection ({name})</source>
+        <translation>Скасувати вибір глосарія ({name})</translation>
+    </message>
+    <message>
+        <source>Configure Cloud AI in Automatic or Cloud AI only mode to extract terms.</source>
+        <translation>Для виділення термінів налаштуйте Cloud AI в автоматичному режимі або в режимі «Лише Cloud AI».</translation>
     </message>
     <message>
         <source>Rate limited. Retrying in {seconds} s.</source>
@@ -967,6 +1133,84 @@
     <message>
         <source>Automatic translation with Cloud AI</source>
         <translation>Автоматичний переклад із Cloud AI</translation>
+    </message>
+</context>
+<context>
+    <name>_GlossaryEditor</name>
+    <message>
+        <source>Glossary details</source>
+        <translation>Відомості про глосарій</translation>
+    </message>
+    <message>
+        <source>Detect language</source>
+        <translation>Визначити мову</translation>
+    </message>
+    <message>
+        <source>Name</source>
+        <translation>Назва</translation>
+    </message>
+    <message>
+        <source>Source language</source>
+        <translation>Мова оригіналу</translation>
+    </message>
+    <message>
+        <source>Target language</source>
+        <translation>Мова перекладу</translation>
+    </message>
+    <message>
+        <source>Description</source>
+        <translation>Опис</translation>
+    </message>
+    <message>
+        <source>Enter a glossary name.</source>
+        <translation>Введіть назву глосарія.</translation>
+    </message>
+    <message>
+        <source>Enter unique source terms, nonempty equivalents, and integer priorities.</source>
+        <translation>Введіть унікальні терміни оригіналу, непорожні відповідники й цілі значення пріоритетів.</translation>
+    </message>
+</context>
+<context>
+    <name>_TermTable</name>
+    <message>
+        <source>Glossary terms</source>
+        <translation>Терміни глосарія</translation>
+    </message>
+    <message>
+        <source>Source term</source>
+        <translation>Термін оригіналу</translation>
+    </message>
+    <message>
+        <source>Equivalent</source>
+        <translation>Відповідник</translation>
+    </message>
+    <message>
+        <source>Part of speech</source>
+        <translation>Частина мови</translation>
+    </message>
+    <message>
+        <source>Notes</source>
+        <translation>Примітки</translation>
+    </message>
+    <message>
+        <source>Priority</source>
+        <translation>Пріоритет</translation>
+    </message>
+    <message>
+        <source>Category</source>
+        <translation>Категорія</translation>
+    </message>
+    <message>
+        <source>Occurrences</source>
+        <translation>Кількість згадок</translation>
+    </message>
+    <message>
+        <source>Add term</source>
+        <translation>Додати термін</translation>
+    </message>
+    <message>
+        <source>Remove selected terms</source>
+        <translation>Видалити вибрані терміни</translation>
     </message>
 </context>
 </TS>
