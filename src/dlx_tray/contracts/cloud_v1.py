@@ -107,7 +107,7 @@ class TranslateRequest(_SourceRequest):
 
 class TranslatedSegment(CloudModel):
     index: Count
-    text: str
+    text: Nonblank
     detected_source: Language | None = None
     notes: list[Note] = Field(default_factory=list)
     cached: bool = False

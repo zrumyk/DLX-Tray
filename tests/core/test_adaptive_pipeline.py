@@ -158,6 +158,19 @@ def test_wrong_indexes_fail_as_a_whole_block() -> None:
     assert isinstance(result.error, TranslationError)
 
 
+def test_blank_block_result_is_neither_published_nor_cached(tmp_path: Path) -> None:
+    def send(block: ContextBlock) -> Sequence[IndexedResult]:
+        first, second = translate(block)
+        return [first, replace(second, result=replace(second.result, text=" "))]
+
+    cache_path = tmp_path / "cache.db"
+    job = TranslationJob(translator=FakeBlocks(send), cache=TranslationCache(cache_path))
+    result = job.run("", Language.EN, Language.UK, file_segments=["one", "two"])
+    assert result.text == ""
+    assert isinstance(result.error, TranslationError)
+    assert not cache_path.exists()
+
+
 def test_deep_budget_splits_and_rejoins_oversized_segments() -> None:
     previous = "\U0001f600" * 1_001
     long = ("a" * CLOUD_DEEP_PROFILE.max_units) + "  end "

@@ -944,6 +944,81 @@ def test_official_only_cold_start_and_switch_to_automatic(
             process.stop.assert_called_once_with()
 
 
+def test_cloud_only_stays_unavailable_and_can_be_changed_in_settings(
+    run_window: Callable[[Settings, Callable[[MainWindow, QLabel], None]], None],
+    monkeypatch: pytest.MonkeyPatch,
+    vault: Mock,
+) -> None:
+    vault.get_password.return_value = "test-key:fx"
+    process, dlx, official_send = Mock(), Mock(), Mock()
+    monkeypatch.setattr(app, "DLXProcess", process)
+    monkeypatch.setattr(app, "DeeplxTranslator", dlx)
+    monkeypatch.setattr(requests.Session, "send", official_send)
+
+    def check(window: MainWindow, status: QLabel) -> None:
+        assert status.text() == "Cloud AI translation is unavailable"
+        window.source_editor.setPlainText("Do not dispatch this source")
+        assert not window.translate_button.isEnabled()
+
+        def change_provider() -> None:
+            dialog = QApplication.activeModalWidget()
+            assert isinstance(dialog, SettingsDialog)
+            try:
+                assert dialog.provider_mode.currentData() == "cloud_only"
+                dialog.provider_mode.setCurrentIndex(dialog.provider_mode.findData("official_only"))
+                dialog.buttons.button(QDialogButtonBox.StandardButton.Save).click()
+                assert not dialog.isVisible()
+            finally:
+                if dialog.isVisible():
+                    dialog.reject()
+
+        QTimer.singleShot(0, change_provider)
+        window.settings_action.trigger()
+        assert status.text() == "Using the official DeepL API"
+        assert window.translate_button.isEnabled()
+
+    run_window(
+        Settings.model_validate(
+            {
+                "provider_mode": "cloud_only",
+                "deeplx_url": "http://127.0.0.1:12345",
+            }
+        ),
+        check,
+    )
+    process.assert_not_called()
+    dlx.assert_not_called()
+    official_send.assert_not_called()
+
+
+def test_dlx_only_uses_bundled_connection_without_official_fallback(
+    run_window: Callable[[Settings, Callable[[MainWindow, QLabel], None]], None],
+    fake_dlx: FakeDLXFactory,
+    qtbot: QtBot,
+    monkeypatch: pytest.MonkeyPatch,
+    vault: Mock,
+) -> None:
+    vault.get_password.return_value = "test-key:fx"
+    official_send = Mock()
+    monkeypatch.setattr(requests.Session, "send", official_send)
+    with fake_dlx([]) as server:
+        process = Mock(spec=DLXProcess, base_url=server.url, token=server.token)
+        monkeypatch.setattr(app, "DLXProcess", Mock(return_value=process))
+
+        def check(window: MainWindow, _status: QLabel) -> None:
+            window.source_editor.setPlainText("DLX only")
+            qtbot.waitUntil(window.translate_button.isEnabled)
+            assert window._job is not None
+            assert isinstance(window._job.translator, deeplx.DeeplxTranslator)
+            window.translate_button.click()
+            qtbot.waitUntil(window.translate_button.isEnabled)
+            assert window.result_editor.toPlainText() == "[UK] DLX only"
+
+        run_window(Settings(provider_mode="dlx_only"), check)
+        process.start.assert_called_once()
+    official_send.assert_not_called()
+
+
 def test_official_only_missing_key_opens_settings_before_translation(
     run_window: Callable[[Settings, Callable[[MainWindow, QLabel], None]], None],
     qtbot: QtBot,

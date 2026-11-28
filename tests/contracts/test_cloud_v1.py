@@ -100,3 +100,8 @@ def test_extraction_rejects_over_budget() -> None:
         ExtractTermsRequest.model_validate(
             {"target_lang": "UK", "segments": ["\U0001f600" * 30_001]}
         )
+
+
+def test_translation_response_rejects_blank_segment() -> None:
+    with pytest.raises(ValidationError, match="must not be blank"):
+        TranslateResponse.model_validate({"segments": [{"index": 0, "text": " "}]})

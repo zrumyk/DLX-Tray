@@ -666,6 +666,14 @@
         <translation>Лише офіційний API DeepL</translation>
     </message>
     <message>
+        <source>DLX only</source>
+        <translation>Лише DLX</translation>
+    </message>
+    <message>
+        <source>Cloud AI only (unavailable)</source>
+        <translation>Лише Cloud AI (недоступно)</translation>
+    </message>
+    <message>
         <source>Could not save settings.</source>
         <translation>Не вдалося зберегти налаштування.</translation>
     </message>
@@ -855,6 +863,10 @@
     <message>
         <source>Using the official DeepL API</source>
         <translation>Використовується офіційний API DeepL</translation>
+    </message>
+    <message>
+        <source>Cloud AI translation is unavailable</source>
+        <translation>Переклад через Cloud AI недоступний</translation>
     </message>
     <message>
         <source>Starting DLX…</source>

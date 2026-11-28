@@ -328,6 +328,8 @@ class TranslationJob:
                         segment.index for segment in block.segments
                     }:
                         raise TranslationError("provider returned mismatched segment indexes")
+                    if any(not result.text.strip() for result in indexed.values()):
+                        raise TranslationError("provider returned a blank segment translation")
                     return [indexed[segment.index] for segment in block.segments]
                 if isinstance(translator, DeeplxTranslator | DeepLOfficialTranslator):
                     return translator.translate(texts, source, target, formality, dispatch=attempt)
