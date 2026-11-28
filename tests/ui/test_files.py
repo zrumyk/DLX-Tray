@@ -1,11 +1,14 @@
 """Exercise document open, translation and export through the window."""
 
+import json
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from threading import Event
 from unittest.mock import Mock
 
+import httpx
 import pytest
+import respx
 from docx import Document
 from PySide6.QtCore import QMimeData, QPoint, QPointF, Qt, QUrl
 from PySide6.QtGui import QDragEnterEvent, QDropEvent, QTextCursor
@@ -18,6 +21,7 @@ from dlx_tray.core.chunker import join, split
 from dlx_tray.core.pipeline import TranslationJob
 from dlx_tray.fileio.pdf_io import read_pdf
 from dlx_tray.providers import deeplx
+from dlx_tray.providers.cloud_ai import CloudAiTranslator
 from dlx_tray.providers.deeplx import DeeplxTranslator
 from dlx_tray.services.cache import TranslationCache
 from dlx_tray.ui.error_dialog import ErrorDialog
@@ -50,6 +54,71 @@ def _save(window: MainWindow, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, pat
     monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *_: (str(path), ""))
     window.save_file_action.trigger()
     qtbot.waitUntil(window.open_file_action.isEnabled, timeout=5000)
+
+
+@pytest.mark.parametrize("source_suffix", [".docx", ".pdf"])
+def test_gui_word_notes_export_is_opt_in(
+    source_suffix: str,
+    qtbot: QtBot,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    respx_mock: respx.MockRouter,
+    file_window: Callable[[TranslationJob], MainWindow],
+) -> None:
+    source = FIXTURES_DIR / "field_notes.pdf"
+    if source_suffix == ".docx":
+        source = tmp_path / "source.docx"
+        document = Document()
+        document.add_heading("Original", level=1)
+        document.save(str(source))
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        assert payload["include_notes"]
+        return httpx.Response(
+            200,
+            json={
+                "segments": [
+                    {
+                        "index": s["index"],
+                        "text": s["text"],
+                        "notes": [{"kind": "grammar", "text": f"Note {s['index']}"}],
+                    }
+                    for s in payload["segments"]
+                ]
+            },
+        )
+
+    respx_mock.post("https://cloud.example/v1/translate").mock(side_effect=respond)
+    cloud = CloudAiTranslator("https://cloud.example", "test-token")
+    window = file_window(TranslationJob(translator=cloud, request_delay=0))
+    window.set_glossary_provider(cloud, 60_000)
+    window.notes_toggle.setChecked(True)
+    _open(window, qtbot, monkeypatch, source)
+    window.translate_button.click()
+    qtbot.waitUntil(window.save_file_action.isEnabled)
+    checked: list[bool] = []
+
+    def save_options(options: QMessageBox) -> int:
+        checkbox = options.checkBox()
+        assert checkbox is not None and not checkbox.isChecked()
+        assert checkbox.text() == "Attach philological notes as Word comments"
+        checkbox.setChecked(bool(checked))
+        checked.append(checkbox.isChecked())
+        return int(QMessageBox.StandardButton.Save)
+
+    monkeypatch.setattr(QMessageBox, "exec", save_options)
+    plain, annotated = tmp_path / "plain.docx", tmp_path / "annotated.docx"
+    _save(window, qtbot, monkeypatch, plain)
+    _save(window, qtbot, monkeypatch, annotated)
+    assert checked == [False, True]
+    with_comments = Document(str(annotated))
+    without_comments = Document(str(plain))
+    assert [p.text for p in with_comments.paragraphs] == [
+        p.text for p in without_comments.paragraphs
+    ]
+    assert next(comment.text for comment in with_comments.comments) == "Note 0"
+    assert not list(without_comments.comments)
 
 
 def test_docx_reuses_cached_segments_before_pacing_and_preserves_export(

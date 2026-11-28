@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from bisect import bisect_right
 from collections.abc import Callable
 from dataclasses import replace
 from functools import partial
@@ -10,25 +11,39 @@ from pathlib import Path
 from time import monotonic
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QCollator, QEvent, QLocale, Qt, QThread, QTimer, Signal, Slot
+from PySide6.QtCore import (
+    QCollator,
+    QEvent,
+    QLocale,
+    QRegularExpression,
+    Qt,
+    QThread,
+    QTimer,
+    Signal,
+    Slot,
+)
 from PySide6.QtGui import (
     QCloseEvent,
     QDragEnterEvent,
     QDragMoveEvent,
     QDropEvent,
+    QFocusEvent,
     QIcon,
     QKeySequence,
+    QRegularExpressionValidator,
     QShortcut,
     QTextCursor,
     QTextDocument,
 )
 from PySide6.QtWidgets import (
     QApplication,
+    QCheckBox,
     QComboBox,
     QFileDialog,
     QGridLayout,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QMainWindow,
     QMenu,
     QMessageBox,
@@ -36,7 +51,9 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QProgressBar,
     QPushButton,
+    QSplitter,
     QSystemTrayIcon,
+    QVBoxLayout,
     QWidget,
 )
 
@@ -45,6 +62,8 @@ from dlx_tray.contracts.cloud_v1 import EXTRACT_TERMS_MAX_UNITS, ExtractTermsRes
 from dlx_tray.core import chunker
 from dlx_tray.core.diagnostics import DiagnosticProvider
 from dlx_tray.core.models import (
+    DEFAULT_TRANSLATION_OPTIONS,
+    AnalysisTier,
     CloudAuthError,
     CloudDeepTierForbiddenError,
     CloudQuotaExceededError,
@@ -52,8 +71,12 @@ from dlx_tray.core.models import (
     GlossaryEntry,
     Language,
     LocalCooldownError,
+    PhilologicalNote,
     RateLimitedError,
+    StylisticRegister,
+    TranslationAnnotations,
     TranslationError,
+    TranslationOptions,
 )
 from dlx_tray.core.pipeline import JobResult, TranslationJob
 from dlx_tray.fileio.pdf_io import NoTextLayerError
@@ -71,15 +94,14 @@ from dlx_tray.ui.about_dialog import AboutDialog
 from dlx_tray.ui.error_dialog import ErrorDialog, FailureLocation
 from dlx_tray.ui.glossary_dialog import DocumentTermReview, GlossaryManager, GlossarySelection
 from dlx_tray.ui.history_dialog import HistoryDialog
+from dlx_tray.ui.inspector_panel import InspectorPanel, register_label
+from dlx_tray.ui.selection_popup import SelectionPopup
 from dlx_tray.ui.workers import FileIOWorker, FileJobResult, TermExtractionWorker, TranslationWorker
 
 if TYPE_CHECKING:
     from dlx_tray.config import UiLanguage
 
-type JobSelector = Callable[
-    [str | SourceFile, tuple[GlossaryEntry, ...], tuple[GlossaryEntry, ...]],
-    TranslationJob | None,
-]
+type JobSelector = Callable[[str | SourceFile, TranslationOptions], TranslationJob | None]
 type TranslationSnapshot = tuple[str | SourceFile, Language, Language]
 
 
@@ -89,6 +111,8 @@ def _editor_text(editor: QPlainTextEdit) -> str:
 
 
 class _TextEditor(QPlainTextEdit):
+    focused = Signal()
+
     def __init__(self) -> None:
         super().__init__()
         self._text_document: QTextDocument | None = None
@@ -115,6 +139,10 @@ class _TextEditor(QPlainTextEdit):
         else:
             super().dragEnterEvent(event)
 
+    def focusInEvent(self, event: QFocusEvent) -> None:
+        super().focusInEvent(event)
+        self.focused.emit()
+
 
 class MainWindow(QMainWindow):
     translation_requested = Signal(str, object, object)
@@ -135,6 +163,7 @@ class MainWindow(QMainWindow):
         translation_unavailable_reason: str | None = None,
         ui_language: UiLanguage = "en",
         glossary_path: Path | None = None,
+        philology_options: TranslationOptions = DEFAULT_TRANSLATION_OPTIONS,
     ) -> None:
         super().__init__(parent)
         file_menu = self.menuBar().addMenu(self.tr("&File"))
@@ -184,6 +213,11 @@ class MainWindow(QMainWindow):
         self._worker: TranslationWorker | FileIOWorker | TermExtractionWorker | None = None
         self._file: SourceFile | None = None
         self._file_translations: tuple[str, ...] | None = None
+        self._file_notes: tuple[tuple[PhilologicalNote, ...], ...] = ()
+        self._annotations: TranslationAnnotations | None = None
+        self._source_starts: list[int] = []
+        self._result_starts: list[int] = []
+        self._inspect_source = True
         self._file_unsaved = False
         self._error_dialog: ErrorDialog | None = None
         self._detected_source: Language | None = None
@@ -202,7 +236,7 @@ class MainWindow(QMainWindow):
         layout = QGridLayout(central)
         layout.setColumnStretch(0, 1)
         layout.setColumnStretch(1, 1)
-        layout.setRowStretch(1, 1)
+        layout.setRowStretch(2, 1)
         self.setCentralWidget(central)
 
         self.source_languages = QComboBox()
@@ -262,15 +296,65 @@ class MainWindow(QMainWindow):
         languages.addWidget(self.target_languages, 1)
         layout.addLayout(languages, 0, 0, 1, 2)
 
-        layout.addWidget(self.source_editor, 1, 0)
-        layout.addWidget(self.result_editor, 1, 1)
+        self.register_picker = QComboBox()
+        for register in StylisticRegister:
+            self.register_picker.addItem(register_label(register), register.value)
+        self.register_picker.setCurrentIndex(
+            self.register_picker.findData(philology_options.register.value)
+        )
+        register_label_widget = QLabel(self.tr("&Register"))
+        register_label_widget.setBuddy(self.register_picker)
+        self.glossary_selector = QPushButton()
+        self.glossary_selector.setAccessibleName(self.tr("Glossary"))
+        self.glossary_selector.setMaximumWidth(230)
+        self.glossary_selector.clicked.connect(self._manage_glossaries)
+        self.notes_toggle = QCheckBox(self.tr("Philological notes"))
+        self.notes_toggle.setChecked(philology_options.include_notes)
+        self.deep_toggle = QCheckBox(self.tr("Deep analysis"))
+        self.deep_toggle.setChecked(philology_options.analysis_tier is AnalysisTier.DEEP)
+        self.context_hint = QLineEdit(philology_options.style_context)
+        self.context_hint.setValidator(
+            QRegularExpressionValidator(QRegularExpression(r".{0,200}"), self.context_hint)
+        )
+        self.context_hint.setAccessibleName(self.tr("Context hint"))
+        self.context_hint.setPlaceholderText(self.tr("Context hint"))
+        self.inspector_toggle = QPushButton(self.tr("Inspector"))
+        self.inspector_toggle.setCheckable(True)
+        choices = QHBoxLayout()
+        choices.addWidget(register_label_widget)
+        choices.addWidget(self.register_picker)
+        choices.addWidget(self.glossary_selector)
+        choices.addStretch()
+        choices.addWidget(self.inspector_toggle)
+        analysis = QHBoxLayout()
+        analysis.addWidget(self.notes_toggle)
+        analysis.addWidget(self.deep_toggle)
+        analysis.addWidget(self.context_hint, 1)
+        toolbar = QVBoxLayout()
+        toolbar.addLayout(choices)
+        toolbar.addLayout(analysis)
+        layout.addLayout(toolbar, 1, 0, 1, 2)
+
+        self.inspector = InspectorPanel()
+        editors = QSplitter()
+        editors.setChildrenCollapsible(False)
+        editors.addWidget(self.source_editor)
+        editors.addWidget(self.result_editor)
+        editors.addWidget(self.inspector)
+        editors.setStretchFactor(0, 2)
+        editors.setStretchFactor(1, 2)
+        editors.setStretchFactor(2, 1)
+        self.inspector.hide()
+        self.inspector_toggle.toggled.connect(self.inspector.setVisible)
+        self.inspector_toggle.toggled.connect(self._update_inspector)
+        layout.addWidget(editors, 2, 0, 1, 2)
 
         source_actions = QHBoxLayout()
         source_actions.addWidget(self.counter)
         source_actions.addStretch()
         source_actions.addWidget(self.translate_button)
-        layout.addLayout(source_actions, 2, 0)
-        layout.addWidget(self.copy_button, 2, 1, alignment=Qt.AlignmentFlag.AlignRight)
+        layout.addLayout(source_actions, 3, 0)
+        layout.addWidget(self.copy_button, 3, 1, alignment=Qt.AlignmentFlag.AlignRight)
 
         self._progress_row = QWidget()
         progress_layout = QHBoxLayout(self._progress_row)
@@ -283,7 +367,7 @@ class MainWindow(QMainWindow):
         progress_layout.addWidget(self.progress_label)
         progress_layout.addWidget(self.progress_bar, 1)
         progress_layout.addWidget(self.cancel_button)
-        layout.addWidget(self._progress_row, 3, 0, 1, 2)
+        layout.addWidget(self._progress_row, 4, 0, 1, 2)
         self._progress_row.hide()
 
         self._translate_shortcut = QShortcut(self)
@@ -297,6 +381,13 @@ class MainWindow(QMainWindow):
         self.swap_button.clicked.connect(self._swap)
         self.source_editor.textChanged.connect(self._update_counter)
         self.source_editor.textChanged.connect(self._clear_detected_source)
+        self.source_editor.textChanged.connect(self._clear_inspector)
+        self.source_editor.cursorPositionChanged.connect(partial(self._inspect_cursor, True))
+        self.result_editor.cursorPositionChanged.connect(partial(self._inspect_cursor, False))
+        self.source_editor.selectionChanged.connect(partial(self._inspect_cursor, True))
+        self.result_editor.selectionChanged.connect(partial(self._inspect_cursor, False))
+        self.source_editor.focused.connect(partial(self._inspect_cursor, True))
+        self.result_editor.focused.connect(partial(self._inspect_cursor, False))
         self.result_editor.textChanged.connect(self._update_copy)
         self.source_languages.currentIndexChanged.connect(self._clear_detected_source)
         self.target_languages.currentIndexChanged.connect(self._clear_detected_source)
@@ -306,6 +397,66 @@ class MainWindow(QMainWindow):
         self._update_copy()
         self._set_input_locked(False)
         self.source_editor.setFocus()
+
+    @property
+    def philology_options(self) -> TranslationOptions:
+        return TranslationOptions(
+            register=StylisticRegister(self.register_picker.currentData()),
+            analysis_tier=AnalysisTier.DEEP
+            if self.deep_toggle.isChecked()
+            else AnalysisTier.STANDARD,
+            style_context=self.context_hint.text(),
+            include_notes=self.notes_toggle.isChecked(),
+        )
+
+    def _clear_inspector(self) -> None:
+        self._annotations = None
+        self.inspector.clear()
+
+    def _set_annotations(
+        self, annotations: TranslationAnnotations | None, source: str, target: str
+    ) -> None:
+        if annotations is None or not annotations.segments:
+            self._clear_inspector()
+            return
+        self._annotations = annotations
+        self._source_starts = self._qt_starts(
+            source, [s.source_start for s in annotations.segments]
+        )
+        self._result_starts = self._qt_starts(
+            target, [s.target_start for s in annotations.segments]
+        )
+        self._inspect_source = True
+        if not self.inspector_toggle.isChecked() and any(s.notes for s in annotations.segments):
+            self.inspector_toggle.setChecked(True)
+        else:
+            self._update_inspector()
+
+    @staticmethod
+    def _qt_starts(text: str, starts: list[int]) -> list[int]:
+        # Qt cursor offsets count UTF-16 units and normalize Windows line endings.
+        previous = units = 0
+        positions = []
+        for start in starts:
+            units += chunker.utf16_len(text[previous:start].replace("\r\n", "\n"))
+            positions.append(units)
+            previous = start
+        return positions
+
+    def _inspect_cursor(self, source: bool) -> None:
+        self._inspect_source = source
+        self._update_inspector()
+
+    def _update_inspector(self) -> None:
+        annotations = self._annotations
+        if annotations is None or self.inspector.isHidden():
+            return
+        if self._inspect_source:
+            editor, starts = self.source_editor, self._source_starts
+        else:
+            editor, starts = self.result_editor, self._result_starts
+        index = max(0, bisect_right(starts, editor.textCursor().selectionStart()) - 1)
+        self.inspector.show_segment(index + 1, annotations.register, annotations.segments[index])
 
     def set_history(self, path: Path, *, enabled: bool, limit: int) -> None:
         self._history_path = path
@@ -392,6 +543,12 @@ class MainWindow(QMainWindow):
     @Slot()
     def exit_application(self) -> None:
         modal = QApplication.activeModalWidget()
+        if isinstance(modal, SelectionPopup):
+            if not self._exit_requested:
+                self._exit_requested = True
+                modal.finished.connect(self.exit_application, Qt.ConnectionType.QueuedConnection)
+                modal.reject()
+            return
         if modal is not None and modal is not self._error_dialog:
             self.restore_from_tray()
             return
@@ -439,6 +596,7 @@ class MainWindow(QMainWindow):
             self.target_languages.setCurrentIndex(target_index)
         self.source_editor.setPlainText(entry.source_text)
         self.result_editor.setPlainText(entry.target_text)
+        self._set_annotations(entry.annotations, entry.source_text, entry.target_text)
         self._provider_status.hide()
         self._reset_retry_status()
         self.statusBar().showMessage(self.tr("Opened translation from history."))
@@ -498,6 +656,8 @@ class MainWindow(QMainWindow):
         first_file = self._file is None
         self._file = source
         self._file_translations = None
+        self._file_notes = ()
+        self._clear_inspector()
         self._file_unsaved = False
         if first_file:
             self.source_editor.show_file_preview()
@@ -527,6 +687,8 @@ class MainWindow(QMainWindow):
             return
         self._file = None
         self._file_translations = None
+        self._file_notes = ()
+        self._clear_inspector()
         self._file_unsaved = False
         self.setWindowTitle(f"{APP_NAME} {__version__}")
         self.source_editor.restore_text_document()
@@ -578,7 +740,27 @@ class MainWindow(QMainWindow):
             )
             return
 
-        worker = FileIOWorker(partial(source.save, destination, translations))
+        operation: Callable[[], None] = partial(source.save, destination, translations)
+        if destination.suffix.lower() == ".docx" and any(self._file_notes):
+            options = QMessageBox(self)
+            options.setWindowTitle(self.tr("Word export options"))
+            options.setText(self.tr("Save the Word translation?"))
+            options.setStandardButtons(
+                QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Cancel
+            )
+            comments = QCheckBox(self.tr("Attach philological notes as Word comments"))
+            options.setCheckBox(comments)
+            if options.exec() != QMessageBox.StandardButton.Save:
+                return
+            if comments.isChecked():
+                operation = partial(
+                    source.save,
+                    destination,
+                    translations,
+                    segment_notes=self._file_notes,
+                    include_notes_comments=True,
+                )
+        worker = FileIOWorker(operation)
         worker.finished.connect(self._show_saved_file)
         worker.failed.connect(self._show_save_failure)
         self._start_file_operation(worker, self.tr("Saving translation…"))
@@ -665,8 +847,24 @@ class MainWindow(QMainWindow):
 
     def _update_glossary_actions(self) -> None:
         idle = self._thread is None
+        available = idle and self._term_cloud is not None
+        for control in (
+            self.register_picker,
+            self.notes_toggle,
+            self.deep_toggle,
+            self.context_hint,
+        ):
+            control.setEnabled(available)
         self.manage_glossaries_action.setEnabled(idle)
         active = self._active_glossary
+        self.glossary_selector.setEnabled(available and self._glossary_path is not None)
+        selection = (
+            self.tr("Glossary: {name}").format(name=active[0].name)
+            if active is not None and active[0].supports(*self.selected_languages)
+            else self.tr("Choose glossary…")
+        )
+        self.glossary_selector.setText(selection)
+        self.glossary_selector.setToolTip(selection)
         self.clear_glossary_action.setEnabled(idle and active is not None)
         self.clear_glossary_action.setText(
             self.tr("Clear glossary selection ({name})").format(name=active[0].name)
@@ -932,17 +1130,17 @@ class MainWindow(QMainWindow):
             and active[0].supports(source, target)
             else ()
         )
+        options = replace(
+            self.philology_options if self._term_cloud is not None else DEFAULT_TRANSLATION_OPTIONS,
+            glossary=saved_terms,
+            document_glossary=document_terms,
+        )
         if self._select_job is not None:
-            job = self._select_job(content, saved_terms, document_terms)
+            job = self._select_job(content, options)
         else:
             job = self._job
-            if job is not None and (saved_terms or document_terms):
-                job = replace(
-                    job,
-                    default_options=replace(
-                        job.default_options, glossary=saved_terms, document_glossary=document_terms
-                    ),
-                )
+            if job is not None and self._term_cloud is not None:
+                job = replace(job, default_options=options)
         if job is None:
             return
 
@@ -963,7 +1161,9 @@ class MainWindow(QMainWindow):
         worker.history_saving.connect(self._show_history_saving)
         worker.history_save_failed.connect(self._show_history_save_failure)
         self._file_translations = None
+        self._file_notes = ()
         self._file_unsaved = False
+        self._clear_inspector()
         self._rendered_chars = 0
         self._clear_detected_source()
         self.result_editor.clear()
@@ -1007,6 +1207,7 @@ class MainWindow(QMainWindow):
         self.source_editor.setReadOnly(locked or self._file is not None)
         self.source_languages.setEnabled(not locked)
         self.target_languages.setEnabled(not locked)
+        self._update_glossary_actions()
         self._update_translate()
         self._update_swap()
 
@@ -1113,7 +1314,17 @@ class MainWindow(QMainWindow):
             self._file_translations = result.translations
             self._file_unsaved = result.translations is not None
             result = result.preview
+            self._file_notes = result.segment_notes
         self._append_result(result.text)
+        if result.annotations is not None and not result.cancelled:
+            source = self._file
+            self._set_annotations(
+                result.annotations,
+                source.assemble(source.segments)
+                if source is not None
+                else _editor_text(self.source_editor),
+                result.text,
+            )
         detected = result.detected_source
         if (
             not result.cancelled

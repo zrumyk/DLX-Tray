@@ -16,10 +16,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Manage saved glossaries locally and import or export them as UTF-8 CSV or TSV.
 - Extract candidate terms from an open file or the editor with Cloud AI. Review, edit, and save
   the equivalents, then translate the same input with the approved terms.
+- Choose a stylistic register, glossary, analysis tier, and context hint from the translation
+  window. Inspect a segment's alternatives, idioms, grammar notes, and matched terminology.
+  History restores notes alongside the saved translation.
+- Open **Explain / Notes** after translating a selection to request Cloud AI explanations.
+  If deep analysis is unavailable for the token, the popup requests standard notes.
+- Attach philological notes as native Word comments when exporting DOCX or PDF translations
+  to Word.
 
 ### Changed
 - The official DeepL provider can translate adjacent uncached segments in a single request
   while preserving their order in the preview and exported file.
+- Cloud AI settings have a dedicated section with a masked token, quota check, and hybrid
+  threshold. The new controls and notes views are available in Ukrainian.
 
 ## [2.0.0] - 2026-11-28
 

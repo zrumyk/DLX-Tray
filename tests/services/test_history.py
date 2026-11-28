@@ -9,7 +9,15 @@ from pathlib import Path
 
 import pytest
 
-from dlx_tray.core.models import Language
+from dlx_tray.core.models import (
+    GlossaryEntry,
+    Language,
+    NoteKind,
+    PhilologicalNote,
+    SegmentAnnotation,
+    StylisticRegister,
+    TranslationAnnotations,
+)
 from dlx_tray.services.history import HistoryStore
 
 
@@ -21,6 +29,71 @@ def _add(store: HistoryStore, source: str, target: str = "") -> None:
         target_text=target,
         provider="dlx",
     )
+
+
+def test_migrates_v2_application_history_without_changing_existing_rows(tmp_path: Path) -> None:
+    path = tmp_path / "history.sqlite3"
+    original = (
+        41,
+        "2026-11-19T04:01:02+00:00",
+        "auto",
+        "UK",
+        "Old\r\ntext",
+        "Текст",
+        "x.txt",
+        "dlx",
+    )
+    with closing(sqlite3.connect(path)) as connection, connection:
+        connection.execute(
+            """CREATE TABLE history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT NOT NULL,
+                source_lang TEXT NOT NULL, target_lang TEXT NOT NULL, source_text TEXT NOT NULL,
+                target_text TEXT NOT NULL, file_name TEXT, provider TEXT NOT NULL
+            )"""
+        )
+        connection.execute("INSERT INTO history VALUES (?, ?, ?, ?, ?, ?, ?, ?)", original)
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        stores = list(pool.map(lambda _: HistoryStore(path, 5), range(4)))
+    with closing(sqlite3.connect(path)) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone() == (2,)
+        assert connection.execute("SELECT * FROM history").fetchone() == (*original, None)
+    (old,) = stores[0].search("OLD")
+    assert old.id == 41 and old.annotations is None
+    assert old.created_at.isoformat() == original[1]
+
+    annotations = TranslationAnnotations(
+        StylisticRegister.LITERARY,
+        (
+            SegmentAnnotation(
+                0,
+                0,
+                ("cloud_ai",),
+                (GlossaryEntry("Oxford", "Оксфорд"),),
+                (PhilologicalNote(NoteKind.GRAMMAR, "Узгодження"),),
+            ),
+        ),
+    )
+    stores[0].add(
+        source_lang=Language.EN,
+        target_lang=Language.UK,
+        source_text="Oxford",
+        target_text="Оксфорд",
+        provider="cloud_ai",
+        annotations=annotations,
+    )
+    new, unchanged = HistoryStore(path, 5).list()
+    assert new.id == 42 and new.annotations == annotations
+    assert unchanged == old
+
+
+def test_does_not_modify_newer_history_schema(tmp_path: Path) -> None:
+    path = tmp_path / "history.sqlite3"
+    with closing(sqlite3.connect(path)) as connection:
+        connection.execute("PRAGMA user_version = 3")
+    with pytest.raises(ValueError, match="Unsupported translation history schema"):
+        HistoryStore(path, 5)
+    with closing(sqlite3.connect(path)) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone() == (3,)
 
 
 def test_persists_translation_metadata(tmp_path: Path) -> None:

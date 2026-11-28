@@ -36,6 +36,8 @@ def test_report_keeps_safe_rotated_logs_and_only_attributes_matching_dlx(tmp_pat
         f"{log_prefix}Translation failed for chunk 2 (DlxForbiddenError)\n"
         f"{log_prefix}Translation failed for chunk 3 (DlxForbiddenError) PRIVATE_PAYLOAD\n"
         f"{log_prefix}DLX stopped (pid 13) PRIVATE_PAYLOAD\n"
+        f"{log_prefix}Cloud request https://test:CLOUD_PASSWORD@cloud.example/v1/me\n"
+        f"{log_prefix}Cloud authorization Bearer CLOUD_BEARER_FIXTURE\n"
         "continuation PRIVATE_PAYLOAD\n",
         encoding="utf-8",
     )
@@ -63,8 +65,9 @@ def test_report_keeps_safe_rotated_logs_and_only_attributes_matching_dlx(tmp_pat
     assert result.index("(pid 10)") < result.index("(pid 11)") < result.index("(pid 12)")
     assert "Translation failed for chunk 1 (DlxAuthError)" in result
     assert "Translation failed for chunk 2 (DlxForbiddenError)" in result
-    assert result.count("[redacted]") == 3
+    assert result.count("[redacted]") == 5
     assert "PRIVATE_PAYLOAD" not in result
+    assert "CLOUD_PASSWORD" not in result and "CLOUD_BEARER_FIXTURE" not in result
 
     replacement = b"synthetic replacement binary"
     binary.write_bytes(replacement)
