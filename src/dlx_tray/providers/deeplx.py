@@ -11,7 +11,7 @@ from typing import Any, Literal, Self
 
 import httpx
 
-from dlx_tray.core.chunker import HARD_MAX_UNITS, utf16_len
+from dlx_tray.core.chunker import DLX_MAX_UNITS, utf16_len
 from dlx_tray.core.diagnostics import DiagnosticTimeline, ProviderAttempt
 from dlx_tray.core.models import (
     DlxAuthError,
@@ -125,9 +125,9 @@ class DeeplxTranslator:
             raise ValueError(f"{source.value!r} is not a valid source language")
         batch = list(texts)
         units = sum(utf16_len(text) for text in batch if text.strip(_DLX_WHITESPACE))
-        if units > HARD_MAX_UNITS:
+        if units > DLX_MAX_UNITS:
             raise TextTooLongError(
-                f"DLX request has {units} UTF-16 units. The limit is {HARD_MAX_UNITS}."
+                f"DLX request has {units} UTF-16 units. The limit is {DLX_MAX_UNITS}."
             )
         payload = {
             "text": batch,

@@ -8,7 +8,7 @@ import httpx
 import pytest
 import respx
 
-from dlx_tray.core.chunker import HARD_MAX_UNITS
+from dlx_tray.core.chunker import DLX_MAX_UNITS
 from dlx_tray.core.diagnostics import DiagnosticTimeline, ProviderAttempt
 from dlx_tray.core.models import (
     DlxAuthError,
@@ -272,10 +272,10 @@ def test_malformed_success_is_unavailable(
 @pytest.mark.parametrize(
     "batch",
     [
-        ["\U0001f600" * (HARD_MAX_UNITS // 2) + "a"],
-        ["\U0001f600" * (HARD_MAX_UNITS // 4)] * 2 + ["a"],
-        ["\x1f" * (HARD_MAX_UNITS + 1)],
-        [" " * HARD_MAX_UNITS + "a"],
+        ["\U0001f600" * (DLX_MAX_UNITS // 2) + "a"],
+        ["\U0001f600" * (DLX_MAX_UNITS // 4)] * 2 + ["a"],
+        ["\x1f" * (DLX_MAX_UNITS + 1)],
+        [" " * DLX_MAX_UNITS + "a"],
     ],
 )
 def test_oversized_batch_sends_nothing(

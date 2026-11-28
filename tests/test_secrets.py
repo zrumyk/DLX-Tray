@@ -63,10 +63,20 @@ def test_replacing_key_does_not_leave_a_second_entry(monkeypatch: pytest.MonkeyP
     monkeypatch.setattr(secrets, "_credential_manager", lambda: nullcontext(vault))
 
     secrets.set_deepl_api_key("old:fx")
+    secrets.set_cloud_api_token("old")
     secrets.set_deepl_api_key(" new:fx ")
+    secrets.set_cloud_api_token(" new ")
     assert secrets.get_deepl_api_key() == "new:fx"
+    assert secrets.get_cloud_api_token() == "new"
+    assert secrets.get_cloud_api_token(" override ") == "override"
+    assert set(credentials) == {"DLX Tray", "DLX Tray Cloud"}
     del credentials["DLX Tray"]
     assert secrets.get_deepl_api_key() is None
+
+
+def test_delete_cloud_token_uses_its_own_target(vault: Mock) -> None:
+    secrets.delete_cloud_api_token()
+    vault.delete_password.assert_called_once_with("DLX Tray Cloud", "cloud_api_token")
 
 
 def test_set_key_preserves_another_username(vault: Mock) -> None:

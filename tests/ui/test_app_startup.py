@@ -175,7 +175,7 @@ def test_startup_migrates_request_delay_before_opening_the_window(
     ) -> int:
         assert not start_in_tray
         observed_delays.append(settings.request_delay)
-        assert json.loads(path.read_text(encoding="utf-8"))["settings_version"] == 1
+        assert json.loads(path.read_text(encoding="utf-8"))["settings_version"] == 2
         if len(observed_delays) == 1:
             settings.model_copy(update={"request_delay": 2.5}).save(changes_from=settings)
         return 0

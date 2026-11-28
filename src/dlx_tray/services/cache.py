@@ -9,24 +9,60 @@ from contextlib import closing, contextmanager
 from time import time_ns
 from typing import TYPE_CHECKING
 
-from dlx_tray.core.models import Language, TranslationResult
+from pydantic import TypeAdapter
+
+from dlx_tray.contracts.glossary_match import matched_glossary
+from dlx_tray.core.models import (
+    DEFAULT_TRANSLATION_OPTIONS,
+    Formality,
+    Language,
+    PhilologicalNote,
+    TranslationOptions,
+    TranslationResult,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
 
-    from dlx_tray.core.models import Formality
-
 log = logging.getLogger(__name__)
 MAX_ENTRIES = 50_000
 TTL_NS = 30 * 24 * 60 * 60 * 10**9
+_SCHEMA_VERSION = 1
+_NOTES = TypeAdapter(tuple[PhilologicalNote, ...])
 
 
 def translation_key(
-    provider: str, source: Language, target: Language, formality: Formality, text: str
+    provider: str,
+    source: Language,
+    target: Language,
+    formality: Formality,
+    text: str,
+    options: TranslationOptions = DEFAULT_TRANSLATION_OPTIONS,
 ) -> bytes:
+    if provider == "cloud_ai":
+        formality = Formality.DEFAULT
+    fields = (provider, source.value, target.value, formality.value, text)
+    terms = matched_glossary(text, options.glossary) if options.glossary else ()
+    # Keep the original digest for legacy translations with equivalent settings.
+    if (
+        provider == "cloud_ai"
+        or options.analysis_tier != DEFAULT_TRANSLATION_OPTIONS.analysis_tier
+        or options.register != DEFAULT_TRANSLATION_OPTIONS.register
+        or options.style_context
+        or options.include_notes
+        or terms
+    ):
+        fields += (
+            "v1",
+            options.analysis_tier.value,
+            options.register.value,
+            options.style_context,
+            str(options.include_notes),
+            *(value for pair in terms for value in pair),
+        )
     digest = hashlib.sha256()
-    for field in (provider, source.value, target.value, formality.value, text):
+    for field in fields:
         encoded = field.encode("utf-8", "surrogatepass")
         digest.update(len(encoded).to_bytes(8, "big"))
         digest.update(encoded)
@@ -40,6 +76,15 @@ class TranslationCache:
     @contextmanager
     def _connection(self) -> Iterator[sqlite3.Connection]:
         with closing(sqlite3.connect(self._path, timeout=1.0)) as connection, connection:
+            if connection.execute("PRAGMA user_version").fetchone()[0] < _SCHEMA_VERSION:
+                self._migrate(connection)
+            yield connection
+
+    @staticmethod
+    def _migrate(connection: sqlite3.Connection) -> None:
+        # Recheck after taking the write lock in case another process migrated first.
+        connection.execute("BEGIN IMMEDIATE")
+        if connection.execute("PRAGMA user_version").fetchone()[0] < _SCHEMA_VERSION:
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS translations (
@@ -57,7 +102,9 @@ class TranslationCache:
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS translations_expires ON translations (expires)"
             )
-            yield connection
+            connection.execute("ALTER TABLE translations ADD COLUMN notes TEXT")
+            connection.execute("PRAGMA user_version = 1")
+        connection.commit()
 
     def lookup(self, key: bytes, provider: str) -> TranslationResult | None:
         try:
@@ -71,14 +118,17 @@ class TranslationCache:
                         ?, (SELECT max(accessed) FROM translations) + 1
                     )
                     WHERE key = ? AND expires > ?
-                    RETURNING translation, detected_source
+                    RETURNING translation, detected_source, notes
                     """,
                     (now, key, now),
                 ).fetchone()
                 if row is not None:
-                    text, detected = row
+                    text, detected, notes = row
                     return TranslationResult(
-                        text, Language(detected) if detected else None, provider
+                        text,
+                        Language(detected) if detected else None,
+                        provider,
+                        _NOTES.validate_json(notes) if notes is not None else (),
                     )
         except (OSError, sqlite3.Error, ValueError) as exc:
             log.warning("Could not read translation cache (%s)", type(exc).__name__)
@@ -91,15 +141,25 @@ class TranslationCache:
             with self._connection() as connection:
                 connection.execute(
                     """
-                    INSERT INTO translations VALUES (?, ?, ?, ?, max(
+                    INSERT INTO translations
+                        (key, translation, detected_source, expires, accessed, notes)
+                    VALUES (?, ?, ?, ?, max(
                         ?, coalesce((SELECT max(accessed) FROM translations) + 1, 0)
-                    ))
+                    ), ?)
                     ON CONFLICT(key) DO UPDATE SET
                         translation = excluded.translation,
                         detected_source = excluded.detected_source,
-                        expires = excluded.expires, accessed = excluded.accessed
+                        expires = excluded.expires, accessed = excluded.accessed,
+                        notes = excluded.notes
                     """,
-                    (key, result.text, result.detected_source, now + TTL_NS, now),
+                    (
+                        key,
+                        result.text,
+                        result.detected_source,
+                        now + TTL_NS,
+                        now,
+                        _NOTES.dump_json(result.notes).decode() if result.notes else None,
+                    ),
                 )
                 connection.execute("DELETE FROM translations WHERE expires <= ?", (now,))
                 connection.execute(

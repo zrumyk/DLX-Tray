@@ -1,4 +1,4 @@
-"""Split texts into chunks that fit the DLX length limit and join translations back."""
+"""Split texts into chunks that fit a UTF-16 budget and join translations back."""
 
 from __future__ import annotations
 
@@ -10,8 +10,9 @@ from itertools import accumulate
 
 from dlx_tray.core.models import Chunk
 
-HARD_MAX_UNITS = 1500
-DEFAULT_MAX_UNITS = HARD_MAX_UNITS
+DLX_MAX_UNITS = 1_500
+HARD_MAX_UNITS = 20_000
+DEFAULT_MAX_UNITS = DLX_MAX_UNITS
 MIN_MAX_UNITS = 2  # every code point (an astral one costs 2 units) must fit into a chunk
 
 _PARAGRAPH, _LINE, _SENTENCE, _SPACE = range(4)
@@ -46,6 +47,7 @@ def paragraphs(text: str) -> list[Chunk]:
 
 def split_segment(text: str, max_units: int) -> list[Chunk]:
     """Keep a segment intact unless its translatable text exceeds the request limit."""
+    _validate_budget(max_units)
     content = text.strip()
     if utf16_len(content) > max_units:
         return split(text, max_units)
@@ -56,6 +58,12 @@ def split_segment(text: str, max_units: int) -> list[Chunk]:
     return pieces
 
 
+def _validate_budget(max_units: int) -> None:
+    if not MIN_MAX_UNITS <= max_units <= HARD_MAX_UNITS:
+        msg = f"max_units must be in [{MIN_MAX_UNITS}, {HARD_MAX_UNITS}], got {max_units}"
+        raise ValueError(msg)
+
+
 def split(text: str, max_units: int = DEFAULT_MAX_UNITS) -> list[Chunk]:
     """Split ``text`` into chunks of at most ``max_units`` UTF-16 units each.
 
@@ -64,9 +72,7 @@ def split(text: str, max_units: int = DEFAULT_MAX_UNITS) -> list[Chunk]:
     whitespace at a cut becomes the chunk's ``separator``. Leading whitespace of the text
     becomes an empty, non-translatable first chunk, so ``join`` restores the text exactly.
     """
-    if not MIN_MAX_UNITS <= max_units <= HARD_MAX_UNITS:
-        msg = f"max_units must be in [{MIN_MAX_UNITS}, {HARD_MAX_UNITS}], got {max_units}"
-        raise ValueError(msg)
+    _validate_budget(max_units)
     if not text:
         return []
 

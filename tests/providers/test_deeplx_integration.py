@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 import httpx
 import pytest
 
-from dlx_tray.core.chunker import HARD_MAX_UNITS, utf16_len
+from dlx_tray.core.chunker import DLX_MAX_UNITS, utf16_len
 from dlx_tray.core.diagnostics import DiagnosticTimeline, LocalCache, SharedResult
 from dlx_tray.core.models import (
     Chunk,
@@ -860,8 +860,8 @@ def test_job_does_not_retry_scripted_client_errors(
 
 
 def test_batch_at_limit_with_blank_entry(fake_dlx: FakeDLXFactory) -> None:
-    text = "\U0001f600" * (HARD_MAX_UNITS // 4)
-    blank = "\u2003" * (HARD_MAX_UNITS + 1)
+    text = "\U0001f600" * (DLX_MAX_UNITS // 4)
+    blank = "\u2003" * (DLX_MAX_UNITS + 1)
     with fake_dlx([]) as server, DeeplxTranslator(server.url, server.token) as translator:
         result = translator.translate([text, blank, text], Language.EN, Language.UK)
     assert result == [
@@ -875,8 +875,8 @@ def test_batch_at_limit_with_blank_entry(fake_dlx: FakeDLXFactory) -> None:
 def test_job_sends_exact_limit_and_splits_long_segments(
     fake_dlx: FakeDLXFactory, file_mode: bool
 ) -> None:
-    exact = "\U0001f600" * (HARD_MAX_UNITS // 2)
-    extra = "\U0001f642" * (HARD_MAX_UNITS // 2)
+    exact = "\U0001f600" * (DLX_MAX_UNITS // 2)
+    extra = "\U0001f642" * (DLX_MAX_UNITS // 2)
     text = f"{exact}\n\n{extra}x"
     requests: list[list[str]] = []
     translations: list[str] = []

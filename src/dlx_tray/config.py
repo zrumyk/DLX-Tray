@@ -22,17 +22,23 @@ from pydantic_settings import (
 
 from dlx_tray import APP_NAME
 from dlx_tray._file_lock import file_lock
-from dlx_tray.core.chunker import DEFAULT_MAX_UNITS, HARD_MAX_UNITS
-from dlx_tray.core.models import Formality, Language
+from dlx_tray.core.chunker import DEFAULT_MAX_UNITS, DLX_MAX_UNITS
+from dlx_tray.core.models import (
+    AnalysisTier,
+    Formality,
+    Language,
+    StylisticRegister,
+    TranslationOptions,
+)
 from dlx_tray.core.retry import DEFAULT_REQUEST_DELAY
 
 type UiLanguage = Literal["en", "uk"]
 type Theme = Literal["system", "light", "dark"]
 type LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR"]
-type ProviderMode = Literal["automatic", "official_only"]
+type ProviderMode = Literal["automatic", "cloud_only", "dlx_only", "official_only"]
 
 DEFAULT_SELECTION_HOTKEY = "Ctrl+C,C"
-_SETTINGS_VERSION = 1
+_SETTINGS_VERSION = 2
 _LEGACY_REQUEST_DELAY = 2.5
 
 
@@ -72,11 +78,16 @@ def _write_preferences(path: Path, data: dict[str, object]) -> None:
             temporary.unlink(missing_ok=True)
 
 
-def _migrate_unversioned_preferences(data: dict[str, object]) -> None:
-    if "settings_version" not in data:
+def _needs_migration(data: dict[str, object]) -> bool:
+    return "settings_version" not in data or data["settings_version"] == 1
+
+
+def _migrate_preferences(data: dict[str, object]) -> None:
+    if "settings_version" not in data and data.get("request_delay") == _LEGACY_REQUEST_DELAY:
+        data["request_delay"] = DEFAULT_REQUEST_DELAY
+    if _needs_migration(data):
         data["settings_version"] = _SETTINGS_VERSION
-        if data.get("request_delay") == _LEGACY_REQUEST_DELAY:
-            data["request_delay"] = DEFAULT_REQUEST_DELAY
+        data.pop("cloud_api_token", None)
 
 
 class Settings(BaseSettings):
@@ -95,11 +106,17 @@ class Settings(BaseSettings):
     target_lang: Language = Language.UK
     window_geometry: str | None = None
     provider_mode: ProviderMode = "automatic"
-    chunk_size: int = Field(default=DEFAULT_MAX_UNITS, ge=200, le=HARD_MAX_UNITS)
+    cloud_url: AnyHttpUrl | None = None
+    hybrid_dlx_threshold: int = Field(default=DLX_MAX_UNITS, ge=0, le=DLX_MAX_UNITS)
+    chunk_size: int = Field(default=DEFAULT_MAX_UNITS, ge=200, le=DLX_MAX_UNITS)
     request_delay: float = Field(default=DEFAULT_REQUEST_DELAY, ge=0, le=10)
     dlx_concurrency: int = Field(default=2, ge=1, le=2)
     retries: int = Field(default=3, ge=0)
     formality: Formality = Formality.DEFAULT
+    stylistic_register: StylisticRegister = StylisticRegister.NEUTRAL
+    analysis_tier: AnalysisTier = AnalysisTier.STANDARD
+    style_context: str = ""
+    include_notes: bool = False
     history_enabled: bool = True
     history_limit: int = Field(default=500, ge=1)
     cache_enabled: bool = True
@@ -108,6 +125,7 @@ class Settings(BaseSettings):
     selection_hotkey: str = DEFAULT_SELECTION_HOTKEY
 
     deepl_api_key: SecretStr | None = Field(default=None, exclude=True, repr=False)
+    cloud_api_token: SecretStr | None = Field(default=None, exclude=True, repr=False)
     deeplx_token: SecretStr | None = Field(default=None, exclude=True, repr=False)
     deeplx_url: AnyHttpUrl | None = Field(default=None, exclude=True, repr=False)
     deeplx_port: int | None = Field(default=None, ge=1, le=65535, exclude=True)
@@ -115,6 +133,11 @@ class Settings(BaseSettings):
 
     _overridden_preferences: set[str] = PrivateAttr(default_factory=set)
     _migration_error: str | None = PrivateAttr(default=None)
+
+    @field_validator("style_context")
+    @classmethod
+    def _normalize_style_context(cls, value: str) -> str:
+        return TranslationOptions(style_context=value).style_context
 
     @field_validator("selection_hotkey", mode="before")
     @classmethod
@@ -200,21 +223,23 @@ class Settings(BaseSettings):
         overrides = EnvSettingsSource.__call__(dotenv) | EnvSettingsSource(cls)()
         overrides.pop("settings_version", None)
         data = _read_preferences(path)
-        if migrate and "settings_version" not in data:
+        if migrate and _needs_migration(data):
             try:
                 path.parent.mkdir(parents=True, exist_ok=True)
                 with file_lock(path.with_name(f"{path.name}.lock")):
                     data = _read_preferences(path)
-                    if "settings_version" not in data:
-                        _migrate_unversioned_preferences(data)
+                    if _needs_migration(data):
+                        _migrate_preferences(data)
                         settings = cls._with_overrides(data, overrides)
                         _write_preferences(path, data)
                         return settings
             except OSError as exc:
-                _migrate_unversioned_preferences(data)
+                _migrate_preferences(data)
                 settings = cls._with_overrides(data, overrides)
                 settings._migration_error = type(exc).__name__
                 return settings
+        if data.get("settings_version") == 1:
+            _migrate_preferences(data)
         return cls._with_overrides(data, overrides)
 
     @classmethod
@@ -240,7 +265,7 @@ class Settings(BaseSettings):
             if preserve or self._migration_error is not None:
                 existing = _read_preferences(path)
                 if self._migration_error is not None:
-                    _migrate_unversioned_preferences(existing)
+                    _migrate_preferences(existing)
                     saved["settings_version"] = existing["settings_version"]
                 saved.update({name: existing[name] for name in preserve & existing.keys()})
 

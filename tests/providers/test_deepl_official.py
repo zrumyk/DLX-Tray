@@ -18,6 +18,7 @@ from dlx_tray.core.models import (
     TranslationError,
     TranslationResult,
 )
+from dlx_tray.core.pipeline import TranslationJob
 from dlx_tray.providers.base import Translator
 from dlx_tray.providers.deepl_official import DeepLOfficialTranslator
 
@@ -103,6 +104,22 @@ def test_routes_by_key_and_pairs_results_in_order(send: MagicMock, key: str, hos
     assert "source_lang" not in payload
     assert payload["target_lang"] == "DE"
     assert payload["formality"] == "more"
+
+
+def test_official_job_batches_file_segments_without_losing_alignment(send: MagicMock) -> None:
+    send.return_value = _response(200, {"translations": [{"text": "Eins"}, {"text": "Zwei"}]})
+    translator = DeepLOfficialTranslator("test-key")
+    output: list[str] = []
+    try:
+        job = TranslationJob(translator=translator)
+        job.run(
+            "", Language.EN, Language.DE, file_segments=["One", "Two"], on_segment=output.append
+        )
+    finally:
+        translator.close()
+    assert output == ["Eins", "Zwei"]
+    send.assert_called_once()
+    assert json.loads(send.call_args.args[0].body)["text"] == ["One", "Two"]
 
 
 @pytest.mark.parametrize("formality", list(Formality))

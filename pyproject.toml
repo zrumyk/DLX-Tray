@@ -109,6 +109,7 @@ branch = true
 
 [tool.coverage.report]
 include = [
+    "*/dlx_tray/contracts/*",
     "*/dlx_tray/core/*",
     "*/dlx_tray/providers/*",
     "*/dlx_tray/services/*",
