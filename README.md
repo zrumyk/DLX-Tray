@@ -182,7 +182,7 @@ Requirements: Windows 10 version 1809 or later or Windows 11 x64, Python 3.12,
 ```powershell
 git clone https://github.com/zrumyk/DLX-Tray.git
 cd DLX-Tray
-uv sync --all-groups
+uv sync --locked
 uv run python scripts/fetch_deeplx.py   # builds the pinned DLX binary into vendor/ on first run
 uv run dlx-tray
 ```
@@ -205,7 +205,7 @@ uv run pytest -k performance
 uv run --isolated --no-dev --with pip-licenses python scripts/check_licenses.py
 uv run ruff check --fix  # lint
 uv run ruff format       # format
-uv run pyright           # strict/standard static type check
+uv run pyright           # standard static type check
 uv run pre-commit install
 ```
 
