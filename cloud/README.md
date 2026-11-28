@@ -12,8 +12,10 @@ docker build -f cloud/Dockerfile -t dlx-cloud .
 docker run --rm -p 127.0.0.1:8080:8080 -e PORT=8080 dlx-cloud
 ```
 
-In a second terminal, `Invoke-RestMethod http://127.0.0.1:8080/healthz` should return
-`{"status":"ok"}`. The health endpoint checks the process. The authenticated routes need the
+In a second terminal, `Invoke-RestMethod http://127.0.0.1:8080/health` should return
+`{"status":"ok"}`. The health endpoint checks the process. Use `/health` on public
+Cloud Run URLs because their frontend can intercept `/healthz`. Both paths work
+for container-local probes. The authenticated routes need the
 credentials below and return 503 when either secret is absent. For a credential-free test of the
 whole API, run `uv run --locked pytest tests/cloud --cov=dlx_cloud --cov-fail-under=85` from the
 repository root.

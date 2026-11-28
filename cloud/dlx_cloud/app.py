@@ -132,6 +132,7 @@ def create_app(settings: CloudSettings | None = None, services: Services | None 
             )
         return response
 
+    @instance.get("/health")
     @instance.get("/healthz")
     def health() -> dict[str, Literal["ok"]]:
         return {"status": "ok"}
