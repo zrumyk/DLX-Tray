@@ -22,7 +22,6 @@ from dlx_tray.contracts.cloud_v1 import (
     TranslateRequest,
     TranslateResponse,
 )
-from dlx_tray.contracts.glossary_match import matched_glossary
 from dlx_tray.core.models import AnalysisTier, StylisticRegister
 
 from .cache import style_context
@@ -78,8 +77,9 @@ def unavailable() -> CloudError:
 
 
 class Gemini:
-    def __init__(self, interactions: Interactions) -> None:
+    def __init__(self, interactions: Interactions, max_input_bytes: int) -> None:
         self._interactions = interactions
+        self._max_input_bytes = max_input_bytes
 
     def _generate[T: BaseModel](
         self,
@@ -93,7 +93,9 @@ class Gemini:
         reserve: Callable[[], MeResponse],
     ) -> tuple[T, MeResponse]:
         deep = tier is AnalysisTier.DEEP
-        payload = json.dumps(data, ensure_ascii=False)
+        payload = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
+        if len(payload.encode("utf-8")) > self._max_input_bytes:
+            raise CloudError(413, ErrorCode.PAYLOAD_TOO_LARGE, "Expanded model input is too large.")
         response_format = {
             "type": "text",
             "mime_type": "application/json",
@@ -122,12 +124,13 @@ class Gemini:
                 pass
             except (APIError, errors.APIError) as exc:
                 status = exc.status_code if isinstance(exc, APIError) else exc.code
-                LOGGER.warning("Gemini request failed (%s)", status)
-                if status == 429:
-                    raise CloudError(
-                        429, ErrorCode.RATE_LIMITED, "Gemini rate limit reached."
-                    ) from None
-                raise unavailable() from None
+                if status is None or not 200 <= status < 300:
+                    LOGGER.warning("Gemini request failed (%s)", status)
+                    if status == 429:
+                        raise CloudError(
+                            429, ErrorCode.RATE_LIMITED, "Gemini rate limit reached."
+                        ) from None
+                    raise unavailable() from None
             LOGGER.warning("Invalid Gemini response (attempt %d)", attempt + 1)
         raise unavailable()
 
@@ -135,6 +138,7 @@ class Gemini:
         self,
         request: TranslateRequest,
         segments: list[SourceSegment],
+        glossaries: dict[int, tuple[tuple[str, str], ...]],
         model: str,
         reserve: Callable[[], MeResponse],
     ) -> tuple[list[TranslatedSegment], MeResponse]:
@@ -154,7 +158,7 @@ class Gemini:
                 "segments": [
                     {
                         **segment.model_dump(),
-                        "glossary": matched_glossary(segment.text, request.glossary),
+                        "glossary": glossaries[segment.index],
                     }
                     for segment in segments
                 ],

@@ -10,6 +10,7 @@ from dlx_cloud.app import create_app
 from dlx_cloud.cache import segment_key
 from dlx_cloud.config import CloudSettings
 from dlx_tray.contracts.cloud_v1 import SourceSegment, TranslateRequest
+from dlx_tray.contracts.glossary_match import matched_glossary
 from dlx_tray.core.chunker import utf16_len
 from dlx_tray.core.models import StylisticRegister
 
@@ -37,8 +38,9 @@ def test_anonymous_cache_hits_misses_and_expiry(harness: Harness, http: TestClie
     result = http.post("/v1/translate", headers=headers(second), json=mixed)
     assert result.status_code == 200, result.text
     assert result.headers["X-Cloud-Cache"] == "mixed"
-    assert result.headers["X-Quota-Daily-Remaining"] == str(250_000 - utf16_len(text))
-    assert result.headers["X-Quota-Monthly-Remaining"] == str(3_000_000 - utf16_len(text))
+    charged = utf16_len(text) + utf16_len("Private context")
+    assert result.headers["X-Quota-Daily-Remaining"] == str(250_000 - charged)
+    assert result.headers["X-Quota-Monthly-Remaining"] == str(3_000_000 - charged)
     assert [(s["index"], s["cached"]) for s in result.json()["segments"]] == [(2, False), (0, True)]
 
     final = http.post("/v1/translate", headers=headers(first), json=mixed)
@@ -49,7 +51,7 @@ def test_anonymous_cache_hits_misses_and_expiry(harness: Harness, http: TestClie
         {"index": 2, "text": text, "glossary": []}
     ]
     assert harness.services.tokens.inspect(first_key)[1] == (6, 6)
-    assert harness.services.tokens.inspect(second_key)[1] == (utf16_len(text), utf16_len(text))
+    assert harness.services.tokens.inspect(second_key)[1] == (charged, charged)
     docs = harness.db.data["translation_cache"]
     assert len(docs) == 2 and all(len(key) == 64 for key in docs)
     for doc in docs.values():
@@ -93,7 +95,10 @@ def test_cache_key_scope() -> None:
     }
 
     def key(model: str = "model", **changes: object) -> str:
-        return segment_key(TranslateRequest.model_validate(fields | changes), segment, model)
+        request = TranslateRequest.model_validate(fields | changes)
+        return segment_key(
+            request, segment, model, matched_glossary(segment.text, request.glossary)
+        )
 
     baseline = key()
     assert key(context_before=["Other context"], style_context="era") == baseline
@@ -252,6 +257,25 @@ def test_quota_gate_applies_to_retry_but_not_cache_hits(harness: Harness, http: 
     assert len(harness.sdk.calls) == 2
 
 
+def test_expanded_glossary_input_is_limited_and_metered(harness: Harness, http: TestClient) -> None:
+    token, key = harness.issue(daily_char_limit=1)
+    payload = {
+        "target_lang": "UK",
+        "segments": [{"index": 0, "text": "S"}],
+        "glossary": [{"source_term": "S", "target_term": "X" * 300_000}],
+    }
+    result = http.post("/v1/translate", json=payload, headers=headers(token))
+    assert result.status_code == 429
+    assert result.json()["code"] == "quota_exceeded"
+
+    payload["segments"].append({"index": 1, "text": "Second S"})
+    result = http.post("/v1/translate", json=payload, headers=headers(token))
+    assert result.status_code == 413
+    assert result.json()["code"] == "payload_too_large"
+    assert harness.services.tokens.inspect(key)[1] == (0, 0)
+    assert not harness.sdk.calls
+
+
 @pytest.mark.parametrize("path", ["/v1/translate", "/v1/extract-terms"])
 def test_body_limits_for_declared_and_streamed_payloads(harness: Harness, path: str) -> None:
     settings = CloudSettings(max_body_size=64)
@@ -323,6 +347,66 @@ def test_verbatim_source_echo_is_returned_without_persisting(
     assert not harness.db.data["translation_cache"]
 
 
+@pytest.mark.parametrize(
+    "private",
+    ["A private paragraph", "A neighbouring segment", "Private glossary target"],
+)
+def test_mixed_batch_echo_does_not_leak_to_another_token(
+    harness: Harness, http: TestClient, private: str
+) -> None:
+    first, _ = harness.issue()
+    second, _ = harness.issue()
+    harness.sdk.queue.extend(
+        [
+            output((1, "Previous translation")),
+            json.dumps(
+                {
+                    "segments": [
+                        {
+                            "index": 3,
+                            "text": "Initial translation",
+                            "notes": [{"kind": "grammar", "text": f"Details about {private}"}],
+                        },
+                        {"index": 4, "text": "Private glossary target"},
+                    ]
+                }
+            ),
+            output((3, "Independent translation")),
+        ]
+    )
+    cached_segment = {"index": 1, "text": "Previously translated"}
+    anchor = {"index": 3, "text": "Shared anchor"}
+    options = {"target_lang": "UK", "include_notes": True}
+    warm = http.post(
+        "/v1/translate", headers=headers(first), json={**options, "segments": [cached_segment]}
+    )
+    assert warm.status_code == 200
+    payload = {
+        **options,
+        "segments": [
+            cached_segment,
+            anchor,
+            {"index": 4, "text": "A neighbouring segment"},
+        ],
+        "context_before": ["A private paragraph"],
+        "glossary": [
+            {"source_term": "neighbouring segment", "target_term": "Private glossary target"}
+        ],
+    }
+    initial = http.post("/v1/translate", headers=headers(first), json=payload)
+    assert initial.status_code == 200
+    assert initial.headers["X-Cloud-Cache"] == "mixed"
+    assert private in initial.json()["segments"][1]["notes"][0]["text"]
+    assert len(harness.db.data["translation_cache"]) == 2
+    response = http.post(
+        "/v1/translate", headers=headers(second), json={**options, "segments": [anchor]}
+    )
+    assert response.status_code == 200
+    assert response.headers["X-Cloud-Cache"] == "miss"
+    assert response.json()["segments"][0]["text"] == "Independent translation"
+    assert private not in response.text
+
+
 def test_cache_faults_are_safe_misses(
     harness: Harness, http: TestClient, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -336,7 +420,7 @@ def test_cache_faults_are_safe_misses(
     harness.db.read_errors.clear()
     harness.db.write_errors.clear()
     request = TranslateRequest.model_validate(DEFAULT_REQUEST)
-    key = segment_key(request, request.segments[0], harness.settings.model_standard)
+    key = segment_key(request, request.segments[0], harness.settings.model_standard, ())
     harness.db.data["translation_cache"][key] = {
         "translation": [],
         "expires_at": harness.clock.now + timedelta(days=1),

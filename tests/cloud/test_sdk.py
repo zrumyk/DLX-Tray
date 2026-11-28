@@ -19,7 +19,7 @@ def test_gemini_sdk_wire_and_startup(
 ) -> None:
     issued, key = harness.issue()
     calls: list[dict] = []
-    statuses = deque((429, 503, 200))
+    statuses = deque((429, 503, 200, 200))
 
     def upstream(request: httpx2.Request) -> httpx2.Response:
         assert request.method == "POST"
@@ -29,6 +29,8 @@ def test_gemini_sdk_wire_and_startup(
         status = statuses.popleft()
         if status != 200:
             return httpx2.Response(status, json={"error": {"message": f"private error {issued}"}})
+        if statuses:
+            return httpx2.Response(200, text="Malformed upstream body")
         text = json.dumps({"segments": [{"index": 3, "text": "Wire translation"}]})
         return httpx2.Response(
             200,
@@ -57,8 +59,8 @@ def test_gemini_sdk_wire_and_startup(
             assert response.status_code == status, response.text
         assert response.json()["segments"][0]["text"] == "Wire translation"
     assert harness.db.closes == 1
-    assert len(calls) == 3 and not statuses
-    assert harness.services.tokens.inspect(key)[1] == (18, 18)
+    assert len(calls) == 4 and not statuses
+    assert harness.services.tokens.inspect(key)[1] == (24, 24)
     assert issued not in caplog.text
     for body in calls:
         assert body["model"] == "gemini-4-hydrogen-test"

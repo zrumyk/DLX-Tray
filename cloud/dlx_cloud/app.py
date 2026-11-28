@@ -26,11 +26,12 @@ from dlx_tray.contracts.cloud_v1 import (
     TranslateRequest,
     TranslateResponse,
 )
+from dlx_tray.contracts.glossary_match import matched_glossary
 from dlx_tray.core.chunker import utf16_len
 from dlx_tray.core.models import AnalysisTier
 
 from .auth import TokenStore, invalid_token
-from .cache import SegmentCache, segment_key
+from .cache import SegmentCache, segment_key, style_context
 from .config import CloudSettings
 from .errors import CloudError
 from .gemini import Gemini, Interactions, create_client, unavailable
@@ -100,7 +101,7 @@ def create_app(settings: CloudSettings | None = None, services: Services | None 
                 instance.state.services = Services(
                     TokenStore(db, pepper),
                     SegmentCache(db, settings.cache_ttl_days),
-                    Gemini(cast(Interactions, client.interactions)),
+                    Gemini(cast(Interactions, client.interactions), settings.max_body_size),
                 )
                 yield
         finally:
@@ -148,24 +149,52 @@ def create_app(settings: CloudSettings | None = None, services: Services | None 
         model = settings.model_for(tier)
         results: dict[int, TranslatedSegment] = {}
         misses: list[SourceSegment] = []
-        missing_keys: dict[int, tuple[str, str]] = {}
+        missing_keys: dict[int, str] = {}
+        glossaries: dict[int, tuple[tuple[str, str], ...]] = {}
         for segment in request.segments:
-            key = segment_key(request, segment, model)
+            glossary = matched_glossary(segment.text, request.glossary)
+            key = segment_key(request, segment, model, glossary)
             hit = services.cache.get(key, segment.index)
             if hit is None:
-                missing_keys[segment.index] = key, segment.text
+                missing_keys[segment.index] = key
+                glossaries[segment.index] = glossary
                 misses.append(segment)
             else:
                 results[segment.index] = hit
 
         if misses:
-            units = sum(utf16_len(segment.text) for segment in misses)
-            translated, remaining = services.gemini.translate(
-                request, misses, model, lambda: services.tokens.reserve(token, tier, units)
+            hint = style_context(request)
+            units = (
+                sum(utf16_len(segment.text) for segment in misses)
+                + sum(map(utf16_len, request.context_before))
+                + utf16_len(hint)
+                + sum(
+                    utf16_len(source) + utf16_len(target)
+                    for pairs in glossaries.values()
+                    for source, target in pairs
+                )
             )
+            translated, remaining = services.gemini.translate(
+                request,
+                misses,
+                glossaries,
+                model,
+                lambda: services.tokens.reserve(token, tier, units),
+            )
+            private_inputs = {segment.text.strip() for segment in misses}
+            private_inputs.update(text.strip() for text in request.context_before)
+            if hint:
+                private_inputs.add(hint)
+            private_inputs.update(source for pairs in glossaries.values() for source, _ in pairs)
+            batch_targets = {target for pairs in glossaries.values() for _, target in pairs}
             for result in translated:
-                key, source = missing_keys[result.index]
-                services.cache.put(key, result, tier, source)
+                expected_targets = {target for _, target in glossaries[result.index]}
+                services.cache.put(
+                    missing_keys[result.index],
+                    result,
+                    tier,
+                    private_inputs | (batch_targets - expected_targets),
+                )
                 results[result.index] = result
         else:
             remaining = services.tokens.remaining(token, tier)

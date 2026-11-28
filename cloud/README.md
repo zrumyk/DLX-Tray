@@ -70,12 +70,15 @@ Send the personal token in the `Authorization: Bearer …` header of `/v1` reque
 Both POST endpoints return `X-Quota-Daily-Remaining` and `X-Quota-Monthly-Remaining`
 on success. Quotas reset at UTC day and month boundaries. Shared cache hits cost zero quota.
 Each Gemini dispatch, including the single retry of a malformed response, reserves its source
-UTF-16 units before the call. Requests rejected before dispatch cost zero quota.
+UTF-16 units and those of any forwarded context, style hint, and glossary entries before the
+call. The configured body limit also caps the expanded input sent to Gemini. Requests
+rejected before dispatch cost zero quota.
 
 Gemini Interactions use `store=False`. Shared Firestore documents contain translated output,
 notes, language and model-tier metadata, and timestamps under a SHA-256 key. The cache omits
-caller identity and source fields. Results containing a complete verbatim copy of their input
-segment bypass the cache.
+caller identity and source fields. Results containing a complete verbatim copy of submitted
+source or context passages bypass the cache. A glossary target can be cached for a result
+whose cache key incorporates that glossary mapping.
 
 See the [Gemini Interactions API](https://aistudio.google.com/docs/interactions-overview) and the
 [Firestore TTL guide](https://docs.cloud.google.com/firestore/native/docs/ttl).

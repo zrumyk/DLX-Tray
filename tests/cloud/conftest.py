@@ -75,12 +75,13 @@ def harness() -> Harness:
     client = cast(Client, db)
     sdk = FakeInteractions()
     clock = Clock()
+    settings = CloudSettings()
     services = Services(
         TokenStore(client, PEPPER, now=clock.utc_now, monotonic=clock.monotonic),
         SegmentCache(client, 60, now=clock.utc_now),
-        Gemini(sdk),
+        Gemini(sdk, settings.max_body_size),
     )
-    return Harness(db, sdk, clock, services, CloudSettings())
+    return Harness(db, sdk, clock, services, settings)
 
 
 @pytest.fixture

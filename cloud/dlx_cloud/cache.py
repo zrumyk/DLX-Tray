@@ -12,13 +12,12 @@ from google.api_core.exceptions import GoogleAPIError
 from pydantic import ValidationError
 
 from dlx_tray.contracts.cloud_v1 import TranslatedSegment, TranslateRequest
-from dlx_tray.contracts.glossary_match import matched_glossary
 from dlx_tray.core.models import AnalysisTier
 
 from .auth import utc_now
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterable
 
     from google.cloud.firestore import Client
 
@@ -32,7 +31,12 @@ def style_context(request: TranslateRequest) -> str:
     return request.style_context.strip()
 
 
-def segment_key(request: TranslateRequest, segment: SourceSegment, model: str) -> str:
+def segment_key(
+    request: TranslateRequest,
+    segment: SourceSegment,
+    model: str,
+    glossary: tuple[tuple[str, str], ...],
+) -> str:
     hasher = sha256()
     for value in (
         PROMPT_SCHEMA_VERSION,
@@ -42,7 +46,7 @@ def segment_key(request: TranslateRequest, segment: SourceSegment, model: str) -
         request.target_lang,
         request.stylistic_register,
         style_context(request),
-        json.dumps(matched_glossary(segment.text, request.glossary), ensure_ascii=False),
+        json.dumps(glossary, ensure_ascii=False),
         str(request.include_notes),
         segment.text,
     ):
@@ -83,10 +87,16 @@ class SegmentCache:
             LOGGER.warning("Invalid segment cache entry")
             return None
 
-    def put(self, key: str, result: TranslatedSegment, tier: AnalysisTier, source: str) -> None:
-        # Retain the API result for the caller even when it echoes a complete source segment.
-        source = source.strip()
-        if source in result.text or any(source in note.text for note in result.notes):
+    def put(
+        self,
+        key: str,
+        result: TranslatedSegment,
+        tier: AnalysisTier,
+        private_inputs: Iterable[str],
+    ) -> None:
+        # A model may copy prompt inputs into one of its output fields.
+        output = [result.text, *(note.text for note in result.notes)]
+        if any(value in field for value in private_inputs for field in output):
             return
         now = self._now()
         try:
