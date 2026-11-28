@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [3.0.0] - 2026-11-28
+
 ### Added
 - Choose **DLX only** in Settings to keep translations on the configured DLX provider.
 - Added the self-hosted Cloud AI proxy for team translation and term extraction, with personal
@@ -248,7 +250,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   pre-commit hooks and CI on Windows.
 - Script to download the pinned DLX v1.3.1 binary with SHA-256 verification.
 
-[Unreleased]: https://github.com/zrumyk/DLX-Tray/compare/v2.0.0...HEAD
+[Unreleased]: https://github.com/zrumyk/DLX-Tray/compare/v3.0.0...HEAD
+[3.0.0]: https://github.com/zrumyk/DLX-Tray/compare/v2.0.0...v3.0.0
 [2.0.0]: https://github.com/zrumyk/DLX-Tray/compare/v1.0.0...v2.0.0
 [1.0.0]: https://github.com/zrumyk/DLX-Tray/compare/v0.9.0...v1.0.0
 [0.9.0]: https://github.com/zrumyk/DLX-Tray/compare/v0.8.0...v0.9.0

@@ -1,14 +1,11 @@
 # DLX Tray
 
-A desktop translator for Windows built with Python 3.12 and PySide6. **DLX Tray v2.0** translates
-long texts and documents in chunks using a bundled [DLX](https://github.com/OwO-Network/DLX)
-(formerly DeepLX) server with optional official DeepL API fallback. On the **v3.0** track, DLX Tray
-is evolving into a **hybrid philological translator** combining local DLX, Official DeepL, and a
-lightweight multi-user **Google Cloud Run + Firestore + Gemini API** backend tailored for philology
-students and translators.
+A desktop translator for Windows built with Python 3.12 and PySide6. DLX Tray translates
+text and documents with bundled [DLX](https://github.com/OwO-Network/DLX), the official DeepL API,
+or a self-hosted Cloud AI proxy. Use Cloud AI for stylistic registers, document term extraction,
+and philological notes.
 
-> **Windows installer (v2.0.0 stable):** Download the latest published `DLX-Tray-Setup-X.Y.Z.exe`
-> from the [Releases](https://github.com/zrumyk/DLX-Tray/releases) page.
+> Download the latest Windows installer from the [Releases](https://github.com/zrumyk/DLX-Tray/releases) page.
 
 ![DLX Tray showing English input and Ukrainian output side by side](.github/screenshots/translation.png)
 
@@ -16,16 +13,7 @@ The screenshot uses an example translation from a local test server.
 
 ---
 
-## Release Status: v2.0 Stable vs. v3.0 Next-Generation
-
-| Track | Status | Summary |
-|---|---|---|
-| **v2.0.0** | **Available now** ([Releases](https://github.com/zrumyk/DLX-Tray/releases)) | Local bundled DLX + Official DeepL API fallback, TXT/DOCX/PDF file translation, local SQLite segment cache & history, system tray, `Ctrl+C,C` selection popup, Windows autostart, English/Ukrainian UI. |
-| **v3.0.0** | **In development** | Hybrid 3-provider routing (`DLX` + `Cloud AI Proxy` + `Official DeepL`), adaptive LLM context blocks & parallelism, philological registers (incl. *підрядник*), two-pass document glossaries, philological notes Inspector & DOCX comments, and a shared Cloud Run + Firestore + Gemini 4 backend. |
-
----
-
-## Current Features (v2.0.0 Stable Release)
+## Features
 
 ### Desktop integration and workflow
 - Keep translations running in the Windows notification area when you minimize or close the window.
@@ -45,10 +33,11 @@ The screenshot uses an example translation from a local test server.
   while keeping completed work.
 - Start and stop the bundled DLX server automatically on a free localhost port, with live startup
   and active-provider status in the status bar.
-- Choose **Automatic** mode (local DLX with per-chunk fallback to your **Official DeepL API** Free
-  or Pro key on rate limits/outages) or **Official DeepL API only** mode.
-- Split long input cleanly at paragraph, line, sentence, and word boundaries into chunks of up to
-  `1,500` UTF-16 code units, preserving exact whitespace and line-ending separators on reassembly.
+- Choose **Automatic**, **Cloud AI only**, **DLX only**, or **Official DeepL API only**.
+  Automatic uses the available providers according to your input and settings.
+- Split long input at paragraph, line, sentence, and word boundaries, preserving whitespace
+  and line endings when reassembling the result. DLX requests use chunks of up to `1,500`
+  UTF-16 code units.
 - Reuse completed paragraph and file-segment translations from a local 30-day SQLite cache, share
   overlapping in-flight chunk requests, pair small neighbouring DLX chunks (`<= 750` units), and
   dispatch up to **2 concurrent DLX requests** while keeping preview output in strict input order.
@@ -69,13 +58,14 @@ The screenshot uses an example translation from a local test server.
 
 ---
 
-## Install (v2.0.0)
+## Install
 
 1. On Windows 10 version 1809 or later or Windows 11 x64, download the latest
    `DLX-Tray-Setup-X.Y.Z.exe` from [Releases](https://github.com/zrumyk/DLX-Tray/releases).
 2. Run Setup for your Windows account. Select the desktop shortcut during setup if you want one.
 3. Open **DLX Tray** from Start. Enter text, select a target language, and choose **Translate**
-   or press **Ctrl+Enter**. In automatic mode, wait for **DLX ready** before translating.
+   or press **Ctrl+Enter**. With the default bundled DLX setup, wait for **DLX ready** before
+   translating.
 
 To upgrade, close DLX Tray and run the newer installer over your existing installation. Setup
 preserves your settings, credentials, and translation history.
@@ -97,71 +87,46 @@ Clear the checkbox and save to remove the startup entry. Windows can also disabl
 
 ---
 
-## Next-Generation Architecture (v3.0 — In Development)
+## Cloud AI and philological translation
 
-> [!NOTE]
-> The capabilities in this section represent the **approved v3.0 architecture currently in active
-> development** and are not yet included in the published `v2.0.0` installer.
+Cloud AI requires a server URL and a team token. Enter both in **Settings → Cloud AI**, then
+check your remaining quota with **Test Cloud AI token**. Teams can deploy their own proxy using
+the [Cloud AI service guide](cloud/README.md).
 
-DLX Tray v3.0 expands the Python 3.12 desktop client with a lightweight, self-hosted team proxy on
-**Google Cloud Run + Cloud Firestore + Google Gemini API**, turning the app into a hybrid
-translation environment for **philology students, literary/academic translators, and small teams**:
+- **Automatic routing.** Short neutral text starts with bundled DLX and can fall back to Cloud
+  AI and then the official DeepL API if configured. Documents, longer text, and philological
+  requests route to Cloud AI when configured.
+- **Context blocks.** The standard tier uses blocks of up to 12,000 UTF-16 units across up to
+  three workers. Deep analysis uses up to 8,000 units across two workers. Both tiers stream
+  results in source order.
+- **Stylistic registers.** Choose Neutral, Literary, Academic, Journalistic, Official,
+  or Philological crib (Підрядник). Add a context hint for the period, domain, or audience.
 
-1. **Hybrid Three-Provider Pipeline (`DLX` + `Cloud AI` + `Official DeepL`):**
-   - Keeps local bundled **DLX** as the zero-cost, low-latency engine for everyday snippets and
-     `Ctrl+C,C` selection popups, with smart automatic fallback (`DLX → Cloud AI → Official DeepL`)
-     when DLX hits HTTP 429 rate limits.
-   - Routes whole documents (`.txt`, `.docx`, `.pdf`), long texts, and philological workflows
-     directly to the **Cloud AI** provider, while retaining explicit manual modes (`Automatic`,
-     `Cloud AI only`, `Local DLX only`, `Official DeepL API only`).
-2. **Adaptive Chunking and Provider-Specific Parallelism:**
-   - Replaces fixed chunking with per-provider execution profiles: compact `<= 1,500` UTF-16 chunks
-     (`1–2` workers) for local DLX versus large multi-paragraph context blocks (`8,000–12,000`
-     UTF-16 units, `2–4` parallel workers, plus read-only preceding paragraph context for pronoun,
-     gender, and narrative continuity) for the Cloud LLM backend—while keeping exact 1:1 paragraph
-     mapping for `.docx` and `.pdf` exports.
-3. **Philological Workbench Features:**
-   - **Stylistic registers:** Switch between *Neutral*, *Literary (Художній)*, *Academic
-     (Академічний)*, *Journalistic (Публіцистичний)*, *Official (Офіційно-діловий)*, and
-     *Philological crib / Interlinear literal (Підрядник)*, plus an optional era/domain context hint.
-   - **Document terminology.** Open **Glossaries → Manage glossaries** to create or exchange
-     local glossaries. CSV and TSV files use UTF-8 and the headers `source_term` and `target_term`.
-     Optional headers are `pos`, `notes`, and `priority`. Choose **Use for translation** to apply
-     a glossary that supports the selected languages. A glossary with automatic source detection
-     can be used with any source language.
-   - **Two-pass translation.** Configure Cloud AI in **Automatic** or **Cloud AI only** mode.
-     Open a file or enter text and choose **Glossaries → Extract document terms**. Pass 1 sends
-     a deduplicated sample to Cloud AI and requires a token with deep analysis access. Edit,
-     add, or remove suggested terms. You can save them to a glossary, then choose **Translate**
-     to apply the reviewed equivalents to the same input in Pass 2.
-   - **Philological notes:** Inspect alternative phrasings, idiom/realia explanations, and
-     grammatical/syntactic commentary in a collapsible **MainWindow Inspector**, on demand inside
-     the **`Ctrl+C,C` Selection Popup**, or optionally exported as native **Word comments** in
-     `.docx` files (keeping standard document exports clean).
-4. **Cloud Run Proxy Backend, Security, and Shared Budget Caching:**
-   - Isolates Gemini API credentials on a stateless **Google Cloud Run** microservice (`cloud/`,
-     built with `FastAPI` and `google-genai` with zero-retention `store=False`), routing between a
-     fast default model (**Gemini 4 Hydrogen**) and an opt-in deep-analysis model (**Gemini 4 Neon**)
-     configured via Cloud Run environment variables.
-   - Authenticates desktop clients with individual team bearer tokens stored locally in **Windows
-     Credential Manager** and verified server-side as HMAC-SHA256 hashes in **Cloud Firestore** with
-     atomic per-user character quotas.
-   - Caches completed segment translations and philological notes in **Cloud Firestore** under
-     anonymous SHA-256 digests with native TTL expiration—saving Gemini budget across classmates and
-     teammates without storing raw source texts.
-   - Server dependencies remain strictly isolated from the PyInstaller desktop build so the Windows
-     installer stays compact and MIT-compliant.
+### Glossaries and notes
 
----
+- **Document terminology.** Open **Glossaries → Manage glossaries** to create or exchange
+  local glossaries. CSV and TSV files use UTF-8 and the headers `source_term` and `target_term`.
+  Optional headers are `pos`, `notes`, and `priority`. Choose **Use for translation** to apply
+  a glossary that supports the selected languages. A glossary with automatic source detection
+  can be used with any source language.
+- **Two-pass translation.** Configure Cloud AI in **Automatic** or **Cloud AI only** mode.
+  Open a file or enter text and choose **Glossaries → Extract document terms**. Pass 1 sends
+  a deduplicated sample to Cloud AI and requires a token with deep analysis access. Edit,
+  add, or remove suggested terms. You can save them to a glossary, then choose **Translate**
+  to apply the reviewed equivalents to the same input in Pass 2.
+- **Philological notes:** Inspect alternative phrasings, idiom/realia explanations, and
+  grammatical/syntactic commentary in a collapsible **MainWindow Inspector**, on demand inside
+  the **`Ctrl+C,C` Selection Popup**, or optionally exported as native **Word comments** in
+  `.docx` files (keeping standard document exports clean).
 
 ## FAQ
 
 ### What should I do if DLX returns HTTP 429?
 
 HTTP 429 means DLX is rate-limited. Tray waits before retrying and shows the retry delay in the
-status bar. You can cancel and keep any translation that already finished. If you save a DeepL API
-key in v2.0 (or configure the Cloud AI / DeepL fallback chain in v3.0), Tray continues the job
-automatically. Check the status bar for the active provider.
+status bar. You can cancel and keep any translation that already finished. In Automatic mode,
+Tray can continue through configured Cloud AI or official DeepL when DLX is rate-limited.
+The status bar shows the active provider.
 
 ### Why is Windows warning me about the installer?
 
@@ -175,7 +140,8 @@ A DeepL API Free or Pro key is optional. Open **Settings…**, enter it in **Dee
 the key in Windows Credential Manager. To remove it, clear the field and save again.
 
 Choose **Official DeepL API only** under **Translation provider** to use the key for all text and
-file translations. Automatic mode is the default and uses DLX with official API fallback.
+file translations. In Automatic mode, Tray uses the key according to its
+[provider routing rules](#cloud-ai-and-philological-translation).
 
 ![Settings dialog with the DeepL API key field and Test key button](.github/screenshots/settings.png)
 
@@ -247,7 +213,7 @@ and maximum are 60,000.
 | `0.9.0` | Completed | PyInstaller packaging, Inno Setup installer, and GitHub Releases |
 | `1.0.0` | Completed | First stable release with audited bundled DLX, About dialog, and diagnostics |
 | `2.0.0` | **Released** | Segment cache, 2-worker DLX concurrency, provider selection, visible retry waits, system tray, `Ctrl+C,C` global hotkey, and optional Windows autostart |
-| `3.0.0` | **In development** | Hybrid pipeline (`DLX` + `Cloud AI` + `DeepL`), adaptive LLM context blocks, philological registers & *підрядник*, two-pass glossaries, philological notes Inspector & DOCX comments, Cloud Run + Firestore + Gemini 4 proxy |
+| `3.0.0` | **Released** | Hybrid pipeline (`DLX` + `Cloud AI` + `DeepL`), adaptive LLM context blocks, philological registers & *підрядник*, two-pass glossaries, philological notes Inspector & DOCX comments, Cloud Run + Firestore + Gemini 4 proxy |
 
 See [CHANGELOG.md](CHANGELOG.md) for what changed in each published version.
 
