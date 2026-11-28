@@ -17,10 +17,18 @@ from dlx_tray.core.models import (
 from dlx_tray.core.profiles import PROVIDER_LIMITS
 
 
+def _unicode_text(text: str) -> str:
+    try:
+        text.encode("utf-8")
+    except UnicodeEncodeError:
+        raise ValueError("text must be valid Unicode") from None
+    return text
+
+
 def _nonblank(text: str) -> str:
     if not text.strip():
         raise ValueError("text must not be blank")
-    return text
+    return _unicode_text(text)
 
 
 type Nonblank = Annotated[str, AfterValidator(_nonblank)]
@@ -88,7 +96,7 @@ def _validate_indexes(segments: list[SourceSegment] | list[TranslatedSegment]) -
 class TranslateRequest(_SourceRequest):
     segments: list[SourceSegment] = Field(min_length=1, max_length=25)
     stylistic_register: StylisticRegister = Field(StylisticRegister.NEUTRAL, alias="register")
-    style_context: Annotated[str, Field(max_length=200)] = ""
+    style_context: Annotated[str, Field(max_length=200), AfterValidator(_unicode_text)] = ""
     context_before: list[Nonblank] = Field(default_factory=list, max_length=2)
     glossary: list[GlossaryTerm] = Field(default_factory=list, max_length=150)
     include_notes: bool = False

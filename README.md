@@ -196,7 +196,7 @@ Windows Sandbox. Tray showed **Provider: DLX** and completed the translation in 
 API key or external server configured. Long-file translation and export were tested separately with
 a local test server.
 
-Quality gates and development commands (enforced across all desktop and upcoming v3.0 cloud modules):
+Quality gates and development commands for the desktop and Cloud AI proxy:
 
 ```powershell
 uv run pytest            # unit & Qt tests (network tests skipped; run with -m live)

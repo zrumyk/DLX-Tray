@@ -42,6 +42,7 @@ EXCEPTION_PREFIXES = {
 
 # The checker itself and its helpers end up in the isolated env; they are not shipped.
 TOOLING = {"pip_licenses", "prettytable", "wcwidth", "tomli"}
+CLOUD_ONLY = {"fastapi", "uvicorn", "google_genai", "google_cloud_firestore"}
 
 
 def normalize(name: str) -> str:
@@ -68,7 +69,9 @@ def main() -> int:
         if key in TOOLING:
             continue
         reason = next((r for p, r in EXCEPTION_PREFIXES.items() if key.startswith(p)), None)
-        if reason:
+        if key in CLOUD_ONLY:
+            problems.append(f"{name} {version}: server dependency in the desktop runtime")
+        elif reason:
             print(f"  exception  {name} {version}: {license_name} ({reason})")
         elif is_allowed(license_name):
             print(f"  ok         {name} {version}: {license_name}")
@@ -76,7 +79,7 @@ def main() -> int:
             problems.append(f"{name} {version}: {license_name}")
 
     if problems:
-        print("\nLicenses that need review (extend ALLOWED/EXCEPTION_PREFIXES only with an ADR):")
+        print("\nRuntime dependency audit failures:")
         for line in problems:
             print(f"  FAIL       {line}")
         return 1

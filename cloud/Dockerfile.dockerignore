@@ -1,0 +1,13 @@
+**
+!pyproject.toml
+!uv.lock
+!cloud/
+!cloud/dlx_cloud/
+!cloud/dlx_cloud/*.py
+!src/
+!src/dlx_tray/
+!src/dlx_tray/__init__.py
+!src/dlx_tray/contracts/
+!src/dlx_tray/contracts/*.py
+!src/dlx_tray/core/
+!src/dlx_tray/core/*.py

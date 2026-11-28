@@ -29,6 +29,7 @@ dlx-tray = "dlx_tray.__main__:main"
 
 [dependency-groups]
 dev = [
+    { include-group = "cloud" },
     "pytest>=8.3",
     "pytest-qt>=4.4",
     "respx>=0.22",
@@ -40,6 +41,13 @@ dev = [
 ]
 build = [
     "pyinstaller>=6.11",
+]
+cloud = [
+    "fastapi>=0.165.0",
+    "google-cloud-firestore>=2.34.1",
+    "google-genai>=3.2.0",
+    "pydantic-settings>=2.6",
+    "uvicorn[standard]>=0.54.0",
 ]
 
 [build-system]
@@ -56,7 +64,7 @@ default-groups = ["dev"]
 [tool.ruff]
 line-length = 100
 target-version = "py312"
-src = ["src", "tests", "scripts"]
+src = ["src", "cloud", "tests", "scripts"]
 
 [tool.ruff.lint]
 select = [
@@ -78,6 +86,7 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "scripts/*" = ["T20"]
 "tests/*" = ["T20"]
+"cloud/dlx_cloud/cli.py" = ["T20"]
 
 [tool.ruff.format]
 quote-style = "double"
@@ -85,7 +94,8 @@ line-ending = "lf"
 
 # ---------------------------------------------------------------- pyright
 [tool.pyright]
-include = ["src", "tests", "scripts"]
+include = ["src", "cloud", "tests", "scripts"]
+extraPaths = ["cloud"]
 pythonVersion = "3.12"
 typeCheckingMode = "standard"
 venvPath = "."
@@ -94,6 +104,7 @@ venv = ".venv"
 # ---------------------------------------------------------------- pytest
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["cloud"]
 addopts = "-ra --strict-markers -m 'not live'"
 markers = [
     "live: hits the real DLX/DeepL network (run with -m live)",
@@ -104,7 +115,7 @@ qt_api = "pyside6"
 # The gate covers the Qt-free layers only; ui/ and app.py are exercised by pytest-qt smoke
 # tests and manual checks (.dev/docs/TEST_CHECKLIST.md), not by a percentage.
 [tool.coverage.run]
-source = ["dlx_tray"]
+source = ["dlx_tray", "dlx_cloud"]
 branch = true
 
 [tool.coverage.report]
@@ -114,6 +125,7 @@ include = [
     "*/dlx_tray/providers/*",
     "*/dlx_tray/services/*",
     "*/dlx_tray/fileio/*",
+    "*/dlx_cloud/*",
 ]
 fail_under = 85
 show_missing = true

@@ -29,9 +29,12 @@ jobs:
       - name: Pyright
         run: uv run pyright
 
-      # Coverage gate (85% of core/providers/services/fileio) is configured in pyproject.toml.
+      # The combined 85% branch coverage gate is configured in pyproject.toml.
       - name: Tests with coverage
         run: uv run pytest --cov --cov-report=term-missing
+
+      - name: Cloud branch coverage
+        run: uv run pytest tests/cloud --cov=dlx_cloud --cov-fail-under=85
 
       # Timing tests are skipped under coverage tracing; run them on their own.
       - name: Performance tests
@@ -48,3 +51,16 @@ jobs:
 
       - name: Check runtime dependency licenses
         run: uv run --locked --isolated --no-dev --with pip-licenses python scripts/check_licenses.py
+
+  cloud-image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build Cloud Run image
+        run: docker build -f cloud/Dockerfile -t dlx-cloud:ci .
+      - name: Check server dependency isolation
+        run: >-
+          docker run --rm --entrypoint .venv/bin/python dlx-cloud:ci
+          -c "from importlib.util import find_spec;
+          assert not any(map(find_spec, ('PySide6', 'docx', 'pdfplumber', 'dlx_tray.ui')));
+          import dlx_cloud.app"
