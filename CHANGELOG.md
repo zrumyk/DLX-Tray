@@ -8,6 +8,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 - Choose **DLX only** in Settings to keep translations on the configured DLX provider.
+- Added the self-hosted Cloud AI proxy for team translation and term extraction, with personal
+  access tokens, usage quotas, and a shared Firestore cache.
 
 ### Changed
 - The official DeepL provider can translate adjacent uncached segments in a single request

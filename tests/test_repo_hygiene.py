@@ -10,7 +10,7 @@ from types import ModuleType
 import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
-SOURCE_DIRS = ("src", "tests", "scripts")
+SOURCE_DIRS = ("src", "cloud", "tests", "scripts")
 
 
 def _source_files() -> list[Path]:
