@@ -44,7 +44,11 @@ def _window(qtbot: QtBot, path: Path) -> MainWindow:
         glossary_path=path,
         translation_job=TranslationJob(translator=cloud, request_delay=0),
     )
-    qtbot.addWidget(window)
+
+    def discard_test_output(_widget: MainWindow) -> None:
+        window._file_unsaved = False
+
+    qtbot.addWidget(window, before_close_func=discard_test_output)
     window.set_glossary_provider(cloud, 60_000)
     window.show()
     return window
@@ -55,7 +59,7 @@ def test_create_import_and_use_saved_glossary(
 ) -> None:
     database = tmp_path / "glossaries.sqlite3"
     window = _window(qtbot, database)
-    window.manage_glossaries_action.trigger()
+    window.glossary_selector.click()
     manager = window.findChild(GlossaryManager)
     assert manager is not None
     qtbot.waitUntil(manager.new_button.isEnabled)
@@ -95,6 +99,7 @@ def test_create_import_and_use_saved_glossary(
     manager.use_button.click()
     qtbot.waitUntil(window.clear_glossary_action.isEnabled)
     assert "Imported" in window.clear_glossary_action.text()
+    assert window.glossary_selector.text() == "Glossary: Imported"
     store = GlossaryStore(database)
     created, imported = store.list()
     assert created.id is not None and imported.id is not None

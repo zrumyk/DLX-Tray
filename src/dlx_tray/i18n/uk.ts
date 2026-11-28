@@ -304,6 +304,37 @@
     </message>
 </context>
 <context>
+    <name>InspectorPanel</name>
+    <message>
+        <source>Philological Inspector</source>
+        <translation>Філологічний інспектор</translation>
+    </message>
+    <message>
+        <source>Select a translated segment to inspect it.</source>
+        <translation>Виберіть перекладений сегмент, щоб переглянути подробиці.</translation>
+    </message>
+    <message>
+        <source>Segment {number}</source>
+        <translation>Сегмент {number}</translation>
+    </message>
+    <message>
+        <source>Register: {register}</source>
+        <translation>Регістр: {register}</translation>
+    </message>
+    <message>
+        <source>Provider: {provider}</source>
+        <translation>Провайдер: {provider}</translation>
+    </message>
+    <message>
+        <source>Matched glossary terms</source>
+        <translation>Знайдені терміни з глосарія</translation>
+    </message>
+    <message>
+        <source>No notes for this segment.</source>
+        <translation>До цього сегмента немає приміток.</translation>
+    </message>
+</context>
+<context>
     <name>MainWindow</name>
     <message>
         <source>E&amp;xit</source>
@@ -410,6 +441,30 @@
         <translation>Додати ключ DeepL API…</translation>
     </message>
     <message>
+        <source>&amp;Register</source>
+        <translation>&amp;Регістр</translation>
+    </message>
+    <message>
+        <source>Glossary</source>
+        <translation>Глосарій</translation>
+    </message>
+    <message>
+        <source>Philological notes</source>
+        <translation>Філологічні примітки</translation>
+    </message>
+    <message>
+        <source>Deep analysis</source>
+        <translation>Поглиблений аналіз</translation>
+    </message>
+    <message>
+        <source>Context hint</source>
+        <translation>Контекстна підказка</translation>
+    </message>
+    <message>
+        <source>Inspector</source>
+        <translation>Інспектор</translation>
+    </message>
+    <message>
         <source>Translation progress</source>
         <translation>Перебіг перекладу</translation>
     </message>
@@ -466,6 +521,18 @@
         <translation>Виберіть підтримуване розширення файлу ({extensions}).</translation>
     </message>
     <message>
+        <source>Word export options</source>
+        <translation>Параметри експорту у Word</translation>
+    </message>
+    <message>
+        <source>Save the Word translation?</source>
+        <translation>Зберегти переклад у форматі Word?</translation>
+    </message>
+    <message>
+        <source>Attach philological notes as Word comments</source>
+        <translation>Додати філологічні примітки як коментарі Word</translation>
+    </message>
+    <message>
         <source>Saving translation…</source>
         <translation>Збереження перекладу…</translation>
     </message>
@@ -496,6 +563,14 @@
     <message>
         <source>Could not save the translation. Check the destination and try again.</source>
         <translation>Не вдалося зберегти переклад. Перевірте шлях збереження й повторіть спробу.</translation>
+    </message>
+    <message>
+        <source>Glossary: {name}</source>
+        <translation>Глосарій: {name}</translation>
+    </message>
+    <message>
+        <source>Choose glossary…</source>
+        <translation>Вибрати глосарій…</translation>
     </message>
     <message>
         <source>Extracting document terms…</source>
@@ -783,6 +858,45 @@
     </message>
 </context>
 <context>
+    <name>Philology</name>
+    <message>
+        <source>Neutral</source>
+        <translation>Нейтральний</translation>
+    </message>
+    <message>
+        <source>Literary</source>
+        <translation>Художній</translation>
+    </message>
+    <message>
+        <source>Academic</source>
+        <translation>Академічний</translation>
+    </message>
+    <message>
+        <source>Journalistic</source>
+        <translation>Публіцистичний</translation>
+    </message>
+    <message>
+        <source>Official</source>
+        <translation>Офіційно-діловий</translation>
+    </message>
+    <message>
+        <source>Literal</source>
+        <translation>Підрядник</translation>
+    </message>
+    <message>
+        <source>Alternatives</source>
+        <translation>Альтернативні варіанти</translation>
+    </message>
+    <message>
+        <source>Idioms and cultural references</source>
+        <translation>Ідіоми й культурні реалії</translation>
+    </message>
+    <message>
+        <source>Grammar and syntax</source>
+        <translation>Граматика й синтаксис</translation>
+    </message>
+</context>
+<context>
     <name>SelectionPopup</name>
     <message>
         <source>Selection translation</source>
@@ -797,12 +911,32 @@
         <translation>Переклад</translation>
     </message>
     <message>
+        <source>Philological notes</source>
+        <translation>Філологічні примітки</translation>
+    </message>
+    <message>
         <source>&amp;Copy</source>
         <translation>&amp;Копіювати</translation>
     </message>
     <message>
+        <source>Explain / Notes</source>
+        <translation>Пояснення / примітки</translation>
+    </message>
+    <message>
         <source>Translation complete.</source>
         <translation>Переклад завершено.</translation>
+    </message>
+    <message>
+        <source>Loading notes…</source>
+        <translation>Завантаження приміток…</translation>
+    </message>
+    <message>
+        <source>No notes returned.</source>
+        <translation>Приміток немає.</translation>
+    </message>
+    <message>
+        <source>Could not load notes. Close and reopen Notes to retry.</source>
+        <translation>Не вдалося завантажити примітки. Закрийте й відкрийте їх, щоб повторити спробу.</translation>
     </message>
     <message>
         <source>Translation failed. Check the provider and try again.</source>
@@ -854,6 +988,10 @@
     <message>
         <source>Settings</source>
         <translation>Налаштування</translation>
+    </message>
+    <message>
+        <source>Cloud AI</source>
+        <translation>Cloud AI</translation>
     </message>
     <message>
         <source>&amp;Chunk size (UTF-16 units)</source>

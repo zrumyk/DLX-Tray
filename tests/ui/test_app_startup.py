@@ -1,5 +1,6 @@
 """Exercise startup and shutdown through the application event loop."""
 
+import asyncio
 import json
 import re
 from collections.abc import Callable
@@ -17,7 +18,7 @@ import requests
 import respx
 from keyring.errors import KeyringError
 from PySide6.QtCore import QRect, QSize, Qt, QTimer
-from PySide6.QtGui import QShortcut
+from PySide6.QtGui import QShortcut, QTextCursor
 from PySide6.QtNetwork import QLocalServer
 from PySide6.QtWidgets import (
     QApplication,
@@ -1134,6 +1135,275 @@ def test_cloud_routes_work_in_editor_file_and_popup_without_waiting_for_dlx(
     assert factory.call_count == int(mode == "automatic")
 
 
+@pytest.mark.parametrize(
+    ("mode", "configured", "enabled"),
+    [
+        ("automatic", True, True),
+        ("automatic", False, False),
+        ("cloud_only", True, True),
+        ("cloud_only", False, False),
+        ("dlx_only", True, False),
+        ("official_only", True, False),
+    ],
+)
+def test_philological_toolbar_enablement(
+    mode: str,
+    configured: bool,
+    enabled: bool,
+    run_window: Callable[[Settings, Callable[[MainWindow, QLabel], None]], None],
+    fake_dlx: FakeDLXFactory,
+) -> None:
+    def check(window: MainWindow, _status: QLabel) -> None:
+        for control in (
+            window.register_picker,
+            window.glossary_selector,
+            window.notes_toggle,
+            window.deep_toggle,
+            window.context_hint,
+        ):
+            assert control.isEnabled() == enabled
+        assert window.inspector_toggle.isEnabled()
+
+    with fake_dlx([]) as server:
+        run_window(
+            Settings.model_validate(
+                {
+                    "provider_mode": mode,
+                    "cloud_url": "https://cloud.example" if configured else None,
+                    "cloud_api_token": "test-token" if configured else None,
+                    "deeplx_url": server.url,
+                    "deeplx_token": server.token,
+                }
+            ),
+            check,
+        )
+
+
+def test_inspector_follows_both_editors_and_reopens_history_annotations(
+    run_window: Callable[[Settings, Callable[[MainWindow, QLabel], None]], None],
+    qtbot: QtBot,
+    respx_mock: respx.MockRouter,
+    tmp_path: Path,
+) -> None:
+    route = respx_mock.post("https://cloud.example/v1/translate").respond(
+        json={
+            "segments": [
+                {
+                    "index": 0,
+                    "text": "🎓\r\nFirst",
+                    "notes": [{"kind": "alternative", "text": "First alternative"}],
+                },
+                {
+                    "index": 1,
+                    "text": "Другий",
+                    "notes": [
+                        {"kind": "idiom", "text": "Second idiom"},
+                        {"kind": "grammar", "text": "Second grammar"},
+                    ],
+                },
+            ]
+        },
+    )
+
+    def check(window: MainWindow, _status: QLabel) -> None:
+        window.source_editor.setPlainText("🌿 First\n\nSecond")
+        window.register_picker.setCurrentIndex(window.register_picker.findData("academic"))
+        window.notes_toggle.setChecked(True)
+        window.deep_toggle.setChecked(True)
+        window.context_hint.setText("  1800s   narrative ")
+        window.translate_button.click()
+        assert not window.notes_toggle.isEnabled()
+        qtbot.waitUntil(window.translate_button.isEnabled)
+        assert window.inspector.isVisible()
+        request = json.loads(route.calls.last.request.content)
+        assert request["register"] == "academic" and request["analysis_tier"] == "deep"
+        assert request["include_notes"] and request["style_context"] == "1800s narrative"
+
+        source = window.source_editor.textCursor()
+        source.movePosition(QTextCursor.MoveOperation.End)
+        window.source_editor.setTextCursor(source)
+        panel = window.inspector.toPlainText()
+        assert "Second idiom" in panel and "Second grammar" in panel
+        assert "Register: Academic" in panel and "Provider: Cloud AI" in panel
+        result = window.result_editor.textCursor()
+        result.movePosition(QTextCursor.MoveOperation.End)
+        window.result_editor.setTextCursor(result)
+        assert "Second grammar" in window.inspector.toPlainText()
+        result.movePosition(QTextCursor.MoveOperation.Start)
+        window.result_editor.setTextCursor(result)
+        assert "First alternative" in window.inspector.toPlainText()
+        assert "Second grammar" not in window.inspector.toPlainText()
+
+        window.source_editor.setPlainText("New draft")
+        assert not window.inspector.toPlainText()
+        (entry,) = HistoryStore(tmp_path / "history.sqlite3", 10).list()
+        assert entry.annotations is not None and len(entry.annotations.segments) == 2
+
+        def reopen() -> None:
+            dialog = window.findChild(HistoryDialog)
+            assert dialog is not None
+            qtbot.waitUntil(lambda: dialog.entries.count() == 1)
+            dialog.entries.setCurrentRow(0)
+            qtbot.waitUntil(dialog.open_button.isEnabled)
+            dialog.open_button.click()
+
+        QTimer.singleShot(0, reopen)
+        window.history_action.trigger()
+        assert "First alternative" in window.inspector.toPlainText()
+
+    run_window(
+        Settings.model_validate(
+            {
+                "provider_mode": "cloud_only",
+                "cloud_url": "https://cloud.example",
+                "cloud_api_token": "test-token",
+            }
+        ),
+        check,
+    )
+
+
+@pytest.mark.parametrize(
+    ("deep", "allowed", "tiers"),
+    [(False, False, ["standard"]), (True, False, ["standard"]), (True, True, ["deep", "standard"])],
+)
+def test_selection_notes_fetch_only_after_fast_result_and_fall_back_to_standard(
+    deep: bool,
+    allowed: bool,
+    tiers: list[str],
+    run_window: Callable[[Settings, Callable[[MainWindow, QLabel], None]], None],
+    qtbot: QtBot,
+    monkeypatch: pytest.MonkeyPatch,
+    respx_mock: respx.MockRouter,
+    fake_dlx: FakeDLXFactory,
+) -> None:
+    respx_mock.route(host="127.0.0.1").pass_through()
+    hotkey = SelectionHotkey()
+    monkeypatch.setattr(app, "SelectionHotkey", lambda _window: hotkey)
+    me = respx_mock.get("https://cloud.example/v1/me").respond(
+        json={
+            "label": "Fixture",
+            "allow_deep_tier": allowed,
+            "daily_chars_remaining": 100,
+            "monthly_chars_remaining": 100,
+        }
+    )
+    requested: list[str] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        assert payload["include_notes"] and payload["segments"][0]["text"] == "A selected phrase"
+        requested.append(payload["analysis_tier"])
+        if payload["analysis_tier"] == "deep":
+            return httpx.Response(403, json={"code": "deep_tier_forbidden", "message": "Forbidden"})
+        return httpx.Response(
+            200,
+            json={
+                "segments": [
+                    {
+                        "index": 0,
+                        "text": "A different translation",
+                        "notes": [
+                            {"kind": "idiom", "text": "Figurative meaning"},
+                            {"kind": "alternative", "text": "Alternate wording"},
+                            {"kind": "grammar", "text": "Clause structure"},
+                        ],
+                    },
+                ]
+            },
+        )
+
+    route = respx_mock.post("https://cloud.example/v1/translate").mock(side_effect=respond)
+
+    def check(window: MainWindow, _status: QLabel) -> None:
+        window.deep_toggle.setChecked(deep)
+        hotkey.selection_ready.emit("A selected phrase")
+        popup = window.findChild(SelectionPopup)
+        assert popup is not None
+        qtbot.waitUntil(popup.explain_button.isEnabled)
+        assert popup.preview.toPlainText() == "[UK] A selected phrase"
+        assert not route.called and not me.called
+        popup.explain_button.click()
+        qtbot.waitUntil(lambda: "Clause structure" in popup.notes.toPlainText())
+        assert "Figurative meaning" in popup.notes.toPlainText()
+        assert "Alternate wording" in popup.notes.toPlainText()
+        assert popup.preview.toPlainText() == "[UK] A selected phrase"
+        popup.explain_button.click()
+        assert popup.notes.isHidden()
+        popup.explain_button.click()
+        assert popup.notes.isVisible()
+        with qtbot.waitSignal(popup.finished):
+            popup.reject()
+
+    with fake_dlx([]) as server:
+        run_window(
+            Settings.model_validate(
+                {
+                    "cloud_url": "https://cloud.example",
+                    "cloud_api_token": "test-token",
+                    "deeplx_url": server.url,
+                    "deeplx_token": server.token,
+                }
+            ),
+            check,
+        )
+    assert requested == tiers
+    assert me.call_count == int(deep)
+
+
+@pytest.mark.parametrize("app_exit", [False, True])
+def test_selection_popup_cancels_and_joins_notes(
+    app_exit: bool,
+    run_window: Callable[[Settings, Callable[[MainWindow, QLabel], None]], None],
+    qtbot: QtBot,
+    monkeypatch: pytest.MonkeyPatch,
+    respx_mock: respx.MockRouter,
+) -> None:
+    hotkey = SelectionHotkey()
+    monkeypatch.setattr(app, "SelectionHotkey", lambda _window: hotkey)
+    started, stopped = Event(), Event()
+
+    async def respond(request: httpx.Request) -> httpx.Response:
+        if not json.loads(request.content)["include_notes"]:
+            return httpx.Response(200, json={"segments": [{"index": 0, "text": "Translation"}]})
+        started.set()
+        try:
+            await asyncio.sleep(30)
+        finally:
+            stopped.set()
+        raise AssertionError("Notes request was not cancelled")
+
+    respx_mock.post("https://cloud.example/v1/translate").mock(side_effect=respond)
+
+    def check(window: MainWindow, _status: QLabel) -> None:
+        hotkey.selection_ready.emit("Selection")
+        popup = window.findChild(SelectionPopup)
+        assert popup is not None
+        qtbot.waitUntil(popup.explain_button.isEnabled)
+        popup.explain_button.click()
+        qtbot.waitUntil(started.is_set)
+        if app_exit:
+            with qtbot.waitSignal(window.closed):
+                window.exit_action.trigger()
+            return
+        with qtbot.waitSignal(popup.finished):
+            popup.close()
+        assert stopped.is_set()
+        assert popup._notes_thread is None
+
+    run_window(
+        Settings.model_validate(
+            {
+                "provider_mode": "cloud_only",
+                "cloud_url": "https://cloud.example",
+                "cloud_api_token": "test-token",
+            }
+        ),
+        check,
+    )
+    assert stopped.is_set()
+
+
 def test_cloud_settings_verify_and_store_token_outside_settings_json(
     run_window: Callable[[Settings, Callable[[MainWindow, QLabel], None]], None],
     qtbot: QtBot,
@@ -1151,10 +1421,14 @@ def test_cloud_settings_verify_and_store_token_outside_settings_json(
             "monthly_chars_remaining": 1000,
         },
     )
+    translated = respx_mock.post("https://cloud.example/v1/translate").respond(
+        json={"segments": [{"index": 0, "text": "Translated after save"}]}
+    )
 
     def edit(dialog: SettingsDialog) -> None:
         dialog.cloud_url.setText("https://cloud.example")
         dialog.cloud_token.setText("cloud-vault-fixture")
+        assert dialog.cloud_token.echoMode() == dialog.cloud_token.EchoMode.Password
         dialog.test_cloud_button.click()
         qtbot.waitUntil(
             lambda: (
@@ -1167,9 +1441,15 @@ def test_cloud_settings_verify_and_store_token_outside_settings_json(
     def check(window: MainWindow, status: QLabel) -> None:
         _edit_settings(window, edit)
         assert status.text() == "Using Cloud AI"
+        window.source_editor.setPlainText("Immediately use new settings")
+        window.translate_button.click()
+        qtbot.waitUntil(window.translate_button.isEnabled)
+        assert window.result_editor.toPlainText() == "Translated after save"
 
     run_window(Settings(provider_mode="cloud_only"), check)
     assert route.calls.last.request.headers["Authorization"] == "Bearer cloud-vault-fixture"
+    assert not route.calls.last.request.content
+    assert translated.calls.last.request.headers["Authorization"] == "Bearer cloud-vault-fixture"
     vault._set_password.assert_called_once_with(
         "DLX Tray Cloud", "cloud_api_token", "cloud-vault-fixture"
     )

@@ -8,7 +8,12 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from dlx_tray.core.models import Language
+from pydantic import TypeAdapter
+
+from dlx_tray.core.models import Language, TranslationAnnotations
+
+_ANNOTATIONS = TypeAdapter(TranslationAnnotations)
+_SCHEMA_VERSION = 2
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS history (
@@ -23,7 +28,8 @@ CREATE TABLE IF NOT EXISTS history (
 )
 """
 _SELECT_ENTRIES = """
-SELECT id, created_at, source_lang, target_lang, source_text, target_text, file_name, provider
+SELECT id, created_at, source_lang, target_lang, source_text, target_text, file_name, provider,
+       annotations
 FROM history
 """
 
@@ -38,6 +44,7 @@ class HistoryEntry:
     target_text: str
     file_name: str | None
     provider: str
+    annotations: TranslationAnnotations | None = None
 
 
 class HistoryStore:
@@ -50,8 +57,23 @@ class HistoryStore:
         # SQLite binds OFFSET as a signed 64-bit integer.
         self._prune_offset = min(limit - 1, 2**63 - 1)
         path.parent.mkdir(parents=True, exist_ok=True)
-        with closing(self._connect()) as connection, connection:
-            connection.execute(_SCHEMA)
+        self._migrate()
+
+    def _migrate(self) -> None:
+        with closing(sqlite3.connect(self._path)) as connection, connection:
+            version = connection.execute("PRAGMA user_version").fetchone()[0]
+            if version == _SCHEMA_VERSION:
+                return
+            # A second worker may open this file during the upgrade. Read the version
+            # again after acquiring the write lock and commit DDL and the version together.
+            connection.execute("BEGIN IMMEDIATE")
+            version = connection.execute("PRAGMA user_version").fetchone()[0]
+            if version < _SCHEMA_VERSION:
+                connection.execute(_SCHEMA)
+                connection.execute("ALTER TABLE history ADD COLUMN annotations TEXT")
+                connection.execute("PRAGMA user_version = 2")
+            elif version != _SCHEMA_VERSION:
+                raise ValueError("Unsupported translation history schema")
 
     def _connect(self) -> sqlite3.Connection:
         return sqlite3.connect(self._path, autocommit=False)
@@ -65,6 +87,7 @@ class HistoryStore:
         target_text: str,
         provider: str,
         file_name: str | None = None,
+        annotations: TranslationAnnotations | None = None,
     ) -> None:
         """Save a translation and prune older entries in the same transaction."""
         with closing(self._connect()) as connection, connection:
@@ -72,9 +95,9 @@ class HistoryStore:
                 """
                 INSERT INTO history (
                     created_at, source_lang, target_lang, source_text, target_text, file_name,
-                    provider
+                    provider, annotations
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     datetime.now(UTC).isoformat(),
@@ -84,6 +107,9 @@ class HistoryStore:
                     target_text,
                     file_name,
                     provider,
+                    _ANNOTATIONS.dump_json(annotations).decode()
+                    if annotations is not None
+                    else None,
                 ),
             )
             connection.execute(
@@ -136,6 +162,9 @@ class HistoryStore:
                     target_text=target_text,
                     file_name=file_name,
                     provider=provider,
+                    annotations=_ANNOTATIONS.validate_json(annotations)
+                    if annotations is not None
+                    else None,
                 )
                 for (
                     entry_id,
@@ -146,6 +175,7 @@ class HistoryStore:
                     target_text,
                     file_name,
                     provider,
+                    annotations,
                 ) in rows
             ]
 

@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 from docx import Document
 
+from dlx_tray.core.models import NoteKind, PhilologicalNote
 from dlx_tray.fileio.pdf_io import read_pdf, translate_pdf
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
@@ -31,6 +32,23 @@ def test_read_pdf_reconstructs_paragraphs_in_page_order() -> None:
 def test_read_pdf_reports_missing_text_layer() -> None:
     with pytest.raises(ValueError, match="no extractable text layer"):
         read_pdf(FIXTURES / "scanned_field_notes.pdf")
+
+
+def test_pdf_notes_are_aligned_to_exported_paragraphs_and_skipped_in_txt(tmp_path: Path) -> None:
+    docx = tmp_path / "pdf-comments.docx"
+    txt = tmp_path / "pdf-comments.txt"
+    notes = ((), (PhilologicalNote(NoteKind.GRAMMAR, "A note on the second paragraph."),))
+    for path in (docx, txt):
+        translate_pdf(
+            SOURCE, path, lambda text: text, segment_notes=notes, include_notes_comments=True
+        )
+
+    reopened = Document(str(docx))
+    assert [paragraph.text for paragraph in reopened.paragraphs] == read_pdf(SOURCE)
+    assert [comment.text for comment in reopened.comments] == [notes[1][0].text]
+    assert not reopened.paragraphs[0]._p.xpath(".//w:commentReference")
+    assert reopened.paragraphs[1]._p.xpath(".//w:commentReference/@w:id") == ["0"]
+    assert txt.read_text(encoding="utf-8") == "\n\n".join(read_pdf(SOURCE))
 
 
 def _read_export(path: Path) -> list[str]:

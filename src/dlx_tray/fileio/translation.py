@@ -8,6 +8,7 @@ from pathlib import Path
 from docx import Document
 
 from dlx_tray.core.chunker import paragraphs
+from dlx_tray.core.models import PhilologicalNote
 
 from .docx_io import _save_docx, _translate_document
 from .pdf_io import read_pdf, write_pdf_translation
@@ -81,7 +82,14 @@ class SourceFile:
         )
         return self.txt_prefix + completed + partial
 
-    def save(self, destination: Path, translations: tuple[str, ...]) -> None:
+    def save(
+        self,
+        destination: Path,
+        translations: tuple[str, ...],
+        *,
+        segment_notes: Sequence[tuple[PhilologicalNote, ...]] = (),
+        include_notes_comments: bool = False,
+    ) -> None:
         suffix = destination.suffix.lower()
         if suffix not in self.output_suffixes or len(translations) != len(self.segments):
             raise ValueError("Invalid file translation export.")
@@ -95,9 +103,18 @@ class SourceFile:
         if self.docx_package is not None:
             document = Document(BytesIO(self.docx_package))
             replacements = iter(translations)
-            _translate_document(document, lambda _: next(replacements))
+            _translate_document(
+                document,
+                lambda _: next(replacements),
+                segment_notes if include_notes_comments else (),
+            )
             _save_docx(document, destination)
         elif self.path.suffix.lower() == ".pdf":
-            write_pdf_translation(destination, translations)
+            write_pdf_translation(
+                destination,
+                translations,
+                segment_notes=segment_notes,
+                include_notes_comments=include_notes_comments,
+            )
         else:
             write_txt(destination, self.assemble(translations))

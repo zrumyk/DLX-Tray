@@ -22,7 +22,6 @@ from dlx_tray.contracts.cloud_v1 import MeResponse
 from dlx_tray.core.diagnostics import DiagnosticTimeline, DLXConnection
 from dlx_tray.core.models import (
     DEFAULT_TRANSLATION_OPTIONS,
-    GlossaryEntry,
     ProviderUnavailableError,
     TranslationOptions,
 )
@@ -32,7 +31,7 @@ from dlx_tray.core.router import HybridRouter
 from dlx_tray.core.single_flight import SingleFlight
 from dlx_tray.fileio.translation import SourceFile
 from dlx_tray.logging_setup import file_logging
-from dlx_tray.providers.base import BlockTranslator
+from dlx_tray.providers.base import BlockTranslator, Translator
 from dlx_tray.providers.cloud_ai import CloudAiTranslator
 from dlx_tray.providers.deepl_official import DeepLOfficialTranslator
 from dlx_tray.providers.deeplx import DeeplxTranslator
@@ -56,7 +55,7 @@ from dlx_tray.ui.selection_popup import SelectionPopup
 from dlx_tray.ui.settings_dialog import SettingsDialog
 from dlx_tray.ui.single_instance import single_instance
 from dlx_tray.ui.theme import apply_theme
-from dlx_tray.ui.workers import TranslationWorker
+from dlx_tray.ui.workers import SelectionNotesWorker, TranslationWorker
 
 log = logging.getLogger(__name__)
 
@@ -125,6 +124,12 @@ def _run_window(
         formality=settings.formality,
         ui_language=settings.ui_language,
         glossary_path=data_dir / "glossaries.sqlite3",
+        philology_options=TranslationOptions(
+            register=settings.stylistic_register,
+            analysis_tier=settings.analysis_tier,
+            style_context=settings.style_context,
+            include_notes=settings.include_notes,
+        ),
     )
     history_path = data_dir / "history.sqlite3"
     cache = TranslationCache(history_path.with_name("cache.db"))
@@ -196,19 +201,28 @@ def _run_window(
             open_settings()
             return
         selection_job = select_job(text)
+        languages = window.selected_languages
         history = partial(HistoryStore, history_path, settings.history_limit)
         worker = (
             TranslationWorker(
                 selection_job,
                 text,
-                *window.selected_languages,
+                *languages,
                 settings.formality,
                 history if settings.history_enabled else None,
             )
             if selection_job is not None
             else None
         )
-        popup = SelectionPopup(worker, provider_status, window)
+        make_notes_worker = None
+        if cloud is not None and settings.provider_mode in {"automatic", "cloud_only"}:
+            options = TranslationOptions(
+                analysis_tier=window.philology_options.analysis_tier, include_notes=True
+            )
+            make_notes_worker = partial(
+                SelectionNotesWorker, make_job(cloud, options), cloud, text, *languages
+            )
+        popup = SelectionPopup(worker, provider_status, window, make_notes_worker=make_notes_worker)
         popup.finished.connect(popup_closed)
         if screen := app.screenAt(QCursor.pos()):
             popup.move(screen.availableGeometry().center() - popup.rect().center())
@@ -294,17 +308,8 @@ def _run_window(
 
     def select_job(
         content: str | SourceFile,
-        saved_terms: tuple[GlossaryEntry, ...] = (),
-        document_terms: tuple[GlossaryEntry, ...] = (),
+        options: TranslationOptions = DEFAULT_TRANSLATION_OPTIONS,
     ) -> TranslationJob | None:
-        options = TranslationOptions(
-            register=settings.stylistic_register,
-            analysis_tier=settings.analysis_tier,
-            style_context=settings.style_context,
-            include_notes=settings.include_notes,
-            glossary=saved_terms,
-            document_glossary=document_terms,
-        )
         router = HybridRouter(
             mode=settings.provider_mode,
             threshold=settings.hybrid_dlx_threshold,
@@ -318,8 +323,11 @@ def _run_window(
             file=isinstance(content, SourceFile),
             options=options,
         )
-        if translator is None:
-            return None
+        return make_job(translator, options) if translator is not None else None
+
+    def make_job(
+        translator: Translator | BlockTranslator, options: TranslationOptions
+    ) -> TranslationJob:
         uses_cloud_blocks = isinstance(translator, BlockTranslator)
         return TranslationJob(
             translator=translator,
@@ -539,7 +547,7 @@ def _run_window(
     finally:
         hotkey.stop()
         if popup is not None:
-            popup.stop_translation()
+            popup.stop_workers()
         window.hide_tray()
         if server is not None:
             server.close()
@@ -553,6 +561,11 @@ def _run_window(
 
     updated = settings.model_copy()
     updated.source_lang, updated.target_lang = window.selected_languages
+    philology = window.philology_options
+    updated.stylistic_register = philology.register
+    updated.analysis_tier = philology.analysis_tier
+    updated.style_context = philology.style_context
+    updated.include_notes = philology.include_notes
     if not geometry_restored or _window_placement(window) != initial_placement:
         updated.window_geometry = window.saveGeometry().data().hex()
     if updated != settings:

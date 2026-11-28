@@ -1,4 +1,4 @@
-"""Edit saved preferences and verify the official DeepL API key."""
+"""Edit saved preferences and verify provider credentials."""
 
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QDoubleSpinBox,
     QFormLayout,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -28,6 +29,7 @@ from PySide6.QtWidgets import (
 
 from dlx_tray.config import Settings
 from dlx_tray.contracts.cloud_v1 import MeResponse
+from dlx_tray.core.chunker import DLX_MAX_UNITS
 from dlx_tray.core.models import AuthError, CloudAuthError, Formality
 
 log = logging.getLogger(__name__)
@@ -93,8 +95,11 @@ class SettingsDialog(QDialog):
         self.provider_mode.setCurrentIndex(self.provider_mode.findData(settings.provider_mode))
         self._add(form, self.tr("Translation &provider"), self.provider_mode, "provider_mode")
 
+        cloud_group = QGroupBox(self.tr("Cloud AI"))
+        cloud_form = QFormLayout(cloud_group)
+        form.addRow(cloud_group)
         self.cloud_url = QLineEdit(str(settings.cloud_url) if settings.cloud_url else "")
-        self._add(form, self.tr("Cloud AI server &URL"), self.cloud_url, "cloud_url")
+        self._add(cloud_form, self.tr("Cloud AI server &URL"), self.cloud_url, "cloud_url")
         self.cloud_token = QLineEdit()
         self.cloud_token.setEchoMode(QLineEdit.EchoMode.Password)
         self.cloud_token.setAccessibleName(self.tr("Cloud AI token"))
@@ -111,15 +116,15 @@ class SettingsDialog(QDialog):
         cloud_row.addWidget(self.test_cloud_button)
         cloud_label = QLabel(self.tr("Cloud AI &token"))
         cloud_label.setBuddy(self.cloud_token)
-        form.addRow(cloud_label, cloud_row)
+        cloud_form.addRow(cloud_label, cloud_row)
         self.cloud_status = QLabel()
         self.cloud_status.setWordWrap(True)
-        form.addRow("", self.cloud_status)
+        cloud_form.addRow("", self.cloud_status)
         self.hybrid_threshold = QSpinBox()
-        self.hybrid_threshold.setRange(0, 1500)
+        self.hybrid_threshold.setRange(0, DLX_MAX_UNITS)
         self.hybrid_threshold.setValue(settings.hybrid_dlx_threshold)
         self._add(
-            form,
+            cloud_form,
             self.tr("DLX &threshold (UTF-16 units)"),
             self.hybrid_threshold,
             "hybrid_dlx_threshold",

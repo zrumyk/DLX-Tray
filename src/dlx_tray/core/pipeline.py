@@ -26,6 +26,8 @@ from dlx_tray.core.models import (
     Language,
     PhilologicalNote,
     RateLimitedError,
+    SegmentAnnotation,
+    TranslationAnnotations,
     TranslationCancelledError,
     TranslationError,
     TranslationOptions,
@@ -86,6 +88,7 @@ class JobResult:
     # One entry per translated chunk or cached segment, with None for a skipped chunk.
     chunk_providers: tuple[str | None, ...] = ()
     segment_notes: tuple[tuple[PhilologicalNote, ...], ...] = ()
+    annotations: TranslationAnnotations | None = None
 
 
 @dataclass(slots=True)
@@ -106,6 +109,7 @@ class _Segment:
     first_provider: int = 0
     detected: Language | None = None
     notes: list[PhilologicalNote] = field(default_factory=list)
+    glossary: dict[GlossaryEntry, None] = field(default_factory=dict)
     cache_options: TranslationOptions | None = None
 
 
@@ -287,6 +291,8 @@ class TranslationJob:
         parts: list[str] = []
         providers: list[str | None] = []
         segment_notes: list[tuple[PhilologicalNote, ...]] = []
+        annotations: list[SegmentAnnotation] = []
+        source_start = target_start = 0
         detected_source: Language | None = None
 
         def shared_result(provider: str) -> None:
@@ -562,13 +568,42 @@ class TranslationJob:
                     )
 
         def finish_segment(piece: _Piece) -> None:
+            nonlocal source_start, target_start
             group = piece.segment
             notes = tuple(group.notes)
             segment_notes.append(notes)
-            if on_segment is not None or (cache is not None and not cancel.is_set()):
+            if (
+                block_translator
+                or on_segment is not None
+                or (cache is not None and not cancel.is_set())
+            ):
                 translated = "".join(parts[group.first_part :])
+                next_target = target_start + len(translated)
                 if group.source.separator:
                     translated = translated[: -len(group.source.separator)]
+                if block_translator:
+                    matched = (
+                        group.cache_options.glossary
+                        if group.cache_options is not None
+                        else tuple(group.glossary)
+                    )
+                    annotations.append(
+                        SegmentAnnotation(
+                            source_start,
+                            target_start,
+                            tuple(
+                                dict.fromkeys(
+                                    name
+                                    for name in providers[group.first_provider :]
+                                    if name is not None
+                                )
+                            ),
+                            matched,
+                            notes,
+                        )
+                    )
+                    source_start += len(group.source.text) + len(group.source.separator)
+                    target_start = next_target
                 if on_segment is not None:
                     on_segment(translated)
                 if (
@@ -633,6 +668,8 @@ class TranslationJob:
                         if result is not None:
                             group.detected = group.detected or result.detected_source
                             group.notes.extend(result.notes)
+                            if group.cache_options is None:
+                                group.glossary.update(dict.fromkeys(piece.glossary))
                         if piece.cached is not None and on_provider is not None:
                             on_provider(piece.cached.provider)
                         if not count_segments or piece.last:
@@ -653,6 +690,7 @@ class TranslationJob:
             failure,
             tuple(providers),
             tuple(segment_notes) if any(segment_notes) else (),
+            TranslationAnnotations(options.register, tuple(annotations)) if annotations else None,
         )
 
     def _serial_attempt(

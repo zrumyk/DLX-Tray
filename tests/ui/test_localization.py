@@ -127,6 +127,9 @@ def test_saved_interface_language_applies_on_next_start(
         _check_language_lists(window, ukrainian=settings.ui_language == "uk")
         if settings.ui_language == "uk":
             assert QCoreApplication.translate("Startup", "DLX ready") == "DLX готовий"
+            assert window.inspector_toggle.text() == "Інспектор"
+            assert window.register_picker.currentText() == "Нейтральний"
+            assert window.notes_toggle.text() == "Філологічні примітки"
             assert qapp.testAttribute(Qt.ApplicationAttribute.AA_DontUseNativeDialogs)
             picker = QFileDialog(window)
             labels = {label.objectName(): label.text() for label in picker.findChildren(QLabel)}

@@ -351,7 +351,7 @@ requires-dist = [
     { name = "pdfplumber", specifier = ">=0.11" },
     { name = "pydantic-settings", specifier = ">=2.6" },
     { name = "pyside6-essentials", specifier = ">=6.8" },
-    { name = "python-docx", specifier = ">=1.1" },
+    { name = "python-docx", specifier = ">=1.2.0" },
 ]
 
 [package.metadata.requires-dev]

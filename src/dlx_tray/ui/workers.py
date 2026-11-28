@@ -14,7 +14,9 @@ from PySide6.QtCore import QObject, Signal, Slot
 from dlx_tray.contracts.cloud_v1 import EXTRACT_TERMS_MAX_UNITS
 from dlx_tray.core import chunker
 from dlx_tray.core.models import (
+    AnalysisTier,
     Chunk,
+    CloudDeepTierForbiddenError,
     Formality,
     Language,
     TranslationCancelledError,
@@ -34,6 +36,64 @@ from dlx_tray.services.history import HistoryStore
 from dlx_tray.services.term_extraction import extraction_request
 
 log = logging.getLogger(__name__)
+
+
+class SelectionNotesWorker(QObject):
+    finished = Signal(object)
+    failed = Signal(object)
+
+    def __init__(
+        self,
+        job: TranslationJob,
+        cloud: CloudAiTranslator,
+        text: str,
+        source: Language,
+        target: Language,
+    ) -> None:
+        super().__init__()
+        self._job = job
+        self._cloud = cloud
+        self._text = text
+        self._source = source
+        self._target = target
+        self._cancel = Event()
+
+    def cancel(self) -> None:
+        self._cancel.set()
+
+    @Slot()
+    def run(self) -> None:
+        options = self._job.default_options
+        tier = options.analysis_tier
+
+        def request(tier: AnalysisTier) -> JobResult:
+            return self._job.run(
+                self._text,
+                self._source,
+                self._target,
+                cancel=self._cancel,
+                options=replace(options, analysis_tier=tier),
+            )
+
+        try:
+            if (
+                tier is AnalysisTier.DEEP
+                and not self._cloud.check_token(cancel=self._cancel).allow_deep_tier
+            ):
+                tier = AnalysisTier.STANDARD
+            result = request(tier)
+            if isinstance(result.error, CloudDeepTierForbiddenError) and tier is AnalysisTier.DEEP:
+                result = request(AnalysisTier.STANDARD)
+        except TranslationCancelledError:
+            self.finished.emit(None)
+        except Exception as exc:
+            log.warning("Selection notes failed (%s)", type(exc).__name__)
+            self.failed.emit(type(exc))
+        else:
+            if result.error is not None:
+                self.failed.emit(type(result.error))
+            else:
+                self.finished.emit(None if self._cancel.is_set() else result.segment_notes)
 
 
 class FileIOWorker(QObject):
@@ -222,6 +282,7 @@ class TranslationWorker(QObject):
                 target_text=result.text,
                 provider=", ".join(providers),
                 file_name=content.path.name if isinstance(content, SourceFile) else None,
+                annotations=result.annotations,
             )
         except (sqlite3.Error, OSError, ValueError) as exc:
             log.warning("Could not save translation history (%s)", type(exc).__name__)
@@ -317,7 +378,23 @@ class TranslationWorker(QObject):
         )
         partial = preview.text[sum(map(len, translations)) :]
         preview_text = source.assemble(translations, partial=partial)
-        preview = replace(preview, text=preview_text)
+        annotations = preview.annotations
+        if annotations is not None:
+            offset = len(source.txt_prefix)
+            segments = []
+            for index, segment in enumerate(annotations.segments):
+                segments.append(
+                    replace(
+                        segment,
+                        source_start=segment.source_start + offset,
+                        target_start=segment.target_start + offset,
+                    )
+                )
+                offset += (
+                    len(source.txt_separators[index]) if source.txt_separators is not None else 2
+                )
+            annotations = replace(annotations, segments=tuple(segments))
+        preview = replace(preview, text=preview_text, annotations=annotations)
         return FileJobResult(
             preview, None if preview.cancelled or preview.error else tuple(translations)
         )

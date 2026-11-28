@@ -118,6 +118,23 @@ class GlossaryEntry:
 
 
 @dataclass(frozen=True, slots=True)
+class SegmentAnnotation:
+    """Philology details and segment starts in the displayed source and result."""
+
+    source_start: int
+    target_start: int
+    providers: tuple[str, ...]
+    glossary: tuple[GlossaryEntry, ...]
+    notes: tuple[PhilologicalNote, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class TranslationAnnotations:
+    register: StylisticRegister
+    segments: tuple[SegmentAnnotation, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class TranslationOptions:
     analysis_tier: AnalysisTier = AnalysisTier.STANDARD
     register: StylisticRegister = StylisticRegister.NEUTRAL
