@@ -15,7 +15,7 @@ from dlx_tray.core.retry import DispatchTicket, RequestDispatch
 from dlx_tray.core.single_flight import SegmentFlights, SingleFlight
 
 type Attempt = Callable[[RequestDispatch], TranslationResult]
-type BatchAttempt[T] = Callable[[T, T, RequestDispatch], Sequence[TranslationResult]]
+type BatchAttempt[T] = Callable[[Sequence[T], RequestDispatch], Sequence[TranslationResult]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,8 +70,9 @@ def ordered_attempts[T](
     resolve: Callable[[T, Callable[[], TranslationResult]], TranslationResult | None],
     on_shared: Callable[[str], None] | None,
     *,
-    can_pair: Callable[[T, T], bool] = lambda _first, _second: False,
+    can_pack: Callable[[Sequence[T], T], bool] = lambda _items, _next: False,
     batch: BatchAttempt[T] | None = None,
+    batch_size: int = 1,
     wait_for_first_result: bool = False,
 ) -> Generator[tuple[T, TranslationResult | None]]:
     pending: deque[_Pending[T]] = deque()
@@ -130,14 +131,14 @@ def ordered_attempts[T](
         return entry
 
     def run_leaders(
-        entries: tuple[_Pending[T], ...],
+        entries: list[_Pending[T]],
         request: RequestDispatch,
     ) -> None:
         first = entries[0].work
         try:
-            if len(entries) == 2:
+            if len(entries) > 1:
                 assert batch is not None
-                results = batch(first.item, entries[1].work.item, request)
+                results = batch([entry.work.item for entry in entries], request)
             else:
                 assert first.attempt is not None
                 results = (first.attempt(request),)
@@ -234,7 +235,7 @@ def ordered_attempts[T](
                     and len(leaders) < dispatch.concurrency
                     and started.is_set()
                     and (first_request is None or first_request.done())
-                    and (dispatch.concurrency == 2 or not pending)
+                    and (dispatch.concurrency > 1 or not pending)
                 ):
                     while (next_item := lookahead or next(inputs, None)) is not None:
                         index, item = next_item
@@ -245,23 +246,30 @@ def ordered_attempts[T](
                             if len(pending) == 1 or dispatch.cancel.is_set():
                                 break
                             continue
-                        if batch is not None and item.pair_with_next:
-                            lookahead = next(inputs, None)
-                        pairable = (
-                            lookahead is not None
-                            and lookahead[1].attempt is not None
-                            and can_pair(item.item, lookahead[1].item)
-                        )
                         entry = claim(index, item)
                         future = entry.future
                         assert future is not None
                         if not entry.follower:
-                            entries = (entry,)
-                            if pairable and lookahead is not None:
+                            entries = [entry]
+                            items = [item.item]
+                            while (
+                                len(entries) < batch_size
+                                and entries[-1].work.pair_with_next
+                                and not stopped.is_set()
+                            ):
+                                lookahead = next(inputs, None)
+                                if (
+                                    lookahead is None
+                                    or lookahead[1].attempt is None
+                                    or not can_pack(items, lookahead[1].item)
+                                ):
+                                    break
                                 paired = claim(*lookahead)
                                 lookahead = None
-                                if not paired.follower:
-                                    entries = (entry, paired)
+                                if paired.follower:
+                                    break
+                                entries.append(paired)
+                                items.append(paired.work.item)
                             started = Event()
                             # The final result is published last and tracks this request's slot.
                             last_future = entries[-1].future

@@ -197,7 +197,7 @@ class TranslationWorker(QObject):
         if self._job.uses_segments:
             return self._translate_file_segments(source)
         counts = [
-            sum(chunk.translatable for chunk in chunker.split(text, self._job.max_units))
+            sum(chunk.translatable for chunk in chunker.split(text, self._job.chunk_budget))
             for text in source.segments
         ]
         total = sum(counts)

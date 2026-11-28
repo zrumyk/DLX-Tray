@@ -6,6 +6,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- Choose **DLX only** in Settings to keep translations on the configured DLX provider.
+
+### Changed
+- The official DeepL provider can translate adjacent uncached segments in a single request
+  while preserving their order in the preview and exported file.
+
 ## [2.0.0] - 2026-11-28
 
 ### Added

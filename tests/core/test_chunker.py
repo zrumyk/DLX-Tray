@@ -59,7 +59,7 @@ class TestValidation:
 
     def test_defaults(self) -> None:
         assert DEFAULT_MAX_UNITS == 1500
-        assert HARD_MAX_UNITS == 1500
+        assert HARD_MAX_UNITS == 20_000
         split("x", HARD_MAX_UNITS)
         split("x", 2)
 
@@ -107,8 +107,8 @@ class TestEdgeCases:
 
     def test_no_spaces_at_all(self) -> None:
         text = "漢字" * 2000
-        chunks = split(text, HARD_MAX_UNITS)
-        assert_valid(text, chunks, HARD_MAX_UNITS)
+        chunks = split(text, DEFAULT_MAX_UNITS)
+        assert_valid(text, chunks, DEFAULT_MAX_UNITS)
         assert len(chunks) == 3
         assert all(c.separator == "" for c in chunks)
 
@@ -218,6 +218,17 @@ _ALPHABET = [
 
 _max_units = st.integers(min_value=MIN_MAX_UNITS, max_value=HARD_MAX_UNITS)
 _small_max_units = st.integers(min_value=MIN_MAX_UNITS, max_value=40)
+
+
+@pytest.mark.parametrize("max_units", [1_500, 12_000, 20_000])
+@given(element=st.sampled_from(["a", "漢", "\U0001f600"]), extra=st.integers(1, 100))
+def test_round_trip_at_provider_limits(max_units: int, element: str, extra: int) -> None:
+    text = element * (max_units // utf16_len(element) + extra)
+    chunks = split(text, max_units)
+    assert len(chunks) == 2
+    assert_valid(text, chunks, max_units)
+
+
 _tricky_text = st.lists(st.sampled_from(_ALPHABET), max_size=400).map("".join)
 
 

@@ -141,7 +141,7 @@ class MainWindow(QMainWindow):
         help_menu = self.menuBar().addMenu(self.tr("Hel&p"))
         self.about_action = help_menu.addAction(self.tr("&About DLX Tray…"))
         self.about_action.triggered.connect(self._show_about)
-        self._chunk_size = translation_job.max_units if translation_job else chunk_size
+        self._chunk_size = translation_job.chunk_budget if translation_job else chunk_size
         self._job = translation_job
         self._formality = formality
         self._history_path: Path | None = None
@@ -617,7 +617,7 @@ class MainWindow(QMainWindow):
             self._translation_unavailable_reason or self.tr("Translate (Ctrl+Enter)")
         )
         if job is not None:
-            self._chunk_size = job.max_units
+            self._chunk_size = job.chunk_budget
         elif chunk_size is not None:
             self._chunk_size = chunk_size
         if formality is not None:

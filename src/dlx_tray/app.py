@@ -135,12 +135,11 @@ def _run_window(
     dlx_connection: DLXConnection | None = None
     startup: _DLXStartup | None = None
 
+    def uses_dlx() -> bool:
+        return settings.provider_mode in {"automatic", "dlx_only"}
+
     def cooldown_deadline() -> float:
-        return (
-            dlx.cooldown_deadline
-            if dlx is not None and settings.provider_mode == "automatic"
-            else 0.0
-        )
+        return dlx.cooldown_deadline if dlx is not None and uses_dlx() else 0.0
 
     tray_available = window.enable_tray(app.windowIcon(), cooldown_deadline)
     hotkey = SelectionHotkey(window)
@@ -209,9 +208,7 @@ def _run_window(
             dlx_lock=lock_path,
             log_path=config.app_data_dir() / "logs" / "dlx-tray.log",
             provider=window.diagnostic_provider,
-            dlx_status=(dlx_connection or "starting")
-            if settings.provider_mode == "automatic"
-            else "disabled",
+            dlx_status=(dlx_connection or "starting") if uses_dlx() else "disabled",
             rate_limited=window.diagnostic_rate_limited,
             has_key=bool(api_key),
             chunk_size=settings.chunk_size,
@@ -253,6 +250,8 @@ def _run_window(
             status = QCoreApplication.translate("Startup", "Add a DeepL API key in Settings")
         elif settings.provider_mode == "official_only":
             status = QCoreApplication.translate("Startup", "Using the official DeepL API")
+        elif settings.provider_mode == "cloud_only":
+            status = QCoreApplication.translate("Startup", "Cloud AI translation is unavailable")
         else:
             status = dlx_status
         provider_status = status
@@ -277,13 +276,22 @@ def _run_window(
             chunk_size=settings.chunk_size,
             formality=settings.formality,
             requires_settings=requires_settings,
-            can_add_api_key=translator is dlx and dlx is not None and api_key is None,
+            can_add_api_key=(
+                settings.provider_mode == "automatic"
+                and translator is dlx
+                and dlx is not None
+                and api_key is None
+            ),
         )
 
     def refresh_provider() -> None:
         nonlocal translator
-        if settings.provider_mode == "official_only":
+        if settings.provider_mode == "cloud_only":
+            translator = None
+        elif settings.provider_mode == "official_only":
             translator = official
+        elif settings.provider_mode == "dlx_only":
+            translator = dlx
         elif dlx_connection == "starting":
             translator = None
         elif dlx is not None and official is not None:
@@ -366,7 +374,7 @@ def _run_window(
 
     def start_dlx_if_needed() -> None:
         nonlocal dlx, dlx_connection, dlx_status, startup
-        if settings.provider_mode == "official_only" or dlx_connection is not None:
+        if not uses_dlx() or dlx_connection is not None:
             return
         if settings.deeplx_url is not None:
             token = settings.deeplx_token.get_secret_value() if settings.deeplx_token else ""
@@ -396,7 +404,7 @@ def _run_window(
             else:
                 dlx_status = QCoreApplication.translate("Startup", "DLX unavailable")
                 dlx_connection = "unavailable"
-            if settings.provider_mode == "automatic":
+            if uses_dlx():
                 refresh_job()
 
         connection = worker.finished.connect(startup_finished, Qt.ConnectionType.QueuedConnection)

@@ -83,7 +83,7 @@ def test_migrate_unversioned_profile(
         data["request_delay"] = expected
 
     assert Settings.load(path, migrate=True).request_delay == expected
-    assert json.loads(path.read_text(encoding="utf-8")) == data | {"settings_version": 1}
+    assert json.loads(path.read_text(encoding="utf-8")) == data | {"settings_version": 2}
 
 
 def test_migration_uses_json_and_preserves_override_precedence(
@@ -98,15 +98,39 @@ def test_migration_uses_json_and_preserves_override_precedence(
     settings = Settings.load(path, migrate=True)
     assert settings.request_delay == 5
     assert settings.is_overridden("request_delay")
-    assert settings.settings_version == 1
+    assert settings.settings_version == 2
     assert json.loads(path.read_text(encoding="utf-8")) == {
         "request_delay": 0,
-        "settings_version": 1,
+        "settings_version": 2,
     }
 
     monkeypatch.delenv("DLX_REQUEST_DELAY")
     assert Settings.load(path, migrate=True).request_delay == 1
     assert Settings.load(path, env_file=None, migrate=True).request_delay == 0
+
+
+def test_v1_settings_migrate_without_changing_explicit_delay_or_persisting_token(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    path = tmp_path / "settings.json"
+    path.write_text(
+        '{"settings_version": 1, "request_delay": 2.5, "provider_mode": "official_only", '
+        '"cloud_api_token": "legacy-stray-value"}',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("DLX_CLOUD_API_TOKEN", "environment-override")
+    settings = Settings.load(path, env_file=None, migrate=True)
+    assert settings.settings_version == 2
+    assert settings.request_delay == 2.5
+    assert settings.provider_mode == "official_only"
+    assert settings.hybrid_dlx_threshold == 1_500
+    assert settings.stylistic_register == "neutral"
+    assert settings.analysis_tier == "standard"
+    assert settings.cloud_api_token is not None
+    assert settings.cloud_api_token.get_secret_value() == "environment-override"
+    assert "cloud_api_token" not in json.loads(path.read_text(encoding="utf-8"))
+    settings.save(path)
+    assert "cloud_api_token" not in json.loads(path.read_text(encoding="utf-8"))
 
 
 @pytest.mark.parametrize("saved_delay", [0, 2.5])
@@ -134,7 +158,7 @@ def test_failed_migration_uses_migrated_delay_and_can_be_persisted_later(
     assert restarted.theme == "dark"
     assert not restarted.history_enabled
     assert restarted.migration_error is None
-    assert json.loads(path.read_text(encoding="utf-8"))["settings_version"] == 1
+    assert json.loads(path.read_text(encoding="utf-8"))["settings_version"] == 2
 
 
 def test_save_preserves_preferences_shadowed_by_overrides(

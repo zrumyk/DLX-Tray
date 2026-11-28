@@ -12,7 +12,7 @@ from threading import Event, Lock, Thread
 from typing import cast
 from urllib.parse import parse_qs, urlsplit
 
-from dlx_tray.core.chunker import HARD_MAX_UNITS, utf16_len
+from dlx_tray.core.chunker import DLX_MAX_UNITS, utf16_len
 
 DEFAULT_TOKEN = "fake-dlx"
 ERRORS = {
@@ -135,11 +135,11 @@ class _Handler(BaseHTTPRequestHandler):
             self._error(404, "No text to translate")
             return
         units = sum(utf16_len(item) for item in texts if item.strip())
-        if units > HARD_MAX_UNITS:
+        if units > DLX_MAX_UNITS:
             self._error(
                 413,
                 f"text exceeds maximum length: {units} characters "
-                f"(anonymous oneshot limit is {HARD_MAX_UNITS})",
+                f"(anonymous oneshot limit is {DLX_MAX_UNITS})",
             )
             return
 

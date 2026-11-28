@@ -81,6 +81,9 @@ class SettingsDialog(QDialog):
             self.tr("Automatic (DLX with official API fallback)"), "automatic"
         )
         self.provider_mode.addItem(self.tr("Official DeepL API only"), "official_only")
+        self.provider_mode.addItem(self.tr("DLX only"), "dlx_only")
+        if settings.provider_mode == "cloud_only":
+            self.provider_mode.addItem(self.tr("Cloud AI only (unavailable)"), "cloud_only")
         self.provider_mode.setCurrentIndex(self.provider_mode.findData(settings.provider_mode))
         self._add(form, self.tr("Translation &provider"), self.provider_mode, "provider_mode")
 

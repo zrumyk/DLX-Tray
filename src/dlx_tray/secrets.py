@@ -1,4 +1,4 @@
-"""Store the official DeepL API key in Windows Credential Manager."""
+"""Store provider credentials in Windows Credential Manager."""
 
 import logging
 import sys
@@ -12,8 +12,8 @@ from dlx_tray import APP_NAME
 
 log = logging.getLogger(__name__)
 
-_SERVICE = APP_NAME
-_USERNAME = "deepl_api_key"
+_DEEPL = (APP_NAME, "deepl_api_key")
+_CLOUD = (f"{APP_NAME} Cloud", "cloud_api_token")
 
 
 @contextmanager
@@ -25,38 +25,63 @@ def _credential_manager() -> Iterator[Windows.WinVaultKeyring]:
         yield Windows.WinVaultKeyring()
     except (Windows.pywintypes.error, OSError, UnicodeError):  # pyright: ignore[reportPrivateImportUsage]
         raise KeyringError(
-            "Windows Credential Manager could not access the DeepL API key"
+            "Windows Credential Manager could not access the provider credential"
         ) from None
 
 
-def get_deepl_api_key(override: str | None = None) -> str | None:
-    """Resolve a key with the environment/.env override supplied by Settings."""
+def _get_credential(identity: tuple[str, str], override: str | None) -> str | None:
     if override and (key := override.strip()):
         return key
     try:
         with _credential_manager() as vault:
-            stored = vault.get_password(_SERVICE, _USERNAME)
+            stored = vault.get_password(*identity)
     except KeyringError:
-        log.warning("Could not read the DeepL API key from Windows Credential Manager")
+        log.warning("Could not read %s from Windows Credential Manager", identity[1])
         return None
     return (stored.strip() or None) if isinstance(stored, str) else None
 
 
-def set_deepl_api_key(key: str) -> None:
+def _set_credential(identity: tuple[str, str], key: str) -> None:
+    service, username = identity
     key = key.strip()
     if not key:
-        raise ValueError("The DeepL API key must not be blank")
+        raise ValueError(f"{username} must not be blank")
     with _credential_manager() as vault:
-        existing = vault._read_credential(_SERVICE)
-        if existing is not None and existing["UserName"] != _USERNAME:
-            vault.set_password(_SERVICE, _USERNAME, key)
+        existing = vault._read_credential(service)
+        if existing is not None and existing["UserName"] != username:
+            vault.set_password(service, username, key)
         else:
             # WinVault's public setter would keep the previous key in a second entry.
-            vault._set_password(_SERVICE, _USERNAME, key)
+            vault._set_password(service, username, key)
+
+
+def _delete_credential(identity: tuple[str, str]) -> None:
+    # WinVault raises PasswordDeleteError when the credential is absent.
+    with _credential_manager() as vault, suppress(PasswordDeleteError):
+        vault.delete_password(*identity)
+
+
+def get_deepl_api_key(override: str | None = None) -> str | None:
+    """Resolve a key with the environment/.env override supplied by Settings."""
+    return _get_credential(_DEEPL, override)
+
+
+def set_deepl_api_key(key: str) -> None:
+    _set_credential(_DEEPL, key)
 
 
 def delete_deepl_api_key() -> None:
-    """Remove the stored key if present."""
-    # WinVault raises PasswordDeleteError when the credential is absent.
-    with _credential_manager() as vault, suppress(PasswordDeleteError):
-        vault.delete_password(_SERVICE, _USERNAME)
+    _delete_credential(_DEEPL)
+
+
+def get_cloud_api_token(override: str | None = None) -> str | None:
+    """Resolve a token with the environment/.env override supplied by Settings."""
+    return _get_credential(_CLOUD, override)
+
+
+def set_cloud_api_token(token: str) -> None:
+    _set_credential(_CLOUD, token)
+
+
+def delete_cloud_api_token() -> None:
+    _delete_credential(_CLOUD)

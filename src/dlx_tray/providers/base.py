@@ -7,7 +7,15 @@ from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from typing import Protocol, runtime_checkable
 
-from dlx_tray.core.models import Formality, Language, TranslationResult
+from dlx_tray.core.models import (
+    ContextBlock,
+    Formality,
+    IndexedResult,
+    Language,
+    TranslationOptions,
+    TranslationResult,
+)
+from dlx_tray.core.retry import RequestDispatch
 
 
 @runtime_checkable
@@ -29,6 +37,23 @@ class Translator(Protocol):
         target: Language,
         formality: Formality = Formality.DEFAULT,
     ) -> list[TranslationResult]: ...
+
+
+@runtime_checkable
+class BlockTranslator(Protocol):
+    """A backend that translates indexed segments with optional read-only context."""
+
+    @property
+    def name(self) -> str: ...
+
+    def translate_block(
+        self,
+        block: ContextBlock,
+        source: Language,
+        target: Language,
+        options: TranslationOptions,
+        dispatch: RequestDispatch,
+    ) -> Sequence[IndexedResult]: ...
 
 
 def parse_retry_after(value: str | None, now: datetime | None = None) -> float | None:

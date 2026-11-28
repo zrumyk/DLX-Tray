@@ -82,6 +82,71 @@ class Formality(StrEnum):
     PREFER_LESS = "prefer_less"
 
 
+class StylisticRegister(StrEnum):
+    NEUTRAL = "neutral"
+    LITERARY = "literary"
+    ACADEMIC = "academic"
+    JOURNALISTIC = "journalistic"
+    OFFICIAL = "official"
+    LITERAL = "literal"
+
+
+class AnalysisTier(StrEnum):
+    STANDARD = "standard"
+    DEEP = "deep"
+
+
+class NoteKind(StrEnum):
+    ALTERNATIVE = "alternative"
+    IDIOM = "idiom"
+    GRAMMAR = "grammar"
+
+
+@dataclass(frozen=True, slots=True)
+class PhilologicalNote:
+    kind: NoteKind
+    text: str
+
+
+@dataclass(frozen=True, slots=True)
+class GlossaryEntry:
+    source_term: str
+    target_term: str
+    priority: int = 0
+    pos: str | None = None
+    notes: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class TranslationOptions:
+    analysis_tier: AnalysisTier = AnalysisTier.STANDARD
+    register: StylisticRegister = StylisticRegister.NEUTRAL
+    style_context: str = ""
+    glossary: tuple[GlossaryEntry, ...] = ()
+    include_notes: bool = False
+
+    def __post_init__(self) -> None:
+        style_context = " ".join(self.style_context.split())
+        if len(style_context) > 200:
+            raise ValueError("style context must contain at most 200 characters")
+        object.__setattr__(self, "style_context", style_context)
+
+
+DEFAULT_TRANSLATION_OPTIONS = TranslationOptions()
+
+
+@dataclass(frozen=True, slots=True)
+class IndexedSegment:
+    index: int
+    text: str
+
+
+@dataclass(frozen=True, slots=True)
+class ContextBlock:
+    segments: tuple[IndexedSegment, ...]
+    context_before: tuple[str, ...] = ()
+
+
 @dataclass(frozen=True, slots=True)
 class Chunk:
     """One piece of a split text.
@@ -108,6 +173,13 @@ class TranslationResult:
     text: str
     detected_source: Language | None
     provider: str
+    notes: tuple[PhilologicalNote, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class IndexedResult:
+    index: int
+    result: TranslationResult
 
 
 class TranslationError(Exception):
@@ -136,6 +208,14 @@ class TextTooLongError(TranslationError):
 
 class AuthError(TranslationError):
     """The provider reported an authentication failure."""
+
+
+class CloudAuthError(AuthError):
+    """Cloud AI denied access to the service or requested tier."""
+
+
+class CloudQuotaExceededError(TranslationError):
+    """The Cloud AI character quota is exhausted."""
 
 
 class DlxAuthError(AuthError):
