@@ -12,7 +12,104 @@ from docx.oxml import OxmlElement, parse_xml
 from docx.oxml.ns import nsdecls, qn
 from docx.shared import Inches
 
+from dlx_tray.core.models import NoteKind, PhilologicalNote
 from dlx_tray.fileio.docx_io import translate_docx
+from dlx_tray.fileio.translation import SourceFile
+
+
+def test_export_notes_preserves_existing_comments_and_hoists_hyperlink_anchors(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "comment-source.docx"
+    destination = tmp_path / "comment-export.docx"
+    plain = tmp_path / "comment-plain.docx"
+    document = Document()
+    first = document.add_paragraph(style="Subtitle")
+    first.add_run("Unchanged ").bold = True
+    first.add_run("quote").italic = True
+    earlier = document.add_paragraph()
+    existing = document.add_comment(earlier.add_run("Earlier comment"), "Existing note", "Author")
+    existing._comment_elm.id = 7
+    for marker in earlier._p.xpath(
+        ".//w:commentRangeStart | .//w:commentRangeEnd | .//w:commentReference"
+    ):
+        marker.set(qn("w:id"), "7")
+    linked = document.add_paragraph()
+    link = OxmlElement("w:hyperlink")
+    link.set(
+        qn("r:id"), document.part.relate_to("https://example.test", RT.HYPERLINK, is_external=True)
+    )
+    link.append(parse_xml(f"<w:r {nsdecls('w')}><w:t>Link</w:t></w:r>"))
+    linked._p.append(link)
+    table = document.add_table(rows=1, cols=1, style="Table Grid")
+    table.cell(0, 0).text = "Cell"
+    document.sections[0].header.paragraphs[0].text = "Header"
+    document.sections[0].footer.paragraphs[0].text = "Footer"
+    document.save(str(source))
+
+    snapshot = SourceFile.read(source)
+    assert snapshot.segments == (
+        "Unchanged quote",
+        "Earlier comment",
+        "Link",
+        "Cell",
+        "Header",
+        "Footer",
+    )
+    notes = tuple(
+        (PhilologicalNote(NoteKind.ALTERNATIVE, text),)
+        for text in (
+            "Unchanged segment note",
+            "Extra note",
+            "Link note",
+            "Cell note",
+            "Header note",
+            "Footer note",
+        )
+    )
+    translations = (
+        "Unchanged quote",
+        "Earlier comment",
+        "Translated link",
+        "New cell",
+        "New header",
+        "New footer",
+    )
+    snapshot.save(destination, translations, segment_notes=notes, include_notes_comments=True)
+    snapshot.save(plain, translations, segment_notes=notes)
+
+    word = Document(str(destination))
+    assert [(comment.comment_id, comment.text) for comment in word.comments] == [
+        (7, "Existing note"),
+        (8, "Unchanged segment note"),
+        (9, "Extra note"),
+        (10, "Link note"),
+        (11, "Cell note"),
+    ]
+    assert [comment.text for comment in Document(str(plain)).comments] == ["Existing note"]
+    unchanged, earlier, translated_link = word.paragraphs
+    assert unchanged.style is not None and unchanged.style.name == "Subtitle"
+    assert unchanged.text == "Unchanged quote"
+    assert [run.text for run in unchanged.runs if run.text] == ["Unchanged ", "quote"]
+    assert unchanged.runs[0].bold and unchanged.runs[1].italic
+    assert earlier._p.xpath("./w:r/w:commentReference/@w:id") == ["9", "7"]
+    (hyperlink,) = translated_link.hyperlinks
+    assert hyperlink.text == "Translated link" and hyperlink.url == "https://example.test"
+    assert [element.tag for element in translated_link._p] == [
+        qn("w:commentRangeStart"),
+        qn("w:hyperlink"),
+        qn("w:commentRangeEnd"),
+        qn("w:r"),
+    ]
+    assert translated_link._p.xpath("./w:r/w:commentReference/@w:id") == ["10"]
+    (translated_table,) = word.tables
+    assert translated_table.style is not None and translated_table.style.name == "Table Grid"
+    assert translated_table.cell(0, 0).text == "New cell"
+    section = word.sections[0]
+    for story, expected in ((section.header, "New header"), (section.footer, "New footer")):
+        (paragraph,) = story.paragraphs
+        assert paragraph.text == expected
+        assert not paragraph._p.xpath(".//w:commentRangeStart | .//w:commentReference")
 
 
 def test_twenty_page_document_round_trip(tmp_path: Path) -> None:

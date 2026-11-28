@@ -1,6 +1,6 @@
 """Reconstruct paragraphs from a PDF text layer and export their translations."""
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from itertools import pairwise
 from pathlib import Path
@@ -9,7 +9,9 @@ from statistics import median_low
 import pdfplumber
 from docx import Document
 
-from .docx_io import _save_docx
+from dlx_tray.core.models import PhilologicalNote
+
+from .docx_io import _NoteComments, _save_docx
 from .txt import write_txt
 
 
@@ -83,16 +85,34 @@ def _page_paragraphs(lines: list[_Line]) -> list[str]:
     return paragraphs
 
 
-def translate_pdf(source: Path, destination: Path, translate: Callable[[str], str]) -> None:
+def translate_pdf(
+    source: Path,
+    destination: Path,
+    translate: Callable[[str], str],
+    *,
+    segment_notes: Sequence[tuple[PhilologicalNote, ...]] = (),
+    include_notes_comments: bool = False,
+) -> None:
     """Translate each paragraph with a synchronous callback and atomically save DOCX or TXT."""
     suffix = destination.suffix.lower()
     if suffix not in {".docx", ".txt"}:
         raise ValueError("PDF translations must be saved as .docx or .txt.")
 
-    write_pdf_translation(destination, [translate(paragraph) for paragraph in read_pdf(source)])
+    write_pdf_translation(
+        destination,
+        [translate(paragraph) for paragraph in read_pdf(source)],
+        segment_notes=segment_notes,
+        include_notes_comments=include_notes_comments,
+    )
 
 
-def write_pdf_translation(destination: Path, paragraphs: list[str] | tuple[str, ...]) -> None:
+def write_pdf_translation(
+    destination: Path,
+    paragraphs: Sequence[str],
+    *,
+    segment_notes: Sequence[tuple[PhilologicalNote, ...]] = (),
+    include_notes_comments: bool = False,
+) -> None:
     """Export already translated PDF paragraphs to DOCX or TXT."""
     suffix = destination.suffix.lower()
     if suffix == ".txt":
@@ -102,6 +122,10 @@ def write_pdf_translation(destination: Path, paragraphs: list[str] | tuple[str, 
         raise ValueError("PDF translations must be saved as .docx or .txt.")
 
     document = Document()
-    for paragraph in paragraphs:
-        document.add_paragraph(paragraph)
+    comments = _NoteComments(document, segment_notes) if include_notes_comments else None
+    for text in paragraphs:
+        paragraph = document.add_paragraph()
+        run = paragraph.add_run(text)
+        if comments is not None:
+            comments.attach(run._r, run._r)
     _save_docx(document, destination)
