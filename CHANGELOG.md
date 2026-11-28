@@ -10,6 +10,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Choose **DLX only** in Settings to keep translations on the configured DLX provider.
 - Added the self-hosted Cloud AI proxy for team translation and term extraction, with personal
   access tokens, usage quotas, and a shared Firestore cache.
+- Connect the desktop app to a Cloud AI server in Settings. In Automatic mode, short neutral
+  snippets start with DLX and can fall back to Cloud AI and the official DeepL API. Files, longer
+  texts, and philological requests use Cloud AI when configured. Cloud AI only skips DLX startup.
 
 ### Changed
 - The official DeepL provider can translate adjacent uncached segments in a single request

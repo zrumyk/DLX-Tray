@@ -15,6 +15,8 @@ from PySide6.QtWidgets import (
 
 from dlx_tray.core.models import (
     AuthError,
+    CloudDeepTierForbiddenError,
+    CloudQuotaExceededError,
     DlxAuthError,
     DlxForbiddenError,
     LocalCooldownError,
@@ -107,6 +109,10 @@ class ErrorDialog(QDialog):
             return self.tr(
                 "DLX returned HTTP 403. The server or an upstream service denied access."
             )
+        if isinstance(error, CloudDeepTierForbiddenError):
+            return self.tr("The Cloud AI token does not allow deep analysis.")
+        if isinstance(error, CloudQuotaExceededError):
+            return self.tr("The Cloud AI character quota is exhausted.")
         if isinstance(error, AuthError):
             return self.tr("The translation provider rejected its credentials.")
         if isinstance(error, LocalCooldownError):

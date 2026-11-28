@@ -6,6 +6,7 @@ import logging
 from collections.abc import Callable
 from functools import partial
 
+from pydantic import AnyHttpUrl, SecretStr
 from PySide6.QtCore import QRegularExpression, QThread, Slot
 from PySide6.QtGui import QRegularExpressionValidator
 from PySide6.QtWidgets import (
@@ -26,21 +27,23 @@ from PySide6.QtWidgets import (
 )
 
 from dlx_tray.config import Settings
-from dlx_tray.core.models import AuthError, Formality
+from dlx_tray.contracts.cloud_v1 import MeResponse
+from dlx_tray.core.models import AuthError, CloudAuthError, Formality
 
 log = logging.getLogger(__name__)
 
 
 class _SettingsOperation(QThread):
-    def __init__(self, operation: Callable[[], None], parent: QDialog) -> None:
+    def __init__(self, operation: Callable[[], MeResponse | None], parent: QDialog) -> None:
         super().__init__(parent)
-        self._operation: Callable[[], None] | None = operation
+        self._operation: Callable[[], MeResponse | None] | None = operation
+        self.result: MeResponse | None = None
         self.error: type[Exception] | None = None
 
     def run(self) -> None:
         assert self._operation is not None
         try:
-            self._operation()
+            self.result = self._operation()
         except Exception as exc:
             log.info("Settings operation failed (%s)", type(exc).__name__)
             self.error = type(exc)
@@ -57,6 +60,9 @@ class SettingsDialog(QDialog):
         key_overridden: bool,
         save: Callable[[Settings, str | None], str | None],
         check_key: Callable[[str], None],
+        cloud_token: str | None = None,
+        cloud_token_overridden: bool = False,
+        check_cloud_token: Callable[[str, str], MeResponse] | None = None,
         clear_cache: Callable[[], None] | None = None,
         autostart_registered: bool | None = None,
         set_autostart: Callable[[bool], None] | None = None,
@@ -68,6 +74,9 @@ class SettingsDialog(QDialog):
         self._override_key = api_key if key_overridden else None
         self._save = save
         self._check_key = check_key
+        self._cloud_token_overridden = cloud_token_overridden
+        self._cloud_token = cloud_token
+        self._check_cloud_token = check_cloud_token
         self._clear_cache = clear_cache
         self._autostart_registered = autostart_registered
         self._set_autostart = set_autostart
@@ -77,15 +86,44 @@ class SettingsDialog(QDialog):
         form = QFormLayout()
         layout.addLayout(form)
         self.provider_mode = QComboBox()
-        self.provider_mode.addItem(
-            self.tr("Automatic (DLX with official API fallback)"), "automatic"
-        )
+        self.provider_mode.addItem(self.tr("Automatic (DLX, Cloud AI, DeepL API)"), "automatic")
         self.provider_mode.addItem(self.tr("Official DeepL API only"), "official_only")
         self.provider_mode.addItem(self.tr("DLX only"), "dlx_only")
-        if settings.provider_mode == "cloud_only":
-            self.provider_mode.addItem(self.tr("Cloud AI only (unavailable)"), "cloud_only")
+        self.provider_mode.addItem(self.tr("Cloud AI only"), "cloud_only")
         self.provider_mode.setCurrentIndex(self.provider_mode.findData(settings.provider_mode))
         self._add(form, self.tr("Translation &provider"), self.provider_mode, "provider_mode")
+
+        self.cloud_url = QLineEdit(str(settings.cloud_url) if settings.cloud_url else "")
+        self._add(form, self.tr("Cloud AI server &URL"), self.cloud_url, "cloud_url")
+        self.cloud_token = QLineEdit()
+        self.cloud_token.setEchoMode(QLineEdit.EchoMode.Password)
+        self.cloud_token.setAccessibleName(self.tr("Cloud AI token"))
+        if cloud_token_overridden:
+            self.cloud_token.setPlaceholderText(self.tr("Provided by DLX_CLOUD_API_TOKEN"))
+            self.cloud_token.setReadOnly(True)
+        elif cloud_token is not None:
+            self.cloud_token.setText(cloud_token)
+        self.test_cloud_button = QPushButton(self.tr("Test Cloud AI token"))
+        self.test_cloud_button.setAutoDefault(False)
+        self.test_cloud_button.clicked.connect(self._start_cloud_check)
+        cloud_row = QHBoxLayout()
+        cloud_row.addWidget(self.cloud_token)
+        cloud_row.addWidget(self.test_cloud_button)
+        cloud_label = QLabel(self.tr("Cloud AI &token"))
+        cloud_label.setBuddy(self.cloud_token)
+        form.addRow(cloud_label, cloud_row)
+        self.cloud_status = QLabel()
+        self.cloud_status.setWordWrap(True)
+        form.addRow("", self.cloud_status)
+        self.hybrid_threshold = QSpinBox()
+        self.hybrid_threshold.setRange(0, 1500)
+        self.hybrid_threshold.setValue(settings.hybrid_dlx_threshold)
+        self._add(
+            form,
+            self.tr("DLX &threshold (UTF-16 units)"),
+            self.hybrid_threshold,
+            "hybrid_dlx_threshold",
+        )
 
         self.chunk_size = QSpinBox()
         self.chunk_size.setRange(200, 1500)
@@ -208,7 +246,11 @@ class SettingsDialog(QDialog):
         self.buttons.rejected.connect(self.reject)
         layout.addWidget(self.buttons)
         self.api_key.textChanged.connect(self._update_key_controls)
+        self.provider_mode.currentIndexChanged.connect(self._update_key_controls)
+        self.cloud_url.textChanged.connect(self._update_cloud_controls)
+        self.cloud_token.textChanged.connect(self._update_cloud_controls)
         self._update_key_controls()
+        self._update_cloud_controls()
 
     def _add(self, form: QFormLayout, label: str, widget: QWidget, field: str) -> None:
         if self._settings.is_overridden(field):
@@ -242,7 +284,11 @@ class SettingsDialog(QDialog):
     @Slot()
     def _update_key_controls(self) -> None:
         has_key = self._effective_key() is not None
-        self.formality.setEnabled(has_key and not self._settings.is_overridden("formality"))
+        self.formality.setEnabled(
+            has_key
+            and self.provider_mode.currentData() in {"automatic", "official_only"}
+            and not self._settings.is_overridden("formality")
+        )
         self.test_button.setEnabled(has_key and self._operation is None)
         self.key_status.clear()
 
@@ -254,16 +300,21 @@ class SettingsDialog(QDialog):
         self.key_status.setText(self.tr("Checking the API key…"))
         self._start_operation(partial(self._check_key, key), self._key_check_finished)
 
-    def _start_operation(self, work: Callable[[], None], finished: Callable[[], None]) -> None:
+    def _start_operation(
+        self, work: Callable[[], MeResponse | None], finished: Callable[[], None]
+    ) -> None:
         self._operation = _SettingsOperation(work, self)
         self._operation.finished.connect(finished)
         self.api_key.setEnabled(False)
         self.test_button.setEnabled(False)
+        self.cloud_url.setEnabled(False)
+        self.cloud_token.setEnabled(False)
+        self.test_cloud_button.setEnabled(False)
         self.clear_cache_button.setEnabled(False)
         self.buttons.setEnabled(False)
         self._operation.start()
 
-    def _finish_operation(self) -> type[Exception] | None:
+    def _finish_operation(self) -> _SettingsOperation:
         operation = self._operation
         assert operation is not None
         operation.wait()
@@ -271,13 +322,70 @@ class SettingsDialog(QDialog):
         operation.deleteLater()
         self.api_key.setEnabled(True)
         self.test_button.setEnabled(self._effective_key() is not None)
+        self.cloud_url.setEnabled(not self._settings.is_overridden("cloud_url"))
+        self.cloud_token.setEnabled(True)
+        self._update_cloud_controls()
         self.clear_cache_button.setEnabled(self._clear_cache is not None)
         self.buttons.setEnabled(True)
-        return operation.error
+        return operation
+
+    def _effective_cloud_token(self) -> str | None:
+        if self._cloud_token_overridden:
+            return self._cloud_token
+        return self.cloud_token.text().strip() or None
+
+    @Slot()
+    def _update_cloud_controls(self) -> None:
+        self.cloud_status.clear()
+        self.test_cloud_button.setEnabled(
+            self._operation is None
+            and self._check_cloud_token is not None
+            and bool(self.cloud_url.text().strip() and self._effective_cloud_token())
+        )
+
+    def _validated_cloud_url(self, settings: Settings) -> bool:
+        try:
+            value = self.cloud_url.text().strip()
+            settings.cloud_url = AnyHttpUrl(value) if value else None
+        except ValueError:
+            self.cloud_status.setText(self.tr("Enter a valid Cloud AI server URL."))
+            self.cloud_url.setFocus()
+            return False
+        return True
+
+    @Slot()
+    def _start_cloud_check(self) -> None:
+        token = self._effective_cloud_token()
+        check = self._check_cloud_token
+        if self._operation is not None or token is None or check is None:
+            return
+        settings = self._settings.model_copy()
+        if self._validated_cloud_url(settings) and settings.cloud_url is not None:
+            self.cloud_status.setText(self.tr("Checking the Cloud AI token…"))
+            self._start_operation(
+                partial(check, str(settings.cloud_url), token), self._cloud_check_finished
+            )
+
+    @Slot()
+    def _cloud_check_finished(self) -> None:
+        operation = self._finish_operation()
+        if account := operation.result:
+            self.cloud_status.setText(
+                self.tr(
+                    "Cloud AI accepted the token. {daily} characters left today "
+                    "and {monthly} this month."
+                ).format(
+                    daily=account.daily_chars_remaining, monthly=account.monthly_chars_remaining
+                )
+            )
+        elif operation.error is not None and issubclass(operation.error, CloudAuthError):
+            self.cloud_status.setText(self.tr("Cloud AI rejected the token."))
+        else:
+            self.cloud_status.setText(self.tr("Could not verify the Cloud AI token."))
 
     @Slot()
     def _key_check_finished(self) -> None:
-        error = self._finish_operation()
+        error = self._finish_operation().error
         if error is None:
             self.key_status.setText(self.tr("DeepL accepted the API key."))
         elif issubclass(error, AuthError):
@@ -305,7 +413,7 @@ class SettingsDialog(QDialog):
 
     @Slot()
     def _cache_clear_finished(self) -> None:
-        error = self._finish_operation()
+        error = self._finish_operation().error
         self.save_status.setText(
             self.tr("Translation cache cleared.")
             if error is None
@@ -336,6 +444,11 @@ class SettingsDialog(QDialog):
             return
 
         settings = self._settings.model_copy()
+        if not self._validated_cloud_url(settings):
+            return
+        token = self._effective_cloud_token()
+        settings.cloud_api_token = SecretStr(token) if token is not None else None
+        settings.hybrid_dlx_threshold = self.hybrid_threshold.value()
         try:
             settings.selection_hotkey = self.selection_hotkey.text()
         except ValueError:

@@ -134,6 +134,16 @@ class Settings(BaseSettings):
     _overridden_preferences: set[str] = PrivateAttr(default_factory=set)
     _migration_error: str | None = PrivateAttr(default=None)
 
+    @field_validator("cloud_url")
+    @classmethod
+    def _validate_cloud_url(cls, value: AnyHttpUrl | None) -> AnyHttpUrl | None:
+        if value is not None and any(
+            part is not None
+            for part in (value.username, value.password, value.query, value.fragment)
+        ):
+            raise ValueError("Cloud AI URL may not contain credentials, a query, or a fragment")
+        return value
+
     @field_validator("style_context")
     @classmethod
     def _normalize_style_context(cls, value: str) -> str:

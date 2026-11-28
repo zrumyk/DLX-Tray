@@ -105,6 +105,14 @@
         <source>The translation provider could not complete the request.</source>
         <translation>Сервісу перекладу не вдалося виконати запит.</translation>
     </message>
+    <message>
+        <source>The Cloud AI token does not allow deep analysis.</source>
+        <translation>Токен Cloud AI не дозволяє глибокий аналіз.</translation>
+    </message>
+    <message>
+        <source>The Cloud AI character quota is exhausted.</source>
+        <translation>Ліміт символів Cloud AI вичерпано.</translation>
+    </message>
 </context>
 <context>
     <name>HistoryDialog</name>
@@ -603,6 +611,10 @@
         <source>Cancelling…</source>
         <translation>Скасування…</translation>
     </message>
+    <message>
+        <source>Cloud AI</source>
+        <translation>Cloud AI</translation>
+    </message>
 </context>
 <context>
     <name>SelectionPopup</name>
@@ -658,20 +670,12 @@
         <translation>Пров&amp;айдер перекладу</translation>
     </message>
     <message>
-        <source>Automatic (DLX with official API fallback)</source>
-        <translation>Автоматично (DLX із переходом на офіційний API)</translation>
-    </message>
-    <message>
         <source>Official DeepL API only</source>
         <translation>Лише офіційний API DeepL</translation>
     </message>
     <message>
         <source>DLX only</source>
         <translation>Лише DLX</translation>
-    </message>
-    <message>
-        <source>Cloud AI only (unavailable)</source>
-        <translation>Лише Cloud AI (недоступно)</translation>
     </message>
     <message>
         <source>Could not save settings.</source>
@@ -849,6 +853,66 @@
         <source>Enter a retry count of 0 or more and a history limit of 1 or more.</source>
         <translation>Введіть щонайменше 0 повторних спроб і ліміт історії щонайменше 1.</translation>
     </message>
+    <message>
+        <source>Automatic (DLX, Cloud AI, DeepL API)</source>
+        <translation>Автоматично (DLX, Cloud AI, DeepL API)</translation>
+    </message>
+    <message>
+        <source>Cloud AI only</source>
+        <translation>Лише Cloud AI</translation>
+    </message>
+    <message>
+        <source>Cloud AI server &amp;URL</source>
+        <translation>&amp;URL сервера Cloud AI</translation>
+    </message>
+    <message>
+        <source>Cloud AI token</source>
+        <translation>Токен Cloud AI</translation>
+    </message>
+    <message>
+        <source>Provided by DLX_CLOUD_API_TOKEN</source>
+        <translation>Задано через DLX_CLOUD_API_TOKEN</translation>
+    </message>
+    <message>
+        <source>Test Cloud AI token</source>
+        <translation>Перевірити токен Cloud AI</translation>
+    </message>
+    <message>
+        <source>Cloud AI &amp;token</source>
+        <translation>&amp;Токен Cloud AI</translation>
+    </message>
+    <message>
+        <source>DLX &amp;threshold (UTF-16 units)</source>
+        <translation>&amp;Поріг DLX (одиниці UTF-16)</translation>
+    </message>
+    <message>
+        <source>Enter a valid Cloud AI server URL.</source>
+        <translation>Введіть дійсний URL сервера Cloud AI.</translation>
+    </message>
+    <message>
+        <source>Checking the Cloud AI token…</source>
+        <translation>Перевірка токена Cloud AI…</translation>
+    </message>
+    <message>
+        <source>Cloud AI accepted the token. {daily} characters left today and {monthly} this month.</source>
+        <translation>Cloud AI прийняв токен. Залишилося {daily} симв. на сьогодні та {monthly} на цей місяць.</translation>
+    </message>
+    <message>
+        <source>Cloud AI rejected the token.</source>
+        <translation>Cloud AI відхилив токен.</translation>
+    </message>
+    <message>
+        <source>Could not verify the Cloud AI token.</source>
+        <translation>Не вдалося перевірити токен Cloud AI.</translation>
+    </message>
+    <message>
+        <source>Could not update the stored Cloud AI token.</source>
+        <translation>Не вдалося оновити збережений токен Cloud AI.</translation>
+    </message>
+    <message>
+        <source>Could not save settings or restore the previous Cloud AI token.</source>
+        <translation>Не вдалося зберегти налаштування або відновити попередній токен Cloud AI.</translation>
+    </message>
 </context>
 <context>
     <name>Startup</name>
@@ -863,10 +927,6 @@
     <message>
         <source>Using the official DeepL API</source>
         <translation>Використовується офіційний API DeepL</translation>
-    </message>
-    <message>
-        <source>Cloud AI translation is unavailable</source>
-        <translation>Переклад через Cloud AI недоступний</translation>
     </message>
     <message>
         <source>Starting DLX…</source>
@@ -895,6 +955,18 @@
     <message>
         <source>Could not open the application log.</source>
         <translation>Не вдалося відкрити журнал програми.</translation>
+    </message>
+    <message>
+        <source>Add a Cloud AI server URL and token in Settings</source>
+        <translation>Додайте URL сервера і токен Cloud AI в налаштуваннях</translation>
+    </message>
+    <message>
+        <source>Using Cloud AI</source>
+        <translation>Використовується Cloud AI</translation>
+    </message>
+    <message>
+        <source>Automatic translation with Cloud AI</source>
+        <translation>Автоматичний переклад із Cloud AI</translation>
     </message>
 </context>
 </TS>

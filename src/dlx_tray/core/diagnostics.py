@@ -6,9 +6,10 @@ from threading import Event, Lock
 from time import monotonic
 from typing import Literal
 
+from dlx_tray.core.models import AnalysisTier
 from dlx_tray.core.retry import Sleeper
 
-type DiagnosticProvider = Literal["dlx", "deepl"]
+type DiagnosticProvider = Literal["dlx", "deepl", "cloud_ai"]
 type DLXConnection = Literal["starting", "ready", "unavailable", "external", "disabled"]
 type WaitKind = Literal["pacing", "retry"]
 
@@ -19,7 +20,8 @@ class ProviderAttempt:
     elapsed: float
     status: int | None
     retry_after: float | None = None
-    cache: Literal["hit", "miss"] | None = None
+    cache: Literal["hit", "miss", "mixed"] | None = None
+    analysis_tier: AnalysisTier | None = None
 
 
 @dataclass(frozen=True, slots=True)
