@@ -175,7 +175,8 @@ def test_automatic_editor_translation_applies_reviewed_terms(
     )
     run_window(settings, check)
     passages = json.loads(extraction.calls.last.request.content)["segments"]
-    assert len(passages) == 1 and 0 < len(passages[0]) <= 40
+    assert 0 < sum(map(len, passages)) <= 40
+    assert passages[0].startswith("Tide") and passages[-1] == "tide again"
     assert json.loads(translation.calls.last.request.content)["glossary"] == [
         {"source_term": "tide", "target_term": "reviewed", "priority": 0}
     ]

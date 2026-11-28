@@ -11,12 +11,14 @@ from datetime import UTC, datetime
 from io import StringIO
 from itertools import islice
 from pathlib import Path
+from threading import Lock
 
 from dlx_tray.contracts.glossary_match import MAX_BLOCK_TERMS, canonical_term, matching_terms
 from dlx_tray.core.models import GlossaryEntry, Language
 from dlx_tray.fileio.txt import write_txt
 
 _COLUMNS = ("source_term", "target_term", "pos", "notes", "priority")
+_CSV_READ_LOCK = Lock()
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS glossaries (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -67,7 +69,13 @@ def validate_entries(entries: Iterable[GlossaryEntry]) -> tuple[GlossaryEntry, .
             raise GlossaryFormatError("Duplicate glossary term")
         if not -(2**63) <= entry.priority < 2**63:
             raise GlossaryFormatError("Glossary priority is out of range")
-        result[key] = replace(entry, source_term=source, target_term=target)
+        result[key] = replace(
+            entry,
+            source_term=source,
+            target_term=target,
+            pos=entry.pos or None,
+            notes=entry.notes or None,
+        )
     return tuple(result.values())
 
 
@@ -105,6 +113,18 @@ def _delimiter(path: Path) -> str:
             return "\t"
         case _:
             raise GlossaryFormatError("Expected a CSV or TSV file")
+
+
+@contextmanager
+def _read_rows(path: Path, delimiter: str) -> Iterator[Iterator[list[str]]]:
+    with path.open(encoding="utf-8-sig", newline="") as stream, _CSV_READ_LOCK:
+        # SQLite values can exceed csv's default 128 Ki-character field limit.
+        # The limit is process-wide, and a C long is 32 bits on Windows.
+        previous_limit = csv.field_size_limit(2**31 - 1)
+        try:
+            yield csv.reader(stream, delimiter=delimiter, strict=True)
+        finally:
+            csv.field_size_limit(previous_limit)
 
 
 class GlossaryStore:
@@ -231,8 +251,7 @@ class GlossaryStore:
         """Read and validate every row before changing the database."""
         delimiter = _delimiter(path)
         try:
-            with path.open(encoding="utf-8-sig", newline="") as stream:
-                rows = csv.reader(stream, delimiter=delimiter, strict=True)
+            with _read_rows(path, delimiter) as rows:
                 header = next(rows, [])
                 if (
                     not set(_COLUMNS[:2]).issubset(header)

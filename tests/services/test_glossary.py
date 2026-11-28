@@ -1,5 +1,6 @@
 """Cover glossary transactions, file exchange and block matching."""
 
+import csv
 from dataclasses import replace
 from pathlib import Path
 
@@ -60,6 +61,23 @@ def test_utf8_round_trip(tmp_path: Path, suffix: str) -> None:
     imported = store.import_file(path, replace(glossary, name="Imported"))
     assert imported.id is not None and imported.id != saved.id
     assert store.entries(imported.id) == (entry,)
+
+
+@pytest.mark.parametrize("suffix", [".csv", ".tsv"])
+def test_round_trip_after_exceeding_the_standard_csv_field_limit(
+    tmp_path: Path, suffix: str
+) -> None:
+    store = GlossaryStore(tmp_path / "glossaries.sqlite3")
+    standard_limit = csv.field_size_limit()
+    entry = GlossaryEntry("term", "equivalent", notes="x" * (standard_limit + 1))
+    saved = store.save(GLOSSARY, [entry])
+    assert saved.id is not None
+    path = tmp_path / ("terms" + suffix)
+    store.export_file(saved.id, path)
+    imported = store.import_file(path, GLOSSARY)
+    assert imported.id is not None
+    assert store.entries(imported.id) == (entry,)
+    assert csv.field_size_limit() == standard_limit
 
 
 @pytest.mark.parametrize(
