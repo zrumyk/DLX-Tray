@@ -143,6 +143,7 @@ class MainWindow(QMainWindow):
         self.about_action.triggered.connect(self._show_about)
         self._chunk_size = translation_job.chunk_budget if translation_job else chunk_size
         self._job = translation_job
+        self._select_job: Callable[[str | SourceFile], TranslationJob | None] | None = None
         self._formality = formality
         self._history_path: Path | None = None
         self._history_enabled = False
@@ -603,9 +604,11 @@ class MainWindow(QMainWindow):
         formality: Formality | None = None,
         requires_settings: bool = False,
         can_add_api_key: bool = False,
+        select_job: Callable[[str | SourceFile], TranslationJob | None] | None = None,
     ) -> None:
         """Show the startup outcome and enable translation when a job is available."""
         self._job = job
+        self._select_job = select_job
         self._translation_requires_settings = requires_settings
         self._can_add_api_key = can_add_api_key
         if not can_add_api_key:
@@ -767,7 +770,10 @@ class MainWindow(QMainWindow):
             self._translate(text, source, target)
 
     def _translate(self, content: str | SourceFile, source: Language, target: Language) -> None:
-        if self._job is None or self._thread is not None:
+        if self._thread is not None:
+            return
+        job = self._select_job(content) if self._select_job is not None else self._job
+        if job is None:
             return
 
         open_history = (
@@ -775,9 +781,7 @@ class MainWindow(QMainWindow):
             if self._history_path is not None and self._history_enabled
             else None
         )
-        worker = TranslationWorker(
-            self._job, content, source, target, self._formality, open_history
-        )
+        worker = TranslationWorker(job, content, source, target, self._formality, open_history)
         worker.progress.connect(self._show_progress)
         worker.provider_changed.connect(self._show_provider)
         worker.dlx_rate_limited.connect(self._show_dlx_rate_limit)
@@ -860,9 +864,11 @@ class MainWindow(QMainWindow):
             self._last_provider = DLX_NAME
         elif provider == DEEPL_NAME:
             self._last_provider = DEEPL_NAME
+        elif provider == "cloud_ai":
+            self._last_provider = "cloud_ai"
         else:
             self._last_provider = None
-        names = {DLX_NAME: "DLX", DEEPL_NAME: self.tr("DeepL API")}
+        names = {DLX_NAME: "DLX", DEEPL_NAME: self.tr("DeepL API"), "cloud_ai": self.tr("Cloud AI")}
         self._provider_status.setText(
             self.tr("Provider: {name}").format(name=names.get(provider, provider))
         )

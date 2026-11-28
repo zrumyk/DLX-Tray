@@ -214,6 +214,10 @@ class CloudAuthError(AuthError):
     """Cloud AI denied access to the service or requested tier."""
 
 
+class CloudDeepTierForbiddenError(CloudAuthError):
+    """The Cloud AI token cannot use deep analysis."""
+
+
 class CloudQuotaExceededError(TranslationError):
     """The Cloud AI character quota is exhausted."""
 

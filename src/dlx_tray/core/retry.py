@@ -72,6 +72,20 @@ class RequestStartClock:
             return pause
 
 
+def wait_for_request_start(dispatch: RequestDispatch) -> None:
+    assert dispatch.clock is not None
+    while True:
+        if not dispatch.may_start():
+            if dispatch.cancel.wait(0.01):
+                raise TranslationCancelledError("cancelled before provider dispatch")
+            continue
+        pause = dispatch.clock.reserve(dispatch)
+        if pause <= 0:
+            return
+        if not dispatch.sleep(pause, dispatch.cancel):
+            raise TranslationCancelledError("cancelled during provider pacing")
+
+
 @dataclass(frozen=True, slots=True)
 class RetryPolicy:
     """How often and how long to wait between attempts.

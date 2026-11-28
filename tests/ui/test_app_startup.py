@@ -14,6 +14,7 @@ from unittest.mock import ANY, Mock, call
 import httpx
 import pytest
 import requests
+import respx
 from keyring.errors import KeyringError
 from PySide6.QtCore import QRect, QSize, Qt, QTimer
 from PySide6.QtGui import QShortcut
@@ -746,10 +747,11 @@ def test_uses_official_api_when_dlx_is_unavailable(
         settings = Settings.load(tmp_path / "settings.json", env_file=env_file)
         run_window(settings, check)
 
-    if key_source == "vault":
-        vault.get_password.assert_called_once_with("DLX Tray", "deepl_api_key")
-    else:
-        vault.get_password.assert_not_called()
+    expected_lookups = [call("DLX Tray", "deepl_api_key")] if key_source == "vault" else []
+    assert vault.get_password.call_args_list == [
+        *expected_lookups,
+        call("DLX Tray Cloud", "cloud_api_token"),
+    ]
     expected_keys = {
         "environment": "env-key:fx",
         "dotenv": "dotenv-key:fx",
@@ -944,7 +946,7 @@ def test_official_only_cold_start_and_switch_to_automatic(
             process.stop.assert_called_once_with()
 
 
-def test_cloud_only_stays_unavailable_and_can_be_changed_in_settings(
+def test_unconfigured_cloud_only_opens_settings_and_can_change_provider(
     run_window: Callable[[Settings, Callable[[MainWindow, QLabel], None]], None],
     monkeypatch: pytest.MonkeyPatch,
     vault: Mock,
@@ -956,9 +958,9 @@ def test_cloud_only_stays_unavailable_and_can_be_changed_in_settings(
     monkeypatch.setattr(requests.Session, "send", official_send)
 
     def check(window: MainWindow, status: QLabel) -> None:
-        assert status.text() == "Cloud AI translation is unavailable"
+        assert status.text() == "Add a Cloud AI server URL and token in Settings"
         window.source_editor.setPlainText("Do not dispatch this source")
-        assert not window.translate_button.isEnabled()
+        assert window.translate_button.isEnabled()
 
         def change_provider() -> None:
             dialog = QApplication.activeModalWidget()
@@ -973,7 +975,7 @@ def test_cloud_only_stays_unavailable_and_can_be_changed_in_settings(
                     dialog.reject()
 
         QTimer.singleShot(0, change_provider)
-        window.settings_action.trigger()
+        window.translate_button.click()
         assert status.text() == "Using the official DeepL API"
         assert window.translate_button.isEnabled()
 
@@ -989,6 +991,133 @@ def test_cloud_only_stays_unavailable_and_can_be_changed_in_settings(
     process.assert_not_called()
     dlx.assert_not_called()
     official_send.assert_not_called()
+
+
+@pytest.mark.parametrize("mode", ["automatic", "cloud_only"])
+def test_cloud_routes_work_in_editor_file_and_popup_without_waiting_for_dlx(
+    mode: str,
+    run_window: Callable[[Settings, Callable[[MainWindow, QLabel], None]], None],
+    qtbot: QtBot,
+    monkeypatch: pytest.MonkeyPatch,
+    respx_mock: respx.MockRouter,
+    tmp_path: Path,
+) -> None:
+    release_startup = Event()
+    process = Mock(spec=DLXProcess)
+
+    def wait_then_fail() -> None:
+        assert release_startup.wait(10)
+        raise ProviderUnavailableError("scripted startup failure")
+
+    process.start.side_effect = wait_then_fail
+    factory = Mock(return_value=process)
+    monkeypatch.setattr(app, "DLXProcess", factory)
+    hotkey = SelectionHotkey()
+    monkeypatch.setattr(app, "SelectionHotkey", lambda _window: hotkey)
+    file_path = tmp_path / "fixture.txt"
+    file_path.write_text("Short file segment", encoding="utf-8")
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        assert request.headers["Authorization"] == "Bearer mock-cloud-token"
+        return httpx.Response(
+            200,
+            json={
+                "segments": [
+                    {"index": item["index"], "text": "Cloud: " + item["text"]}
+                    for item in payload["segments"]
+                ]
+            },
+        )
+
+    route = respx_mock.post("https://cloud.example/v1/translate").mock(side_effect=respond)
+
+    def check(window: MainWindow, _status: QLabel) -> None:
+        try:
+            source = "A" * 1501
+            window.source_editor.setPlainText(source)
+            assert window.translate_button.isEnabled()
+            window.translate_button.click()
+            qtbot.waitUntil(window.translate_button.isEnabled)
+            assert window.result_editor.toPlainText() == "Cloud: " + source
+            assert window.diagnostic_provider == "cloud_ai"
+
+            window._open_file(file_path)
+            qtbot.waitUntil(
+                lambda: window._file is not None and window.translate_button.isEnabled()
+            )
+            window.translate_button.click()
+            qtbot.waitUntil(window.translate_button.isEnabled)
+            assert window.result_editor.toPlainText() == "Cloud: Short file segment"
+
+            hotkey.selection_ready.emit("Selection")
+            popup = window.findChild(SelectionPopup)
+            assert popup is not None
+            qtbot.waitUntil(popup.copy_button.isEnabled)
+            assert popup.preview.toPlainText() == "Cloud: Selection"
+            with qtbot.waitSignal(popup.finished):
+                popup.reject()
+            assert not release_startup.is_set()
+        finally:
+            release_startup.set()
+            window._file_unsaved = False
+
+    run_window(
+        Settings.model_validate(
+            {
+                "provider_mode": mode,
+                "cloud_url": "https://cloud.example",
+                "cloud_api_token": "mock-cloud-token",
+            }
+        ),
+        check,
+    )
+    assert route.call_count == 3
+    assert factory.call_count == int(mode == "automatic")
+
+
+def test_cloud_settings_verify_and_store_token_outside_settings_json(
+    run_window: Callable[[Settings, Callable[[MainWindow, QLabel], None]], None],
+    qtbot: QtBot,
+    respx_mock: respx.MockRouter,
+    tmp_path: Path,
+    vault: Mock,
+) -> None:
+    vault._read_credential.return_value = None
+    route = respx_mock.get("https://cloud.example/v1/me").respond(
+        200,
+        json={
+            "label": "test account",
+            "allow_deep_tier": True,
+            "daily_chars_remaining": 100,
+            "monthly_chars_remaining": 1000,
+        },
+    )
+
+    def edit(dialog: SettingsDialog) -> None:
+        dialog.cloud_url.setText("https://cloud.example")
+        dialog.cloud_token.setText("cloud-vault-fixture")
+        dialog.test_cloud_button.click()
+        qtbot.waitUntil(
+            lambda: (
+                dialog.cloud_status.text()
+                == "Cloud AI accepted the token. 100 characters left today and 1000 this month."
+            )
+        )
+        dialog.hybrid_threshold.setValue(600)
+
+    def check(window: MainWindow, status: QLabel) -> None:
+        _edit_settings(window, edit)
+        assert status.text() == "Using Cloud AI"
+
+    run_window(Settings(provider_mode="cloud_only"), check)
+    assert route.calls.last.request.headers["Authorization"] == "Bearer cloud-vault-fixture"
+    vault._set_password.assert_called_once_with(
+        "DLX Tray Cloud", "cloud_api_token", "cloud-vault-fixture"
+    )
+    saved = (tmp_path / "settings.json").read_text(encoding="utf-8")
+    assert "cloud-vault-fixture" not in saved
+    assert json.loads(saved)["hybrid_dlx_threshold"] == 600
 
 
 def test_dlx_only_uses_bundled_connection_without_official_fallback(

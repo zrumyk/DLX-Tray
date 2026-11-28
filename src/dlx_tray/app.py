@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import sys
 from collections.abc import Callable
-from contextlib import ExitStack
+from contextlib import ExitStack, closing
 from functools import partial
 from pathlib import Path
 
@@ -18,17 +18,31 @@ from PySide6.QtWidgets import QApplication, QMessageBox
 
 from dlx_tray import APP_NAME, __version__, config
 from dlx_tray.config import Settings
+from dlx_tray.contracts.cloud_v1 import MeResponse
 from dlx_tray.core.diagnostics import DiagnosticTimeline, DLXConnection
-from dlx_tray.core.models import ProviderUnavailableError
+from dlx_tray.core.models import (
+    DEFAULT_TRANSLATION_OPTIONS,
+    ProviderUnavailableError,
+    TranslationOptions,
+)
 from dlx_tray.core.pipeline import TranslationJob
 from dlx_tray.core.retry import RetryPolicy, event_sleep
+from dlx_tray.core.router import HybridRouter
 from dlx_tray.core.single_flight import SingleFlight
+from dlx_tray.fileio.translation import SourceFile
 from dlx_tray.logging_setup import file_logging
-from dlx_tray.providers.base import Translator
+from dlx_tray.providers.base import BlockTranslator
+from dlx_tray.providers.cloud_ai import CloudAiTranslator
 from dlx_tray.providers.deepl_official import DeepLOfficialTranslator
 from dlx_tray.providers.deeplx import DeeplxTranslator
-from dlx_tray.providers.fallback import FallbackTranslator
-from dlx_tray.secrets import delete_deepl_api_key, get_deepl_api_key, set_deepl_api_key
+from dlx_tray.secrets import (
+    delete_cloud_api_token,
+    delete_deepl_api_key,
+    get_cloud_api_token,
+    get_deepl_api_key,
+    set_cloud_api_token,
+    set_deepl_api_key,
+)
 from dlx_tray.services import autostart
 from dlx_tray.services.cache import TranslationCache
 from dlx_tray.services.deeplx_process import DLXProcess, resolve_binary
@@ -89,6 +103,11 @@ def _check_deepl_api_key(key: str) -> None:
         official.close()
 
 
+def _check_cloud_token(url: str, token: str) -> MeResponse:
+    with closing(CloudAiTranslator(url, token, timeout=5.0)) as client:
+        return client.check_token()
+
+
 def _run_window(
     app: QApplication,
     settings: Settings,
@@ -127,8 +146,18 @@ def _run_window(
     override_key = (override.get_secret_value().strip() or None) if override else None
     api_key = get_deepl_api_key(override_key)
     official = DeepLOfficialTranslator(api_key, diagnostics=diagnostics) if api_key else None
+    cloud_override = settings.cloud_api_token
+    override_token = cloud_override.get_secret_value().strip() or None if cloud_override else None
+    cloud_token = get_cloud_api_token(override_token)
+
+    def make_cloud() -> CloudAiTranslator | None:
+        if settings.cloud_url is not None and cloud_token is not None:
+            return CloudAiTranslator(str(settings.cloud_url), cloud_token, diagnostics=diagnostics)
+        return None
+
+    cloud = make_cloud()
+    retired_providers: list[CloudAiTranslator | DeepLOfficialTranslator] = []
     dlx: DeeplxTranslator | None = None
-    translator: Translator | None = None
     job: TranslationJob | None = None
     provider_status = ""
     dlx_status = QCoreApplication.translate("Startup", "Starting DLX…")
@@ -154,21 +183,27 @@ def _run_window(
     def popup_closed() -> None:
         nonlocal popup
         popup = None
+        close_retired_providers()
 
     def translate_selection(text: str) -> None:
         nonlocal popup
         if popup is not None or window.is_closed:
             return
+        if settings.provider_mode == "cloud_only" and cloud is None:
+            window.restore_from_tray()
+            open_settings()
+            return
+        selection_job = select_job(text)
         history = partial(HistoryStore, history_path, settings.history_limit)
         worker = (
             TranslationWorker(
-                job,
+                selection_job,
                 text,
                 *window.selected_languages,
                 settings.formality,
                 history if settings.history_enabled else None,
             )
-            if job is not None
+            if selection_job is not None
             else None
         )
         popup = SelectionPopup(worker, provider_status, window)
@@ -242,34 +277,85 @@ def _run_window(
 
     stack.callback(close_official)
 
+    def close_retired_providers() -> None:
+        while retired_providers:
+            retired_providers.pop().close()
+
+    def retire(provider: CloudAiTranslator | DeepLOfficialTranslator | None) -> None:
+        if provider is not None:
+            if popup is None:
+                provider.close()
+            else:
+                retired_providers.append(provider)
+
+    def close_cloud() -> None:
+        if cloud is not None:
+            cloud.close()
+
+    stack.callback(close_retired_providers)
+    stack.callback(close_cloud)
+
+    def select_job(content: str | SourceFile) -> TranslationJob | None:
+        options = TranslationOptions(
+            register=settings.stylistic_register,
+            analysis_tier=settings.analysis_tier,
+            style_context=settings.style_context,
+            include_notes=settings.include_notes,
+        )
+        router = HybridRouter(
+            mode=settings.provider_mode,
+            threshold=settings.hybrid_dlx_threshold,
+            dlx=dlx,
+            cloud=cloud,
+            official=official,
+            dlx_starting=dlx_connection == "starting",
+        )
+        translator = router.select_route(
+            content if isinstance(content, str) else "",
+            file=isinstance(content, SourceFile),
+            options=options,
+        )
+        if translator is None:
+            return None
+        uses_cloud_blocks = isinstance(translator, BlockTranslator)
+        return TranslationJob(
+            translator=translator,
+            max_units=settings.chunk_size if not uses_cloud_blocks else None,
+            request_delay=settings.request_delay,
+            concurrency=settings.dlx_concurrency,
+            retry_policy=RetryPolicy(max_attempts=settings.max_attempts),
+            sleep=event_sleep,
+            cache=cache if settings.cache_enabled else None,
+            flights=flights,
+            diagnostics=diagnostics,
+            default_options=options if uses_cloud_blocks else DEFAULT_TRANSLATION_OPTIONS,
+        )
+
     def refresh_job() -> None:
         nonlocal job, provider_status
-        refresh_provider()
-        requires_settings = settings.provider_mode == "official_only" and official is None
-        if requires_settings:
-            status = QCoreApplication.translate("Startup", "Add a DeepL API key in Settings")
-        elif settings.provider_mode == "official_only":
-            status = QCoreApplication.translate("Startup", "Using the official DeepL API")
+        requires_settings = False
+        if settings.provider_mode == "official_only":
+            requires_settings = official is None
+            status = (
+                QCoreApplication.translate("Startup", "Add a DeepL API key in Settings")
+                if requires_settings
+                else QCoreApplication.translate("Startup", "Using the official DeepL API")
+            )
         elif settings.provider_mode == "cloud_only":
-            status = QCoreApplication.translate("Startup", "Cloud AI translation is unavailable")
+            requires_settings = cloud is None
+            status = (
+                QCoreApplication.translate(
+                    "Startup", "Add a Cloud AI server URL and token in Settings"
+                )
+                if requires_settings
+                else QCoreApplication.translate("Startup", "Using Cloud AI")
+            )
+        elif settings.provider_mode == "automatic" and cloud is not None:
+            status = QCoreApplication.translate("Startup", "Automatic translation with Cloud AI")
         else:
             status = dlx_status
         provider_status = status
-        job = (
-            TranslationJob(
-                translator=translator,
-                max_units=settings.chunk_size,
-                request_delay=settings.request_delay,
-                concurrency=settings.dlx_concurrency,
-                retry_policy=RetryPolicy(max_attempts=settings.max_attempts),
-                sleep=event_sleep,
-                cache=cache if settings.cache_enabled else None,
-                flights=flights,
-                diagnostics=diagnostics,
-            )
-            if translator is not None
-            else None
-        )
+        job = select_job("")
         window.set_dlx_connection(
             status,
             job,
@@ -278,30 +364,15 @@ def _run_window(
             requires_settings=requires_settings,
             can_add_api_key=(
                 settings.provider_mode == "automatic"
-                and translator is dlx
+                and cloud is None
                 and dlx is not None
                 and api_key is None
             ),
+            select_job=select_job,
         )
 
-    def refresh_provider() -> None:
-        nonlocal translator
-        if settings.provider_mode == "cloud_only":
-            translator = None
-        elif settings.provider_mode == "official_only":
-            translator = official
-        elif settings.provider_mode == "dlx_only":
-            translator = dlx
-        elif dlx_connection == "starting":
-            translator = None
-        elif dlx is not None and official is not None:
-            if not isinstance(translator, FallbackTranslator):
-                translator = FallbackTranslator(dlx, official)
-        else:
-            translator = dlx or official
-
     def save_preferences(updated: Settings, key: str | None) -> str | None:
-        nonlocal settings, official, api_key
+        nonlocal settings, official, api_key, cloud, cloud_token
         try:
             updated.save(changes_from=settings)
         except (OSError, ValueError) as exc:
@@ -311,6 +382,7 @@ def _run_window(
         if updated.theme != settings.theme:
             apply_theme(app, updated.theme)
         shortcut_changed = updated.selection_hotkey != settings.selection_hotkey
+        cloud_changed = updated.cloud_url != settings.cloud_url
         settings = updated
         if shortcut_changed:
             configure_hotkey()
@@ -330,15 +402,33 @@ def _run_window(
                     "SettingsDialog", "Preferences saved. Could not update the stored API key."
                 )
             else:
-                close_official()
+                retire(official)
                 api_key = key
                 official = (
                     DeepLOfficialTranslator(key, diagnostics=diagnostics)
                     if key is not None
                     else None
                 )
-                if isinstance(translator, FallbackTranslator) and official is not None:
-                    translator.replace_secondary(official)
+        new_token = settings.cloud_api_token
+        token = new_token.get_secret_value() if new_token is not None else None
+        if override_token is None and token != cloud_token:
+            try:
+                if token is None:
+                    delete_cloud_api_token()
+                else:
+                    set_cloud_api_token(token)
+            except KeyringError:
+                log.warning("Could not update the stored Cloud AI token")
+                error = QCoreApplication.translate(
+                    "SettingsDialog",
+                    "Preferences saved. Could not update the stored Cloud AI token.",
+                )
+            else:
+                cloud_token = token
+                cloud_changed = True
+        if cloud_changed:
+            retire(cloud)
+            cloud = make_cloud()
         start_dlx_if_needed()
         refresh_job()
         return error
@@ -357,12 +447,20 @@ def _run_window(
             key_overridden=override_key is not None,
             save=save_preferences,
             check_key=_check_deepl_api_key,
+            cloud_token=cloud_token,
+            cloud_token_overridden=override_token is not None,
+            check_cloud_token=_check_cloud_token,
             clear_cache=cache.clear,
             autostart_registered=registered,
             set_autostart=autostart.set_registered if autostart_supported else None,
             parent=window,
         )
-        if api_key is None:
+        if settings.provider_mode == "cloud_only" and cloud is None:
+            if cloud_token is None:
+                dialog.cloud_token.setFocus()
+            else:
+                dialog.cloud_url.setFocus()
+        elif api_key is None:
             dialog.api_key.setFocus()
         try:
             dialog.exec()

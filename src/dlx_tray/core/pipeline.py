@@ -46,11 +46,12 @@ from dlx_tray.core.retry import (
     Sleeper,
     call_with_retry,
     event_sleep,
+    wait_for_request_start,
 )
 from dlx_tray.providers.base import BlockTranslator
 from dlx_tray.providers.deepl_official import DeepLOfficialTranslator
 from dlx_tray.providers.deeplx import DeeplxTranslator
-from dlx_tray.providers.fallback import FallbackTranslator
+from dlx_tray.providers.fallback import BlockFallbackTranslator, FallbackTranslator
 from dlx_tray.services.cache import translation_key
 
 if TYPE_CHECKING:
@@ -147,6 +148,7 @@ class TranslationJob:
     concurrency: int = 1
     diagnostics: DiagnosticTimeline | None = None
     profile: ProviderProfile | None = None
+    default_options: TranslationOptions = DEFAULT_TRANSLATION_OPTIONS
 
     def __post_init__(self) -> None:
         if not 0 <= self.request_delay <= TIMEOUT_MAX:
@@ -176,7 +178,7 @@ class TranslationJob:
 
     @property
     def chunk_budget(self) -> int:
-        profile = self._profile_for(DEFAULT_TRANSLATION_OPTIONS)
+        profile = self._profile_for(self.default_options)
         return self.max_units or (profile.max_units if profile else chunker.DEFAULT_MAX_UNITS)
 
     @property
@@ -195,7 +197,7 @@ class TranslationJob:
 
     @property
     def effective_concurrency(self) -> int:
-        profile = self._profile_for(DEFAULT_TRANSLATION_OPTIONS)
+        profile = self._profile_for(self.default_options)
         return profile.max_concurrency if profile else 1
 
     def run(
@@ -216,7 +218,7 @@ class TranslationJob:
         pacing: RequestPacing | None = None,
         file_segments: Sequence[str] | None = None,
         on_segment: Callable[[str], None] | None = None,
-        options: TranslationOptions = DEFAULT_TRANSLATION_OPTIONS,
+        options: TranslationOptions | None = None,
     ) -> JobResult:
         """Report progress and partial text after each translated or skipped chunk.
 
@@ -224,6 +226,7 @@ class TranslationJob:
         text. Without a failure callback, the result carries the error and processed prefix.
         An in-flight request can finish after cancellation and its result is kept.
         """
+        options = options if options is not None else self.default_options
         if cancel is None:
             cancel = Event()
         if pacing is None:
@@ -263,7 +266,11 @@ class TranslationJob:
             if isinstance(translator, FallbackTranslator)
             else (translator.name,)
         )
-        route = translator.name if block_translator else repr(provider_names)
+        route = (
+            translator.name
+            if len(provider_names) == 1 and block_translator
+            else repr(provider_names)
+        )
         parts: list[str] = []
         providers: list[str | None] = []
         segment_notes: list[tuple[PhilologicalNote, ...]] = []
@@ -287,7 +294,9 @@ class TranslationJob:
 
         def request(pieces: Sequence[_Piece], attempt: RequestDispatch) -> list[TranslationResult]:
             texts = [piece.chunk.text for piece in pieces]
-            if isinstance(translator, FallbackTranslator):
+            if isinstance(translator, FallbackTranslator) and not isinstance(
+                translator, BlockFallbackTranslator
+            ):
                 return translator.translate(
                     texts,
                     source,
@@ -298,7 +307,7 @@ class TranslationJob:
                     on_rate_limit=on_rate_limit,
                     dispatch=attempt if dlx else None,
                 )
-            if on_provider is not None:
+            if on_provider is not None and not isinstance(translator, BlockFallbackTranslator):
                 on_provider(translator.name)
             try:
                 if isinstance(translator, BlockTranslator):
@@ -312,17 +321,20 @@ class TranslationJob:
                             segments, pieces[0].segment.source.index, profile.context_units
                         ),
                     )
-                    while True:
-                        if not attempt.may_start():
-                            if attempt.cancel.wait(0.01):
-                                raise TranslationCancelledError("cancelled before block dispatch")
-                            continue
-                        pause = attempt.clock.reserve(attempt)
-                        if not pause:
-                            break
-                        if not attempt.sleep(pause, attempt.cancel):
-                            raise TranslationCancelledError("cancelled during block pacing")
-                    output = translator.translate_block(block, source, target, options, attempt)
+                    if isinstance(translator, BlockFallbackTranslator):
+                        output = translator.translate_block(
+                            block,
+                            source,
+                            target,
+                            options,
+                            attempt,
+                            formality=formality,
+                            on_provider=on_provider,
+                            on_rate_limit=on_rate_limit,
+                        )
+                    else:
+                        wait_for_request_start(attempt)
+                        output = translator.translate_block(block, source, target, options, attempt)
                     indexed = {item.index: item.result for item in output}
                     if len(output) != len(pieces) or indexed.keys() != {
                         segment.index for segment in block.segments
@@ -335,7 +347,9 @@ class TranslationJob:
                     return translator.translate(texts, source, target, formality, dispatch=attempt)
                 return translator.translate(texts, source, target, formality)
             except RateLimitedError:
-                if on_rate_limit is not None:
+                if on_rate_limit is not None and not isinstance(
+                    translator, BlockFallbackTranslator
+                ):
                     on_rate_limit(translator.name)
                 raise
 

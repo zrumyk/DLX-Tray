@@ -107,7 +107,9 @@ def markdown_report(
 ) -> str:
     dlx_version, dlx_digest = _bundled_dlx(binary, dlx_lock)
     windows = platform.win32_ver()[1] or "unknown"
-    provider_name = {"dlx": "DLX", "deepl": "DeepL API"}.get(provider or "", "none yet")
+    provider_name = {"dlx": "DLX", "deepl": "DeepL API", "cloud_ai": "Cloud AI"}.get(
+        provider or "", "none yet"
+    )
     worker_limit = str(concurrency) if concurrency is not None else "unavailable"
     lines = [
         "## DLX Tray diagnostics",
@@ -149,12 +151,14 @@ def markdown_report(
             continue
         retry_after = "unknown" if event.retry_after is None else f"{event.retry_after:g} s"
         status = "unknown" if event.status is None else str(event.status)
+        cache_header = {"dlx": "DLX", "cloud_ai": "Cloud AI"}.get(event.provider)
         server_cache = (
-            f", DLX cache header: {event.cache or 'unknown'}" if event.provider == "dlx" else ""
+            f", {cache_header} cache header: {event.cache or 'unknown'}" if cache_header else ""
         )
+        tier = f", analysis tier: {event.analysis_tier.value}" if event.analysis_tier else ""
         lines.append(
             f"- {event.provider}, {event.elapsed:.3f} s, HTTP {status}, "
-            f"Retry-After {retry_after}{server_cache}"
+            f"Retry-After {retry_after}{server_cache}{tier}"
         )
     if not timeline.events:
         lines.append("No translation events recorded.")
