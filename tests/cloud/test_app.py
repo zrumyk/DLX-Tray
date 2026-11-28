@@ -434,6 +434,9 @@ def test_unconfigured_service_can_start(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.delenv("DLX_CLOUD_TOKEN_PEPPER", raising=False)
     monkeypatch.delenv("DLX_CLOUD_GEMINI_API_KEY", raising=False)
     with TestClient(create_app(CloudSettings())) as client:
-        assert client.get("/healthz").status_code == 200
+        for path in ("/health", "/healthz"):
+            response = client.get(path)
+            assert response.status_code == 200
+            assert response.json() == {"status": "ok"}
         assert client.get("/v1/me").status_code == 503
         assert client.get("/unknown").status_code == 404

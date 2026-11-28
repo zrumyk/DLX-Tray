@@ -30,6 +30,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Cloud AI settings have a dedicated section with a masked token, quota check, and hybrid
   threshold. The new controls and notes views are available in Ukrainian.
 
+### Fixed
+- Added `/health` for public Cloud Run health checks. Existing container probes can use `/healthz`.
+
 ## [2.0.0] - 2026-11-28
 
 ### Added
