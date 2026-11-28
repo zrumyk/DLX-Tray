@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+from contextlib import suppress
 from threading import Event
 from time import monotonic
 
@@ -43,6 +45,7 @@ from dlx_tray.providers.base import parse_retry_after
 PROVIDER_NAME = "cloud_ai"
 # The proxy can make two Gemini attempts, each with a 120-second deadline.
 DEFAULT_TIMEOUT = 250.0
+_CANCEL_POLL = 0.05
 
 
 class CloudAiTranslator:
@@ -56,16 +59,10 @@ class CloudAiTranslator:
         timeout: float = DEFAULT_TIMEOUT,
         diagnostics: DiagnosticTimeline | None = None,
     ) -> None:
+        self._base_url = base_url
         self._token = token
-        self._client = httpx.Client(
-            base_url=base_url,
-            timeout=httpx.Timeout(timeout, connect=min(timeout, 10.0)),
-            trust_env=True,
-        )
+        self._timeout = httpx.Timeout(timeout, connect=min(timeout, 10.0))
         self._diagnostics = diagnostics
-
-    def close(self) -> None:
-        self._client.close()
 
     def check_token(self, *, cancel: Event | None = None) -> MeResponse:
         return self._request("GET", "v1/me", MeResponse, cancel=cancel)
@@ -115,7 +112,7 @@ class CloudAiTranslator:
             item = indexed[segment.index]
             result = TranslationResult(
                 item.text,
-                item.detected_source,
+                item.detected_source if item.detected_source is not Language.AUTO else None,
                 self.name,
                 tuple(PhilologicalNote(note.kind, note.text) for note in item.notes),
             )
@@ -142,12 +139,7 @@ class CloudAiTranslator:
         started = monotonic()
         response = None
         try:
-            response = self._client.request(
-                method,
-                path,
-                headers={"Authorization": f"Bearer {self._token}"},
-                json=body.model_dump(mode="json") if body is not None else None,
-            )
+            response = asyncio.run(self._send(method, path, body, cancel))
         except (httpx.HTTPError, UnicodeError):
             if cancel is not None and cancel.is_set():
                 raise TranslationCancelledError("Cancelled during Cloud AI request") from None
@@ -180,6 +172,34 @@ class CloudAiTranslator:
             return response_type.model_validate_json(response.content)
         except ValidationError:
             raise ProviderUnavailableError("Cloud AI returned an invalid response") from None
+
+    async def _send(
+        self, method: str, path: str, body: BaseModel | None, cancel: Event | None
+    ) -> httpx.Response:
+        async with httpx.AsyncClient(
+            base_url=self._base_url, timeout=self._timeout, trust_env=True
+        ) as client:
+            request = client.request(
+                method,
+                path,
+                headers={"Authorization": f"Bearer {self._token}"},
+                json=body.model_dump(mode="json") if body is not None else None,
+            )
+            if cancel is None:
+                return await request
+
+            task = asyncio.create_task(request)
+            try:
+                while not task.done():
+                    if cancel.is_set():
+                        raise TranslationCancelledError("Cancelled during Cloud AI request")
+                    await asyncio.wait((task,), timeout=_CANCEL_POLL)
+                return task.result()
+            finally:
+                if not task.done():
+                    task.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await task
 
 
 def _response_error(response: httpx.Response) -> TranslationError:

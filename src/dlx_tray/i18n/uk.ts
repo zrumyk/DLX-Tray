@@ -906,8 +906,12 @@
         <translation>Не вдалося перевірити токен Cloud AI.</translation>
     </message>
     <message>
-        <source>Preferences saved. Could not update the stored Cloud AI token.</source>
-        <translation>Налаштування збережено. Не вдалося оновити збережений токен Cloud AI.</translation>
+        <source>Could not update the stored Cloud AI token.</source>
+        <translation>Не вдалося оновити збережений токен Cloud AI.</translation>
+    </message>
+    <message>
+        <source>Could not save settings or restore the previous Cloud AI token.</source>
+        <translation>Не вдалося зберегти налаштування або відновити попередній токен Cloud AI.</translation>
     </message>
 </context>
 <context>

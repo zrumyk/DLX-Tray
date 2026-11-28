@@ -1,7 +1,6 @@
 """Verify per-job routing and ordered fallback with Cloud AI configured."""
 
 from collections.abc import Sequence
-from contextlib import closing
 from threading import Event
 from unittest.mock import Mock
 
@@ -95,10 +94,10 @@ def test_short_job_skips_cloud_after_quota_and_preserves_dlx_cooldown(
     official = Mock(spec=Translator)
     official.name = "deepl"
     official.translate.return_value = [TranslationResult("Translated", Language.EN, "deepl")]
+    cloud = CloudAiTranslator(cloud_url, "token")
     with (
         fake_dlx(["429", "reverse"]) as server,
         DeeplxTranslator(server.url, server.token) as dlx,
-        closing(CloudAiTranslator(cloud_url, "token")) as cloud,
     ):
         respx_mock.post(f"{server.url}/translate").pass_through()
         route = HybridRouter(dlx=dlx, cloud=cloud, official=official).select_route("One\n\nTwo")

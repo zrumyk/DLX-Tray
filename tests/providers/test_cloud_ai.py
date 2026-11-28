@@ -1,7 +1,8 @@
 """Exercise the Cloud AI client against its HTTP contract."""
 
+import asyncio
 import json
-from contextlib import closing
+from concurrent.futures import ThreadPoolExecutor
 from threading import Event
 
 import httpx
@@ -46,7 +47,7 @@ def test_batch_preserves_indexes_and_sends_notes_glossary_and_context(
 ) -> None:
     response = {
         "segments": [
-            {"index": 3, "text": "Translated second", "cached": True},
+            {"index": 3, "text": "Translated second", "cached": True, "detected_source": "auto"},
             {
                 "index": 7,
                 "text": "Translated first",
@@ -67,12 +68,13 @@ def test_batch_preserves_indexes_and_sends_notes_glossary_and_context(
         glossary=(GlossaryEntry("private source", "private target", 3),),
         include_notes=True,
     )
-    with closing(CloudAiTranslator(URL, SECRET, diagnostics=diagnostics)) as client:
-        results = client.translate_block(block, Language.AUTO, Language.UK, options, _dispatch())
+    client = CloudAiTranslator(URL, SECRET, diagnostics=diagnostics)
+    results = client.translate_block(block, Language.AUTO, Language.UK, options, _dispatch())
     assert [item.index for item in results] == [7, 3]
     assert results[0].result.text == "Translated first"
     assert results[0].result.notes == (PhilologicalNote(NoteKind.GRAMMAR, "Illustrative note"),)
     assert results[0].result.detected_source is Language.EN
+    assert results[1].result.detected_source is None
     assert results[1].result.provider == "cloud_ai"
     request = route.calls.last.request
     assert request.headers["Authorization"] == f"Bearer {SECRET}"
@@ -118,14 +120,12 @@ def test_check_token_and_extract_terms(respx_mock: respx.MockRouter) -> None:
             ]
         },
     )
-    with closing(CloudAiTranslator(URL, SECRET)) as client:
-        assert client.check_token().daily_chars_remaining == 900
-        assert (
-            client.extract_terms(ExtractTermsRequest(target_lang=Language.UK, segments=["source"]))
-            .terms[0]
-            .count
-            == 2
-        )
+    client = CloudAiTranslator(URL, SECRET)
+    assert client.check_token().daily_chars_remaining == 900
+    terms_response = client.extract_terms(
+        ExtractTermsRequest(target_lang=Language.UK, segments=["source"])
+    )
+    assert terms_response.terms[0].count == 2
     assert all(
         route.calls.last.request.headers["Authorization"] == f"Bearer {SECRET}"
         for route in (me, terms)
@@ -160,10 +160,8 @@ def test_errors_and_diagnostics_redact_untrusted_values(
         headers={"Retry-After": "11", "X-Cloud-Cache": proxy_echo},
     )
     diagnostics = DiagnosticTimeline()
-    with (
-        closing(CloudAiTranslator(URL, SECRET, diagnostics=diagnostics)) as client,
-        pytest.raises(expected) as error,
-    ):
+    client = CloudAiTranslator(URL, SECRET, diagnostics=diagnostics)
+    with pytest.raises(expected) as error:
         client.translate_block(BLOCK, Language.AUTO, Language.UK, TranslationOptions(), _dispatch())
     assert type(error.value) is expected
     if isinstance(error.value, RateLimitedError):
@@ -188,12 +186,41 @@ def test_cancellation(respx_mock: respx.MockRouter, phase: str) -> None:
     route = respx_mock.get(f"{URL}/v1/me").mock(side_effect=respond)
     if phase == "before":
         cancel.set()
-    with (
-        closing(CloudAiTranslator(URL, SECRET)) as client,
-        pytest.raises(TranslationCancelledError),
-    ):
+    client = CloudAiTranslator(URL, SECRET)
+    with pytest.raises(TranslationCancelledError):
         client.check_token(cancel=cancel)
     assert route.call_count == int(phase == "during")
+
+
+def test_cancellation_interrupts_a_stalled_response(respx_mock: respx.MockRouter) -> None:
+    entered, cancel, cleaned_up = Event(), Event(), Event()
+
+    async def stalled(_request: httpx.Request) -> httpx.Response:
+        entered.set()
+        try:
+            await asyncio.sleep(5)
+            return httpx.Response(503)
+        finally:
+            cleaned_up.set()
+
+    respx_mock.post(f"{URL}/v1/translate").mock(side_effect=stalled)
+    client = CloudAiTranslator(URL, SECRET)
+    with ThreadPoolExecutor(max_workers=1) as worker:
+        result = worker.submit(
+            client.translate_block,
+            BLOCK,
+            Language.AUTO,
+            Language.UK,
+            TranslationOptions(),
+            _dispatch(cancel),
+        )
+        try:
+            assert entered.wait(2)
+        finally:
+            cancel.set()
+        with pytest.raises(TranslationCancelledError):
+            result.result(timeout=1)
+    assert cleaned_up.is_set()
 
 
 @pytest.mark.parametrize("indices", [None, [7, 7], [7], [7, 99]])
@@ -206,9 +233,7 @@ def test_invalid_responses_fail_the_entire_batch(
         route.mock(side_effect=httpx.ConnectError(f"echoed {SECRET}"))
     else:
         route.respond(200, json={"segments": [{"index": i, "text": "x"} for i in indices]})
-    with (
-        closing(CloudAiTranslator(URL, SECRET)) as client,
-        pytest.raises(ProviderUnavailableError) as error,
-    ):
+    client = CloudAiTranslator(URL, SECRET)
+    with pytest.raises(ProviderUnavailableError) as error:
         client.translate_block(BLOCK, Language.AUTO, Language.UK, TranslationOptions(), _dispatch())
     assert SECRET not in str(error.value)

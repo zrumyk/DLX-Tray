@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import sys
 from collections.abc import Callable
-from contextlib import ExitStack, closing
+from contextlib import ExitStack
 from functools import partial
 from pathlib import Path
 
@@ -104,8 +104,7 @@ def _check_deepl_api_key(key: str) -> None:
 
 
 def _check_cloud_token(url: str, token: str) -> MeResponse:
-    with closing(CloudAiTranslator(url, token, timeout=5.0)) as client:
-        return client.check_token()
+    return CloudAiTranslator(url, token, timeout=5.0).check_token()
 
 
 def _run_window(
@@ -156,7 +155,7 @@ def _run_window(
         return None
 
     cloud = make_cloud()
-    retired_providers: list[CloudAiTranslator | DeepLOfficialTranslator] = []
+    retired_providers: list[DeepLOfficialTranslator] = []
     dlx: DeeplxTranslator | None = None
     job: TranslationJob | None = None
     provider_status = ""
@@ -281,19 +280,14 @@ def _run_window(
         while retired_providers:
             retired_providers.pop().close()
 
-    def retire(provider: CloudAiTranslator | DeepLOfficialTranslator | None) -> None:
+    def retire(provider: DeepLOfficialTranslator | None) -> None:
         if provider is not None:
             if popup is None:
                 provider.close()
             else:
                 retired_providers.append(provider)
 
-    def close_cloud() -> None:
-        if cloud is not None:
-            cloud.close()
-
     stack.callback(close_retired_providers)
-    stack.callback(close_cloud)
 
     def select_job(content: str | SourceFile) -> TranslationJob | None:
         options = TranslationOptions(
@@ -373,17 +367,41 @@ def _run_window(
 
     def save_preferences(updated: Settings, key: str | None) -> str | None:
         nonlocal settings, official, api_key, cloud, cloud_token
+        new_token = updated.cloud_api_token
+        token = new_token.get_secret_value() if new_token is not None else None
+        token_changed = override_token is None and token != cloud_token
+        if token_changed:
+            try:
+                write_cloud_token(token)
+            except KeyringError:
+                log.warning("Could not update the stored Cloud AI token")
+                return QCoreApplication.translate(
+                    "SettingsDialog", "Could not update the stored Cloud AI token."
+                )
         try:
             updated.save(changes_from=settings)
         except (OSError, ValueError) as exc:
             log.warning("Could not save settings (%s)", type(exc).__name__)
+            if token_changed:
+                try:
+                    write_cloud_token(cloud_token)
+                except KeyringError:
+                    log.warning("Could not restore the previous Cloud AI token")
+                    return QCoreApplication.translate(
+                        "SettingsDialog",
+                        "Could not save settings or restore the previous Cloud AI token.",
+                    )
             return QCoreApplication.translate("SettingsDialog", "Could not save settings.")
 
         if updated.theme != settings.theme:
             apply_theme(app, updated.theme)
         shortcut_changed = updated.selection_hotkey != settings.selection_hotkey
-        cloud_changed = updated.cloud_url != settings.cloud_url
+        cloud_changed = token_changed or updated.cloud_url != settings.cloud_url
         settings = updated
+        if token_changed:
+            cloud_token = token
+        if cloud_changed:
+            cloud = make_cloud()
         if shortcut_changed:
             configure_hotkey()
         window.set_history(
@@ -409,29 +427,15 @@ def _run_window(
                     if key is not None
                     else None
                 )
-        new_token = settings.cloud_api_token
-        token = new_token.get_secret_value() if new_token is not None else None
-        if override_token is None and token != cloud_token:
-            try:
-                if token is None:
-                    delete_cloud_api_token()
-                else:
-                    set_cloud_api_token(token)
-            except KeyringError:
-                log.warning("Could not update the stored Cloud AI token")
-                error = QCoreApplication.translate(
-                    "SettingsDialog",
-                    "Preferences saved. Could not update the stored Cloud AI token.",
-                )
-            else:
-                cloud_token = token
-                cloud_changed = True
-        if cloud_changed:
-            retire(cloud)
-            cloud = make_cloud()
         start_dlx_if_needed()
         refresh_job()
         return error
+
+    def write_cloud_token(token: str | None) -> None:
+        if token is None:
+            delete_cloud_api_token()
+        else:
+            set_cloud_api_token(token)
 
     def open_settings() -> None:
         autostart_supported = autostart.is_supported()

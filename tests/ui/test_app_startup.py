@@ -1120,6 +1120,67 @@ def test_cloud_settings_verify_and_store_token_outside_settings_json(
     assert json.loads(saved)["hybrid_dlx_threshold"] == 600
 
 
+@pytest.mark.parametrize("failure", ["vault", "preferences"])
+def test_failed_cloud_rotation_keeps_previous_endpoint_and_token(
+    failure: str,
+    run_window: Callable[[Settings, Callable[[MainWindow, QLabel], None]], None],
+    qtbot: QtBot,
+    respx_mock: respx.MockRouter,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    vault: Mock,
+) -> None:
+    def get_password(_service: str, username: str) -> str | None:
+        return "old-token" if username == "cloud_api_token" else None
+
+    vault.get_password.side_effect = get_password
+    vault._read_credential.return_value = {"UserName": "cloud_api_token"}
+    settings = Settings.model_validate(
+        {
+            "provider_mode": "cloud_only",
+            "cloud_url": "https://original.example",
+        }
+    )
+    path = tmp_path / "settings.json"
+    settings.save(path)
+
+    if failure == "vault":
+        vault._set_password.side_effect = KeyringError("scripted vault failure")
+        expected = "Could not update the stored Cloud AI token."
+    else:
+
+        def fail_save(*_args: object, **_kwargs: object) -> None:
+            raise OSError("scripted preferences failure")
+
+        monkeypatch.setattr(Settings, "save", fail_save)
+        expected = "Could not save settings."
+    route = respx_mock.post("https://original.example/v1/translate").respond(
+        200, json={"segments": [{"index": 0, "text": "Translated"}]}
+    )
+
+    def edit(dialog: SettingsDialog) -> None:
+        dialog.cloud_url.setText("https://replacement.example")
+        dialog.cloud_token.setText("replacement-token")
+        dialog.buttons.button(QDialogButtonBox.StandardButton.Save).click()
+        assert dialog.isVisible()
+        assert dialog.save_status.text() == expected
+
+    def check(window: MainWindow, _status: QLabel) -> None:
+        _edit_settings(window, edit, save=False)
+        window.source_editor.setPlainText("Source")
+        window.translate_button.click()
+        qtbot.waitUntil(window.translate_button.isEnabled)
+        assert window.result_editor.toPlainText() == "Translated"
+
+    run_window(settings, check)
+    assert route.calls.last.request.headers["Authorization"] == "Bearer old-token"
+    assert json.loads(path.read_text(encoding="utf-8"))["cloud_url"] == "https://original.example/"
+    attempted = [call("DLX Tray Cloud", "cloud_api_token", "replacement-token")]
+    if failure == "preferences":
+        attempted.append(call("DLX Tray Cloud", "cloud_api_token", "old-token"))
+    assert vault._set_password.call_args_list == attempted
+
+
 def test_dlx_only_uses_bundled_connection_without_official_fallback(
     run_window: Callable[[Settings, Callable[[MainWindow, QLabel], None]], None],
     fake_dlx: FakeDLXFactory,
