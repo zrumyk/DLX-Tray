@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import replace
 from functools import partial
 from math import ceil
 from pathlib import Path
@@ -40,10 +41,15 @@ from PySide6.QtWidgets import (
 )
 
 from dlx_tray import APP_NAME, __version__
+from dlx_tray.contracts.cloud_v1 import EXTRACT_TERMS_MAX_UNITS, ExtractTermsResponse
 from dlx_tray.core import chunker
 from dlx_tray.core.diagnostics import DiagnosticProvider
 from dlx_tray.core.models import (
+    CloudAuthError,
+    CloudDeepTierForbiddenError,
+    CloudQuotaExceededError,
     Formality,
+    GlossaryEntry,
     Language,
     LocalCooldownError,
     RateLimitedError,
@@ -57,16 +63,24 @@ from dlx_tray.fileio.translation import (
     SourceFile,
     SourceOverwriteError,
 )
+from dlx_tray.providers.cloud_ai import CloudAiTranslator
 from dlx_tray.providers.deepl_official import PROVIDER_NAME as DEEPL_NAME
 from dlx_tray.providers.deeplx import PROVIDER_NAME as DLX_NAME
 from dlx_tray.services.history import HistoryStore
 from dlx_tray.ui.about_dialog import AboutDialog
 from dlx_tray.ui.error_dialog import ErrorDialog, FailureLocation
+from dlx_tray.ui.glossary_dialog import DocumentTermReview, GlossaryManager, GlossarySelection
 from dlx_tray.ui.history_dialog import HistoryDialog
-from dlx_tray.ui.workers import FileIOWorker, FileJobResult, TranslationWorker
+from dlx_tray.ui.workers import FileIOWorker, FileJobResult, TermExtractionWorker, TranslationWorker
 
 if TYPE_CHECKING:
     from dlx_tray.config import UiLanguage
+
+type JobSelector = Callable[
+    [str | SourceFile, tuple[GlossaryEntry, ...], tuple[GlossaryEntry, ...]],
+    TranslationJob | None,
+]
+type TranslationSnapshot = tuple[str | SourceFile, Language, Language]
 
 
 def _editor_text(editor: QPlainTextEdit) -> str:
@@ -120,6 +134,7 @@ class MainWindow(QMainWindow):
         formality: Formality = Formality.DEFAULT,
         translation_unavailable_reason: str | None = None,
         ui_language: UiLanguage = "en",
+        glossary_path: Path | None = None,
     ) -> None:
         super().__init__(parent)
         file_menu = self.menuBar().addMenu(self.tr("&File"))
@@ -136,6 +151,14 @@ class MainWindow(QMainWindow):
         self.exit_action.triggered.connect(self.exit_application)
         self.history_action = self.menuBar().addAction(self.tr("&History…"))
         self.history_action.triggered.connect(self._show_history)
+        glossary_menu = self.menuBar().addMenu(self.tr("&Glossaries"))
+        glossary_menu.menuAction().setVisible(glossary_path is not None)
+        self.manage_glossaries_action = glossary_menu.addAction(self.tr("Manage glossaries…"))
+        self.manage_glossaries_action.triggered.connect(self._manage_glossaries)
+        self.clear_glossary_action = glossary_menu.addAction(self.tr("Clear glossary selection"))
+        self.clear_glossary_action.triggered.connect(self._clear_glossary)
+        self.extract_terms_action = glossary_menu.addAction(self.tr("Extract document terms…"))
+        self.extract_terms_action.triggered.connect(self._extract_terms)
         self.settings_action = self.menuBar().addAction(self.tr("&Settings…"))
         self.settings_action.triggered.connect(self.settings_requested)
         help_menu = self.menuBar().addMenu(self.tr("Hel&p"))
@@ -143,7 +166,13 @@ class MainWindow(QMainWindow):
         self.about_action.triggered.connect(self._show_about)
         self._chunk_size = translation_job.chunk_budget if translation_job else chunk_size
         self._job = translation_job
-        self._select_job: Callable[[str | SourceFile], TranslationJob | None] | None = None
+        self._select_job: JobSelector | None = None
+        self._glossary_path = glossary_path
+        self._active_glossary: GlossarySelection | None = None
+        self._term_cloud: CloudAiTranslator | None = None
+        self._term_budget = EXTRACT_TERMS_MAX_UNITS
+        self._term_snapshot: TranslationSnapshot | None = None
+        self._term_result: ExtractTermsResponse | None = None
         self._formality = formality
         self._history_path: Path | None = None
         self._history_enabled = False
@@ -152,7 +181,7 @@ class MainWindow(QMainWindow):
         self._translation_requires_settings = False
         self._can_add_api_key = False
         self._thread: QThread | None = None
-        self._worker: TranslationWorker | FileIOWorker | None = None
+        self._worker: TranslationWorker | FileIOWorker | TermExtractionWorker | None = None
         self._file: SourceFile | None = None
         self._file_translations: tuple[str, ...] | None = None
         self._file_unsaved = False
@@ -271,6 +300,8 @@ class MainWindow(QMainWindow):
         self.result_editor.textChanged.connect(self._update_copy)
         self.source_languages.currentIndexChanged.connect(self._clear_detected_source)
         self.target_languages.currentIndexChanged.connect(self._clear_detected_source)
+        self.source_languages.currentIndexChanged.connect(self._update_glossary_actions)
+        self.target_languages.currentIndexChanged.connect(self._update_glossary_actions)
         self._update_counter()
         self._update_copy()
         self._set_input_locked(False)
@@ -604,7 +635,7 @@ class MainWindow(QMainWindow):
         formality: Formality | None = None,
         requires_settings: bool = False,
         can_add_api_key: bool = False,
-        select_job: Callable[[str | SourceFile], TranslationJob | None] | None = None,
+        select_job: JobSelector | None = None,
     ) -> None:
         """Show the startup outcome and enable translation when a job is available."""
         self._job = job
@@ -626,6 +657,119 @@ class MainWindow(QMainWindow):
         if formality is not None:
             self._formality = formality
         self._update_counter()
+
+    def set_glossary_provider(self, cloud: CloudAiTranslator | None, budget: int) -> None:
+        self._term_cloud = cloud
+        self._term_budget = budget
+        self._update_glossary_actions()
+
+    def _update_glossary_actions(self) -> None:
+        idle = self._thread is None
+        self.manage_glossaries_action.setEnabled(idle)
+        active = self._active_glossary
+        self.clear_glossary_action.setEnabled(idle and active is not None)
+        self.clear_glossary_action.setText(
+            self.tr("Clear glossary selection ({name})").format(name=active[0].name)
+            if active is not None
+            else self.tr("Clear glossary selection")
+        )
+        self.extract_terms_action.setEnabled(
+            idle
+            and self._term_cloud is not None
+            and (self._file is not None or self._progress_total > 0)
+        )
+        self.extract_terms_action.setToolTip(
+            self.tr("Configure Cloud AI in Automatic or Cloud AI only mode to extract terms.")
+            if self._term_cloud is None
+            else ""
+        )
+
+    def _clear_glossary(self) -> None:
+        self._active_glossary = None
+        self._update_glossary_actions()
+
+    @Slot(int, object)
+    def _glossary_changed(self, glossary_id: int, selection: GlossarySelection | None) -> None:
+        if self._active_glossary is not None and self._active_glossary[0].id == glossary_id:
+            self._active_glossary = selection
+            self._update_glossary_actions()
+
+    def _manage_glossaries(self) -> None:
+        if self._glossary_path is None or self._thread is not None:
+            return
+        active_id = self._active_glossary[0].id if self._active_glossary is not None else None
+        dialog = GlossaryManager(
+            self._glossary_path,
+            *self.selected_languages,
+            self,
+            can_apply=self._term_cloud is not None,
+            active_id=active_id,
+        )
+        dialog.glossary_changed.connect(self._glossary_changed)
+
+        def finished() -> None:
+            if dialog.selection is not None:
+                self._active_glossary = dialog.selection
+                self._update_glossary_actions()
+            dialog.deleteLater()
+
+        dialog.finished.connect(finished)
+        dialog.open()
+
+    def _extract_terms(self) -> None:
+        if self._glossary_path is None or self._term_cloud is None or self._thread is not None:
+            return
+        content = self._file if self._file is not None else _editor_text(self.source_editor)
+        if isinstance(content, str) and not content.strip():
+            return
+        source, target = self.selected_languages
+        self._term_snapshot = (content, source, target)
+        worker = TermExtractionWorker(self._term_cloud, content, source, target, self._term_budget)
+        worker.finished.connect(self._term_extracted)
+        worker.failed.connect(self._term_extraction_failed)
+        self.statusBar().clearMessage()
+        self.progress_bar.setRange(0, 0)
+        self.progress_label.setText(self.tr("Extracting document terms…"))
+        self.cancel_button.setEnabled(True)
+        self.cancel_button.show()
+        self._progress_row.show()
+        self._start_worker(worker)
+
+    @Slot(object)
+    def _term_extracted(self, response: ExtractTermsResponse | None) -> None:
+        self._term_result = response
+
+    @Slot(object)
+    def _term_extraction_failed(self, error: type[Exception]) -> None:
+        if self._term_snapshot is None:
+            return
+        if issubclass(error, CloudDeepTierForbiddenError):
+            message = self.tr("The Cloud AI token needs deep analysis access to extract terms.")
+        elif issubclass(error, CloudAuthError):
+            message = self.tr("Cloud AI rejected the token. Check it in Settings.")
+        elif issubclass(error, CloudQuotaExceededError):
+            message = self.tr("The Cloud AI quota has been reached.")
+        else:
+            message = self.tr("Could not extract document terms.")
+        self.statusBar().showMessage(message)
+
+    def _review_terms(self, snapshot: TranslationSnapshot, response: ExtractTermsResponse) -> None:
+        assert self._glossary_path is not None
+        content, source, target = snapshot
+        dialog = DocumentTermReview(response.terms, self._glossary_path, source, target, self)
+        dialog.glossary_changed.connect(self._glossary_changed)
+
+        def finished(code: int) -> None:
+            entries = dialog.approved
+            dialog.deleteLater()
+            if code != DocumentTermReview.DialogCode.Accepted or self._closed:
+                return
+            if isinstance(content, SourceFile) and not self._confirm_discard_file_translation():
+                return
+            self._translate(content, source, target, document_terms=entries)
+
+        dialog.finished.connect(finished)
+        dialog.open()
 
     def _populate_languages(
         self, source: Language, target: Language, ui_language: UiLanguage
@@ -708,6 +852,7 @@ class MainWindow(QMainWindow):
         )
         self.translate_button.setEnabled(enabled)
         self._translate_shortcut.setEnabled(enabled)
+        self._update_glossary_actions()
 
     def _update_copy(self) -> None:
         self.copy_button.setEnabled(not self.result_editor.document().isEmpty())
@@ -769,10 +914,35 @@ class MainWindow(QMainWindow):
         if self._file is None and text.strip():
             self._translate(text, source, target)
 
-    def _translate(self, content: str | SourceFile, source: Language, target: Language) -> None:
+    def _translate(
+        self,
+        content: str | SourceFile,
+        source: Language,
+        target: Language,
+        *,
+        document_terms: tuple[GlossaryEntry, ...] = (),
+    ) -> None:
         if self._thread is not None:
             return
-        job = self._select_job(content) if self._select_job is not None else self._job
+        active = self._active_glossary
+        saved_terms = (
+            active[1]
+            if self._term_cloud is not None
+            and active is not None
+            and active[0].supports(source, target)
+            else ()
+        )
+        if self._select_job is not None:
+            job = self._select_job(content, saved_terms, document_terms)
+        else:
+            job = self._job
+            if job is not None and (saved_terms or document_terms):
+                job = replace(
+                    job,
+                    default_options=replace(
+                        job.default_options, glossary=saved_terms, document_glossary=document_terms
+                    ),
+                )
         if job is None:
             return
 
@@ -812,7 +982,9 @@ class MainWindow(QMainWindow):
         self._progress_row.show()
         self._start_worker(worker)
 
-    def _start_worker(self, worker: TranslationWorker | FileIOWorker) -> None:
+    def _start_worker(
+        self, worker: TranslationWorker | FileIOWorker | TermExtractionWorker
+    ) -> None:
         thread = QThread(self)
         self._thread = thread
         self._worker = worker
@@ -1005,6 +1177,12 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def _cancel_translation(self) -> None:
+        if isinstance(self._worker, TermExtractionWorker):
+            self._term_snapshot = None
+            self._worker.cancel()
+            self.cancel_button.setEnabled(False)
+            self.progress_label.setText(self.tr("Cancelling…"))
+            return
         if isinstance(self._worker, TranslationWorker) and self._worker.cancel():
             self.cancel_button.setEnabled(False)
             self._retry_waits.clear()
@@ -1032,8 +1210,12 @@ class MainWindow(QMainWindow):
         self._retry_waits.clear()
         self._update_retry_status()
         self._set_input_locked(False)
+        snapshot, response = self._term_snapshot, self._term_result
+        self._term_snapshot = self._term_result = None
         if self._close_pending:
             self.close()
+        elif snapshot is not None and response is not None:
+            self._review_terms(snapshot, response)
 
     def closeEvent(self, event: QCloseEvent) -> None:
         if (

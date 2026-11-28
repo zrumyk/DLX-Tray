@@ -13,6 +13,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Connect the desktop app to a Cloud AI server in Settings. In Automatic mode, short neutral
   snippets start with DLX and can fall back to Cloud AI and the official DeepL API. Files, longer
   texts, and philological requests use Cloud AI when configured. Cloud AI only skips DLX startup.
+- Manage saved glossaries locally and import or export them as UTF-8 CSV or TSV.
+- Extract candidate terms from an open file or the editor with Cloud AI. Review, edit, and save
+  the equivalents, then translate the same input with the approved terms.
 
 ### Changed
 - The official DeepL provider can translate adjacent uncached segments in a single request

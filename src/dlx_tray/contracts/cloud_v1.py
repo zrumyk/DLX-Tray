@@ -7,6 +7,7 @@ from typing import Annotated, Self
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validator
 
+from dlx_tray.contracts.glossary_match import MAX_BLOCK_TERMS
 from dlx_tray.core.chunker import utf16_len
 from dlx_tray.core.models import (
     AnalysisTier,
@@ -15,6 +16,8 @@ from dlx_tray.core.models import (
     StylisticRegister,
 )
 from dlx_tray.core.profiles import PROVIDER_LIMITS
+
+EXTRACT_TERMS_MAX_UNITS = 60_000
 
 
 def _unicode_text(text: str) -> str:
@@ -98,7 +101,7 @@ class TranslateRequest(_SourceRequest):
     stylistic_register: StylisticRegister = Field(StylisticRegister.NEUTRAL, alias="register")
     style_context: Annotated[str, Field(max_length=200), AfterValidator(_unicode_text)] = ""
     context_before: list[Nonblank] = Field(default_factory=list, max_length=2)
-    glossary: list[GlossaryTerm] = Field(default_factory=list, max_length=150)
+    glossary: list[GlossaryTerm] = Field(default_factory=list, max_length=MAX_BLOCK_TERMS)
     include_notes: bool = False
     analysis_tier: AnalysisTier = AnalysisTier.STANDARD
 
@@ -135,7 +138,7 @@ class ExtractTermsRequest(_SourceRequest):
 
     @model_validator(mode="after")
     def _validate_budget(self) -> Self:
-        if sum(map(utf16_len, self.segments)) > 60_000:
+        if sum(map(utf16_len, self.segments)) > EXTRACT_TERMS_MAX_UNITS:
             raise ValueError("term extraction exceeds the UTF-16 budget")
         return self
 

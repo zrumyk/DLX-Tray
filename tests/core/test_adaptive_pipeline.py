@@ -12,6 +12,7 @@ from dlx_tray.core.models import (
     AnalysisTier,
     ContextBlock,
     Formality,
+    GlossaryEntry,
     IndexedResult,
     Language,
     NoteKind,
@@ -91,6 +92,61 @@ def test_block_packing_preserves_file_segments_and_uses_cached_context(
     assert adapter.options == [options] * 3
     with pytest.raises(FrozenInstanceError):
         adapter.blocks[0].context_before = ()  # pyright: ignore[reportAttributeAccessIssue]
+
+
+def test_glossary_packing_preserves_each_segments_cache_key(tmp_path: Path) -> None:
+    cache = TranslationCache(tmp_path / "cache.db")
+    profile = replace(CLOUD_STANDARD_PROFILE, max_concurrency=1)
+    adapter = FakeBlocks()
+    terms = tuple(GlossaryEntry(f"term{i}", f"value{i}", i) for i in range(160))
+    reviewed = GlossaryEntry("Term0", "reviewed")
+    options = TranslationOptions(glossary=terms, document_glossary=(reviewed,))
+    crowded = " ".join(term.source_term for term in terms)
+    pair = ["term0 term1", "term2"]
+    job = TranslationJob(translator=adapter, cache=cache, profile=profile, request_delay=0)
+    result = job.run("", Language.EN, Language.UK, file_segments=[crowded, *pair], options=options)
+    assert result.error is None
+    assert [[s.text for s in block.segments] for block in adapter.blocks] == [[crowded], pair]
+    capped, union = [option.glossary for option in adapter.options]
+    assert len(capped) == 150
+    assert capped[0] == replace(reviewed, source_term="term0")
+    assert set(union) == {replace(reviewed, source_term="term0"), terms[1], terms[2]}
+    assert all(not option.document_glossary for option in adapter.options)
+
+    result = job.run("", Language.EN, Language.UK, file_segments=pair, options=options)
+    assert result.error is None and len(adapter.blocks) == 2
+    updated = replace(options, document_glossary=(replace(reviewed, target_term="edited"),))
+    job.run("", Language.EN, Language.UK, file_segments=pair, options=updated)
+    assert len(adapter.blocks) == 3
+    assert [s.text for s in adapter.blocks[-1].segments] == pair[:1]
+    assert adapter.options[-1].glossary[0].target_term == "edited"
+
+
+def test_glossary_matches_split_continuations_independently(tmp_path: Path) -> None:
+    adapter = FakeBlocks()
+    cache = TranslationCache(tmp_path / "cache.db")
+    job = TranslationJob(
+        translator=adapter,
+        cache=cache,
+        profile=ProviderProfile("cloud_ai", 9, 1, 25, 0),
+        request_delay=0,
+    )
+    options = TranslationOptions(
+        glossary=tuple(
+            GlossaryEntry(word, word.upper()) for word in ("green", "blue", "green blue")
+        )
+    )
+    for _ in range(2):
+        result = job.run("green blue", Language.EN, Language.UK, options=options)
+        assert result.text == "GREEN BLUE"
+    assert [[term.source_term for term in option.glossary] for option in adapter.options] == [
+        ["green", "blue"],
+        ["green", "blue"],
+    ]
+    assert [[segment.text for segment in block.segments] for block in adapter.blocks] == [
+        ["green", "blue"],
+        ["green", "blue"],
+    ]
 
 
 def test_four_workers_publish_in_order_despite_reverse_completion() -> None:

@@ -13,6 +13,7 @@ from threading import TIMEOUT_MAX, Event
 from time import monotonic
 from typing import TYPE_CHECKING
 
+from dlx_tray.contracts.glossary_match import MAX_BLOCK_TERMS
 from dlx_tray.core import chunker
 from dlx_tray.core.diagnostics import DiagnosticTimeline, LocalCache, SharedResult
 from dlx_tray.core.models import (
@@ -20,6 +21,7 @@ from dlx_tray.core.models import (
     Chunk,
     ContextBlock,
     Formality,
+    GlossaryEntry,
     IndexedSegment,
     Language,
     PhilologicalNote,
@@ -53,6 +55,7 @@ from dlx_tray.providers.deepl_official import DeepLOfficialTranslator
 from dlx_tray.providers.deeplx import DeeplxTranslator
 from dlx_tray.providers.fallback import BlockFallbackTranslator, FallbackTranslator
 from dlx_tray.services.cache import translation_key
+from dlx_tray.services.glossary import GlossaryMatcher
 
 if TYPE_CHECKING:
     from dlx_tray.core.single_flight import SingleFlight
@@ -103,6 +106,7 @@ class _Segment:
     first_provider: int = 0
     detected: Language | None = None
     notes: list[PhilologicalNote] = field(default_factory=list)
+    cache_options: TranslationOptions | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,6 +118,7 @@ class _Piece:
     cached: TranslationResult | None = None
     request_index: int = 0
     prefix: str = ""
+    glossary: tuple[GlossaryEntry, ...] = ()
 
 
 def _preceding_context(segments: Sequence[Chunk], index: int, budget: int) -> tuple[str, ...]:
@@ -234,6 +239,14 @@ class TranslationJob:
         translator = self.translator
         dlx = self._has_dlx
         block_translator = isinstance(translator, BlockTranslator)
+        glossary_matcher = (
+            GlossaryMatcher(options.glossary, options.document_glossary)
+            if block_translator and (options.glossary or options.document_glossary)
+            else None
+        )
+        wire_options = (
+            replace(options, glossary=(), document_glossary=()) if glossary_matcher else options
+        )
         profile = self._profile_for(options)
         if (
             profile is not None
@@ -321,12 +334,22 @@ class TranslationJob:
                             segments, pieces[0].segment.source.index, profile.context_units
                         ),
                     )
+                    block_options = (
+                        replace(
+                            wire_options,
+                            glossary=tuple(
+                                dict.fromkeys(entry for piece in pieces for entry in piece.glossary)
+                            ),
+                        )
+                        if glossary_matcher
+                        else wire_options
+                    )
                     if isinstance(translator, BlockFallbackTranslator):
                         output = translator.translate_block(
                             block,
                             source,
                             target,
-                            options,
+                            block_options,
                             attempt,
                             formality=formality,
                             on_provider=on_provider,
@@ -334,7 +357,9 @@ class TranslationJob:
                         )
                     else:
                         wait_for_request_start(attempt)
-                        output = translator.translate_block(block, source, target, options, attempt)
+                        output = translator.translate_block(
+                            block, source, target, block_options, attempt
+                        )
                     indexed = {item.index: item.result for item in output}
                     if len(output) != len(pieces) or indexed.keys() != {
                         segment.index for segment in block.segments
@@ -370,6 +395,12 @@ class TranslationJob:
             return result
 
         def can_pack(pieces: Sequence[_Piece], candidate: _Piece) -> bool:
+            if (
+                glossary_matcher
+                and len({entry for piece in (*pieces, candidate) for entry in piece.glossary})
+                > MAX_BLOCK_TERMS
+            ):
+                return False
             texts = [piece.chunk.text for piece in pieces]
             budget = profile.max_units if dlx and profile is not None else max_units
             return (not dlx or candidate.chunk.text not in texts) and (
@@ -428,18 +459,36 @@ class TranslationJob:
                     blank = Chunk("", segment.text + segment.separator, segment.index)
                     yield Work(_Piece(blank, group, first=True, last=True))
                     continue
+                segment_options: TranslationOptions | None = options
+                if glossary_matcher is not None:
+                    if chunker.utf16_len(segment.text.strip()) <= max_units:
+                        segment_options = replace(
+                            wire_options, glossary=glossary_matcher.for_block((segment.text,))
+                        )
+                    else:
+                        # A split segment has separate glossary caps for each continuation.
+                        segment_options = None
+                group.cache_options = segment_options
                 shared = None
-                if flights is not None:
+                if flights is not None and segment_options is not None:
                     scopes.callback(group.scope.close)
                     shared = group.scope.enter_context(
                         flights.segment(
-                            translation_key(route, source, target, formality, segment.text, options)
+                            translation_key(
+                                route, source, target, formality, segment.text, segment_options
+                            )
                         )
                     )
                 hit = None
-                if cache is not None and not cancel.is_set():
+                if cache is not None and segment_options is not None and not cancel.is_set():
                     hit = self._cached_segment(
-                        segment.text, source, target, formality, cache, provider_names, options
+                        segment.text,
+                        source,
+                        target,
+                        formality,
+                        cache,
+                        provider_names,
+                        segment_options,
                     )
                     if diagnostics is not None:
                         diagnostics.append(LocalCache(hit is not None))
@@ -466,15 +515,22 @@ class TranslationJob:
                 if block_translator and not chunks[0].translatable:
                     prefix = chunks.pop(0).separator
                 keys = {}
-                if flights is not None and shared is not None:
+                if flights is not None and shared is not None and segment_options is not None:
                     for chunk in chunks:
                         if chunk.translatable and chunk.text not in keys:
                             key = translation_key(
-                                route, source, target, formality, chunk.text, options
+                                route, source, target, formality, chunk.text, segment_options
                             )
                             flights.reserve(key, shared)
                             keys[chunk.text] = key
                 for index, chunk in enumerate(chunks):
+                    terms: tuple[GlossaryEntry, ...] = ()
+                    if glossary_matcher is not None and chunk.translatable:
+                        terms = (
+                            segment_options.glossary
+                            if segment_options is not None
+                            else glossary_matcher.for_block((chunk.text,))
+                        )
                     piece = _Piece(
                         chunk,
                         group,
@@ -482,6 +538,7 @@ class TranslationJob:
                         last=index == len(chunks) - 1,
                         request_index=segment.index if index == 0 else next(continuation_indexes),
                         prefix=prefix if index == 0 else "",
+                        glossary=terms,
                     )
                     if not chunk.translatable:
                         yield Work(piece)
@@ -514,13 +571,23 @@ class TranslationJob:
                     translated = translated[: -len(group.source.separator)]
                 if on_segment is not None:
                     on_segment(translated)
-                if cache is not None and not cancel.is_set() and piece.cached is None:
+                if (
+                    cache is not None
+                    and group.cache_options is not None
+                    and not cancel.is_set()
+                    and piece.cached is None
+                ):
                     names = set(providers[group.first_provider :])
                     if len(names) == 1:
                         (provider,) = names
                         if provider is not None:
                             key = translation_key(
-                                provider, source, target, formality, group.source.text, options
+                                provider,
+                                source,
+                                target,
+                                formality,
+                                group.source.text,
+                                group.cache_options,
                             )
                             cache.store(
                                 key, TranslationResult(translated, group.detected, provider, notes)
